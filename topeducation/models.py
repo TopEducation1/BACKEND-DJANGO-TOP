@@ -1,87 +1,102 @@
 from django.db import models
 
-# Model of the certifications
 
-        
 
-class Skills (models.Model):
-    hability_name = models.CharField(max_length=250)
-    
+
+
+class Habilidades (models.Model):
+    nombre = models.CharField(max_length=250)
+    def __str__(self):
+        return self.nombre
     
     class Meta:
         db_table = 'Habilidades'
         
 
-class Topics (models.Model):
-    topic_name = models.CharField(max_length=250)
+class Temas (models.Model):
+    nombre = models.CharField(max_length=250)
+    
+    def __str__(self):
+        return self.nombre
     
     
     class Meta:
         db_table = 'Temas'
         
 
-class Regions (models.Model):
-    region_name = models.CharField(max_length=500)
+class Regiones (models.Model):
+    nombre = models.CharField(max_length=500)
+    
+    def __str__(self):
+        return self.nombre
     
     class Meta:
         db_table = 'Regiones'
         
         
-class Universities (models.Model):
-    university_name = models.CharField(max_length=500)
-    university_image = models.CharField(max_length=300, null=True, blank=True)
-    university_region = models.ForeignKey(
-        Regions, 
+class Universidades (models.Model):
+    nombre = models.CharField(max_length=500)
+    region_universidad = models.ForeignKey(
+        Regiones, 
         on_delete=models.SET_NULL,
         null = True,
-        related_name= 'Universidades'
     )
+    
+    def __str__(self):
+        return self.nombre
     
     class Meta:
         db_table = 'Universidades'
         
 
-class Companies (models.Model):
-    company_name = models.CharField(max_length=500)
-    company_img = models.CharField(max_length=300, null=True, blank=True)
+class Empresas (models.Model):
+    nombre = models.CharField(max_length=500)
+    
+    def __str__(self):
+        return self.nombre
     
     class Meta:
         db_table = 'Empresas'
         
         
-class Platforms (models.Model):
-    platform_name = models.CharField(max_length=500)
-    platform_img = models.CharField(max_length=300, null=True, blank=True)
+class Plataformas (models.Model):
+    nombre = models.CharField(max_length=500)
+    
+    def __str__(self):
+        return self.nombre
     
     class Meta:
         db_table = 'Plataformas'
         
         
-class Certification (models.Model):
-    certification_name = models.CharField(max_length=500)
-    certification_topic = models.ForeignKey(Topics, on_delete=models.SET_NULL, null=True, related_name='certification_topic')
-    certification_keyword = models.TextField()
-    certification_platform = models.ForeignKey(Platforms, on_delete=models.SET_NULL, null=True, related_name='certification_platform')
-    certification_url_original = models.CharField(max_length=300, default="Null")
-    certification_metadescription = models.TextField(default="NONE")
-    certification_instructors = models.TextField(default="NONE")
-    certification_level = models.TextField(default="NONE")
-    certification_time = models.TextField(default="NONE")
-    certification_language = models.TextField(default="NONE")
-    certification_learnings = models.TextField(default="NONE")
-    certification_skills = models.TextField(default="NONE")
-    certification_experience = models.TextField(default="NONE")
-    certification_content = models.TextField(default="NONE")
-    certification_modules = models.TextField(default="NONE")
-    certification_testimonials = models.TextField(default="NONE")
-    certification_university = models.ForeignKey(Universities, on_delete=models.SET_NULL, null=True, related_name='certification_university', blank=True)
-    certification_enterprise = models.CharField(max_length=300, default='No Aplica', blank=True)
-    certification_university_region = models.ForeignKey(Regions, on_delete=models.SET_NULL, null=True, related_name='certification_university_region', blank=True)
-    certification_university_url_img = models.TextField(null=True, blank=True)
-    certification_platform_url_img = models.TextField(null=True, blank=True)
-    
-    class Meta:
-        db_table = 'Certifications'
-        
+
+
+class Certificaciones(models.Model):
+    nombre = models.CharField(max_length=500)
+    tema_certificacion = models.ForeignKey(Temas, on_delete=models.SET_NULL, null=True, )
+    palabra_clave_certificacion = models.TextField()
+    plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.SET_NULL, null=True)
+    url_certificacion_original = models.CharField(max_length=300, default="Null")
+    metadescripcion_certificacion = models.TextField(default="NONE")
+    instructores_certificacion = models.TextField(default="NONE")
+    nivel_certificacion = models.TextField(default="NONE")
+    tiempo_certificacion = models.TextField(default="NONE")
+    lenguaje_certificacion = models.TextField(default="NONE")
+    aprendizaje_certificacion = models.TextField(default="NONE")
+    habilidades_certificacion = models.TextField(default="NONE")
+    experiencia_certificacion = models.TextField(default="NONE")
+    contenido_certificacion = models.TextField(default="NONE")
+    modulos_certificacion = models.TextField(default="NONE")
+    testimonios_certificacion = models.TextField(default="NONE")
+    universidad_certificacion = models.ForeignKey(Universidades, on_delete=models.SET_NULL, null=True,blank=True)
+    empresa_certificacion = models.CharField(max_length=300, default='No Aplica', blank=True, null=True)
+    region_universidad_certificacion = models.ForeignKey(Regiones, on_delete=models.SET_NULL, null=True, blank=True)
+    url_imagen_universidad_certificacion = models.TextField(blank=True, null=True)
+    url_imagen_plataforma_certificacion = models.TextField(blank=True, null= True)
+
     def __str__(self):
-        return self.certification_name
+        return self.nombre
+
+
+    class Meta:
+        db_table = 'Certificaciones'

@@ -1,7 +1,7 @@
 import pandas as pd
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from topeducation.models import Topics, Platforms, Universities, Companies, Regions, Certification
+from topeducation.models import *
 
 class Command(BaseCommand):
     help = 'Importar cursos desde un archivo Excel y asignar imágenes a las plataformas y universidades'
@@ -50,12 +50,12 @@ class Command(BaseCommand):
     
     def get_or_create_topic(self, topic_id, topic_name):
         try: 
-            return Topics.objects.get(id=topic_id)
-        except Topics.DoesNotExist:
+            return Temas.objects.get(id=topic_id)
+        except Temas.DoesNotExist:
             try:
-                return Topics.objects.get(topic_name=topic_name)
-            except Topics.DoesNotExist:
-                return Topics.objects.create(id=topic_id, topic_name=topic_name)
+                return Temas.objects.get(topic_name=topic_name)
+            except Temas.DoesNotExist:
+                return Temas.objects.create(id=topic_id, topic_name=topic_name)
 
     def handle(self, *args, **kwargs):
         # Lee el archivo Excel
@@ -90,8 +90,8 @@ class Command(BaseCommand):
                     
                     # Obtener o crear la plataforma y asignar la imagen
                     platform_id = row['Proveedor de curso']
-                    certification_platform = Platforms.objects.get(id=platform_id)
-                    platform_name = certification_platform.platform_name
+                    certification_platform = Plataformas.objects.get(id=platform_id)
+                    platform_name = certification_platform.nombre
                     platform_img = self.assign_platform_image(platform_name)
 
                     # Obtener o crear la universidad y asignar la imagen
@@ -100,40 +100,40 @@ class Command(BaseCommand):
                         certification_university = None
                         university_name = None
                     else:
-                        certification_university = Universities.objects.get(id=university_id)
-                        university_name = certification_university.university_name
+                        certification_university = Universidades.objects.get(id=university_id)
+                        university_name = certification_university.nombre
 
                     university_image = self.assign_university_image(university_name)
                     
                     region_id = row['REGION UNIVERSIDAD']
-                    certification_region = None if region_id == 0 else Regions.objects.get(id=region_id)
+                    certification_region = None if region_id == 0 else Regiones.objects.get(id=region_id)
                     
                     enterprise_id = row['EMPRESA']
-                    certification_enterprise = None if enterprise_id == 0 else Companies.objects.get(id=enterprise_id)
+                    certification_enterprise = None if enterprise_id == 0 else Empresas.objects.get(id=enterprise_id)
 
                     # Crear la certificación
-                    Certification.objects.create(
-                        certification_name=row['Titulo'],
-                        certification_topic=certification_topic,
-                        certification_keyword=row['KW'],
-                        certification_platform=certification_platform,
-                        certification_url_original=row['Link'],
-                        certification_metadescription=row['Meta D'],
-                        certification_instructors=row['Instructor/es'],
-                        certification_level=row['Nivel'],
-                        certification_time=row['Horario'],
-                        certification_language=row['Idioma'],
-                        certification_learnings=row['¿Qué aprenderás?'],
-                        certification_skills=row['Habilidades que obtendrás'],
-                        certification_experience=row['Adquiere experiencia en la materia de tu interés\n'],
-                        certification_content=row['Contenido'],
-                        certification_modules=row['Modulos'],
-                        certification_testimonials=row['Testimonios'],
-                        certification_university=certification_university,
-                        certification_enterprise=certification_enterprise,
-                        certification_university_region=certification_region,
-                        certification_university_url_img=university_image,
-                        certification_platform_url_img=platform_img
+                    Certificaciones.objects.create(
+                        nombre=row['Titulo'],
+                        tema_certificacion=certification_topic,
+                        palabra_clave_certificacion=row['KW'],
+                        plataforma_certificacion=certification_platform,
+                        url_certificacion_original=row['Link'],
+                        metadescripcion_certificacion=row['Meta D'],
+                        instructores_certificacion=row['Instructor/es'],
+                        nivel_certificacion=row['Nivel'],
+                        tiempo_certificacion =row['Horario'],
+                        lenguaje_certificacion=row['Idioma'],
+                        aprendizaje_certificacion=row['¿Qué aprenderás?'],
+                        habilidades_certificacion =row['Habilidades que obtendrás'],
+                        experiencia_certificacion= row['Adquiere experiencia en la materia de tu interés\n'],
+                        contenido_certificacion = row['Contenido'],
+                        modulos_certificacion=row['Modulos'],
+                        testimonios_certificacion=row['Testimonios'],
+                        universidad_certificacion=certification_university,
+                        empresa_certificacion=certification_enterprise,
+                        region_universidad_certificacion=certification_region,
+                        url_imagen_universidad_certificacion=university_image,
+                        url_imagen_plataforma_certificacion=platform_img
                     )
                     print(f"✓ Curso importado exitosamente: {row['Titulo']}")
             
