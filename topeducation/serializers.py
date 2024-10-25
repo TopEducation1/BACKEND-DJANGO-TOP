@@ -24,10 +24,11 @@ class TopicsSerializer (serializers.ModelSerializer):
     class Meta:
         model = Temas
         
-        fields = ['id', 'name']
+        fields = ['id', 'nombre']
 
 class CertificationSerializer(serializers.ModelSerializer):
-    certification_topic = TopicsSerializer(read_only = True)
+    
+    tema_certificacion = TopicsSerializer(read_only = True)
     class Meta:
         model = Certificaciones
         fields = '__all__'

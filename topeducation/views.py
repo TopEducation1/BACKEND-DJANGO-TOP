@@ -13,6 +13,7 @@ import json
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.shortcuts import get_object_or_404
+from django.db.models import Q
 
 
 
@@ -165,20 +166,50 @@ def get_certification(request, id):
         )
 
 
-# Esta funcion sirve para recibir los tags por los cuales el ususario quiere filtrar las busquedas y retornar el queryset con las certificaciones filtradas
 class filter_by_tags(APIView):
     def get(self, request):
-        
         params = dict(request.GET)
-
-        print(params)
         
+        # Convertir los valores de params de listas a valores individuales si es necesario
+        for key in params:
+            if isinstance(params[key], list):
+                params[key] = [tag.strip() for tag in params[key] if tag.strip()]
         
-        return Response({
-            'message': 'Parametros recibidos'
-        })    
+        category_to_model = {
+            'tema': Temas,
+            'universidad': Universidades,
+            'empresa': Empresas,
+            'plataforma': Plataformas,
+            'habilidad': Habilidades
+        }
         
+        queryset = Certificaciones.objects.all()
         
+        # Para depuración
+        print("Parámetros recibidos:", params)
         
-            
+        for category, tags in params.items():
+            if category in category_to_model and tags:
+                model = category_to_model[category]
+                category_q = Q()
+                
+                # Construir query para tags dentro de la categoría (OR)
+                for tag in tags:
+                    # Obtener el ID del tag
+                    try:
+                        tag_obj = model.objects.get(nombre=tag)
+                        field_name = f"{category}_certificacion"
+                        category_q |= Q(**{f"{field_name}": tag_obj})
+                    except model.DoesNotExist:
+                        print(f"Tag no encontrado: {tag} en categoría {category}")
+                        continue
+                
+                # Aplicar el filtro de esta categoría
+                if category_q:
+                    queryset = queryset.filter(category_q)
+                    # Para depuración
+                    print(f"Cantidad de resultados después de filtrar {category}:", queryset.count())
+                    print("Query SQL:", queryset.query)
         
+        serializer = CertificationSerializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
