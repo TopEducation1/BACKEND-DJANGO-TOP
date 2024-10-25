@@ -1,6 +1,5 @@
 from django.urls import path, include
 from .views import *
-from rest_framework import routers
 
 
 urlpatterns = [
@@ -10,5 +9,5 @@ urlpatterns = [
     path('topics/', TopicsList.as_view(), name='topics_list'),
     path('api/searchTags/', receive_tags, name='receive_tags'),
     path('certificaciones/<int:id>/', get_certification, name='get-certification'),
-    path('certificaciones/filter/', filter_by_tags, name='filter-by-tags')
+    path('certificaciones/filter/', filter_by_tags.as_view()    , name='filter-by-tags')
 ]

@@ -166,83 +166,19 @@ def get_certification(request, id):
 
 
 # Esta funcion sirve para recibir los tags por los cuales el ususario quiere filtrar las busquedas y retornar el queryset con las certificaciones filtradas
-@csrf_exempt
-@require_http_methods(["POST"])
-def filter_by_tags(request):
-        try: 
-            # Peticion del body 
-            data = json.loads(request.body)
-            
-            # Diccionario para almacenar los tags seleccionados por el usuario     
-            categories_dict = {
-                'Temas': set(),
-                'Universidades': set(),
-                'Plataformas': set(),
-                'Empresas': set(),
-                'Habilidades': set()
-            }
-            
-            category_models = {
-                'Temas': Temas,
-                'Universidades': Universidades,
-                'Plataformas': Plataformas,
-                'Empresas': Empresas,
-                'Habilidades': Habilidades
-            }
-            
-            # Este diccionario es para convertir el nombre de la categoria a el nombre de la columna que contiene el id de la categoriaen la tabla certificaciones
-            
-            category_db_filtered = {
-                'Temas': 'tema_certificacion_id',
-                'Universidades': 'universidad_certificacion_id',
-                'Plataformas': 'plataforma_certificacion_id'
-            }
-            
-
-            #Iterar sobre data(Enviado por el front) para almacenar cada tag en su categoria dentro del dicccionario
-            for categoria, tag in data.items():
-                if isinstance(tag, list):
-                    categories_dict[categoria].update(tag)
-                else:
-                    categories_dict[categoria].add(tag)
-            #print(categories_dict) 
-            
-            
-            # En este diccionario se usara para almacenar las categorias con tags seleccionados, y poder sacar las query set
-            non_empty_categories = {
-                categoria: tag
-                for categoria, tags in categories_dict.items()
-                if tags # Condición que veriifica cuales tienen tags seleccionados
-            }
-            
-            # Este for sirve para generar un query set sobre las categorias que tienen tags seleecionados
-            for category, tag in non_empty_categories.items():
-                for i in tag:
-                    # Se obtiene el objeto de acuerdo al nombre del tag
-                    category_uf= get_object_or_404(category_models.get(category), nombre=i)
-                    # Se genera una consulta a la base de datos 
-                    filtered_queryset = Certificaciones.objects.filter(**{category_db_filtered.get(category): category_uf.id})
-                    print(f"Filtrando por {category_uf}")
-                    print(filtered_queryset)
-            
-            
-            
-           
-            
-            
-            
-            
-       
-            return JsonResponse({
-                # Devolver sun estado success
-               'status': 'success'
-                })
+class filter_by_tags(APIView):
+    def get(self, request):
         
-        # Manejo de errores
-        except json.JSONDecodeError:
-            return JsonResponse({'error': 'Invalid JSON'}, status=400)
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-        
+        params = dict(request.GET)
 
+        print(params)
+        
+        
+        return Response({
+            'message': 'Parametros recibidos'
+        })    
+        
+        
+        
+            
         
