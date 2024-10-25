@@ -93,6 +93,7 @@ class Certificaciones(models.Model):
     region_universidad_certificacion = models.ForeignKey(Regiones, on_delete=models.SET_NULL, null=True, blank=True)
     url_imagen_universidad_certificacion = models.TextField(blank=True, null=True)
     url_imagen_plataforma_certificacion = models.TextField(blank=True, null= True)
+    url_imagen_empresa_certificacion = models.TextField(blank=True, null=True)
 
     def __str__(self):
         return self.nombre

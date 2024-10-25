@@ -48,6 +48,22 @@ class Command(BaseCommand):
         }
         return platform_images.get(platform_name)
     
+    """def assign_enterprise_image(self, enterprise_name):
+        enterprise_images = {
+            'Capitals Coalition': 'assets/Empresas/nonx',
+            'DeepLearning.AI': 'assets/Empresas/DeepLearning.AI.png',
+            'Big Interview': 'assets/Empresas/Big-Interview.png',
+            'UBITS': 'assets/Empresas/UBITS.png',
+            'HubSpot Academy': 'assets/Empresas/hubspot-academy.png',
+            'SV Academy': 'assets/Empresas/SV-Academy.png',
+            'Pathstream': 'assets/Empresas/Pathstream.png',
+            'SalesForce': 'assets/Empresas/Salesforce.png',
+            'The Museum of Modern Art': 'assets/Empresas/Museum-of-Modern-Art.png',
+            'Banco Interamericano de Desarrollo': '',
+            'Yad Vashem': 'assets/Empresas/Yad-Vashem.png',
+            'Salesforce, SV Academy': 'assets/Empresas/Salesforce-SV-Academy.png'
+        }"""
+    
     def get_or_create_topic(self, topic_id, topic_name):
         try: 
             return Temas.objects.get(id=topic_id)
@@ -62,7 +78,7 @@ class Command(BaseCommand):
         excel_path = "C:\\Users\\felip\\Documents\\TOPEDUCATIONMICROSERVICES\\backend-django\\topeducation\\management\\commands\\test89.xlsx"
         
         # Imprimir información de depuración
-        df = pd.read_excel(excel_path, skiprows=1, nrows=89)
+        df = pd.read_excel(excel_path, skiprows=1, nrows= 167)
         print("Columnas en el DataFrame:")
         for col in df.columns:
             print(f"- {col}")
@@ -93,6 +109,11 @@ class Command(BaseCommand):
                     certification_platform = Plataformas.objects.get(id=platform_id)
                     platform_name = certification_platform.nombre
                     platform_img = self.assign_platform_image(platform_name)
+                    
+                    #enterprise_id = row['EMPRESA']
+                    #certification_enterprise = Empresas.objects.get(id=enterprise_id)
+                    #enterprise_name = certification_enterprise.nombre
+                    #nterprise_img = self.assign_enterprise_image(enterprise_name)
 
                     # Obtener o crear la universidad y asignar la imagen
                     university_id = row['Universidad']
@@ -130,10 +151,11 @@ class Command(BaseCommand):
                         modulos_certificacion=row['Modulos'],
                         testimonios_certificacion=row['Testimonios'],
                         universidad_certificacion=certification_university,
-                        empresa_certificacion=certification_enterprise,
+                        empresa_certificacion=row['EMPRESA'],
                         region_universidad_certificacion=certification_region,
                         url_imagen_universidad_certificacion=university_image,
-                        url_imagen_plataforma_certificacion=platform_img
+                        url_imagen_plataforma_certificacion=platform_img,
+                        #url_imagen_empresa_certificacion = enterprise_img
                     )
                     print(f"✓ Curso importado exitosamente: {row['Titulo']}")
             
@@ -146,3 +168,4 @@ class Command(BaseCommand):
                 print(row)
 
         print('Proceso de importación completado')
+        

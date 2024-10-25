@@ -213,3 +213,21 @@ class filter_by_tags(APIView):
         
         serializer = CertificationSerializer(queryset, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    
+        
+# Esta funcion es para filtrar en los resultados por medio de la barra de busqueda
+
+def search_certifications(request):
+    query = request.GET.get('search', '')
+    
+    if query:
+        
+        results  = Certificaciones.objects.filter(
+            Q(name__icontains=query) | 
+            Q(topic__icontains=query) |
+            Q(platform__icontains=query)
+        )
+        
+        data = list(results.values())
+        return JsonResponse({''})
