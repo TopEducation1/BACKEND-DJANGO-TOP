@@ -1,7 +1,5 @@
-
 import os
 from pathlib import Path
-
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -15,13 +13,20 @@ pymysql.install_as_MySQLdb()
 SECRET_KEY = str(os.getenv('SECRET_KEY'))
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False  # Cambiar a False en producción
 
 ALLOWED_HOSTS = ['backend-top-production-0f82.up.railway.app']
 
+# Configuración de seguridad HTTPS
+SECURE_SSL_REDIRECT = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_HSTS_SECONDS = 31536000  # 1 año
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
 
 # Application definition
-
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -35,6 +40,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',  # Mover al inicio
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -42,13 +48,43 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
 ]
 
+# Configuración de CORS
+CORS_ALLOWED_ORIGINS = [
+    "https://frontend-top-production.up.railway.app",
+]
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
-CORS_ALLOW_ALL_ORIGINS = True
+# Eliminar CORS_ALLOW_ALL_ORIGINS ya que es inseguro en producción
+# CORS_ALLOW_ALL_ORIGINS = True
 
+# Configuración de cookies seguras
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = 'Lax'
 
+# El resto de tu configuración permanece igual
 ROOT_URLCONF = 'core.urls'
 
 TEMPLATES = [
@@ -69,19 +105,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
-# CREDENTIALS TO THE DB CONNECTION (DOTENV)
-USER_DB = str(os.getenv('DATABASE_USER'))
-PASSWORD_DB = str(os.getenv('DATABASE_KEY'))
-DATABASE = str(os.getenv('DATABASE_NAME'))
-DATABASE_HOST = str(os.getenv('DATABASE_HOST'))
-
+# Database configuration
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': DATABASE,
-        'USER': USER_DB,
-        'PASSWORD': PASSWORD_DB,
-        'HOST': DATABASE_HOST,
+        'NAME': str(os.getenv('DATABASE_NAME')),
+        'USER': str(os.getenv('DATABASE_USER')),
+        'PASSWORD': str(os.getenv('DATABASE_KEY')),
+        'HOST': str(os.getenv('DATABASE_HOST')),
         'PORT': '19750'
     }
 }
