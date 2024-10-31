@@ -14,7 +14,26 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
+from django.core.paginator import EmptyPage, PageNotAnInteger
+from rest_framework.pagination import PageNumberPagination
+from django.views import View
 
+
+
+class CustomPagination(PageNumberPagination):
+    page_size = 12
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+    
+    
+    def get_paginated_response(self, data):
+        return Response({
+            'count': self.page.paginator.count,
+            'next': self.get_next_link(),
+            'previous': self.get_previous_link(),
+            'total_page': self.page.paginator.num_pages,
+            'results': data
+        })
 
 
 
@@ -22,15 +41,27 @@ from django.db.models import Q
 # EndPoint to get the certifications
 class CertificationList(APIView):
     
+    pagination_class = CustomPagination
+    
     # DEFINIR EL METODO GET QUE SE REALIZA DESDE EL FRONT    
     def get(self, request):
         
+        
+        
         # Queryset de las certificaciones
-        certifications_queryset = Certificaciones.objects.all()
-        serializer = CertificationSerializer(certifications_queryset, many = True)
-        # RETORNA LOS DATOS EN JSON
-        #(serializer.data)
-        return Response(serializer.data)
+        certifications_queryset = Certificaciones.objects.all().select_related(
+            'tema_certificacion'
+        )
+        
+        
+        
+        paginator = self.pagination_class()
+        paginated_queryset = paginator.paginate_queryset(certifications_queryset, request)
+        
+        
+        serializer = CertificationSerializer(paginated_queryset, many = True)
+
+        return paginator.get_paginated_response(serializer.data)
     
     
 
@@ -96,85 +127,102 @@ class TopicsList (APIView):
 
 
 # Esta función obtiene el id de la certificación que el usuario quiere ver en vista especifica y retorna toda su información
-@api_view(['GET'])
-def get_certification(request, id):
-    try:
-        # Validar que el id existe
-        if not id:
-            return Response(
-                {'Error': 'Se requiere el ID de la certificación'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Obtener la certificación   
-        certification = Certificaciones.objects.get(id=id)
-        
-        # Separar cada instructor y formatear para mayor facilidad de mostrar en el front
-        certification_instructors = certification.certification_instructors.split('\n')
-        instructor_links = []
-        
-        # regex para separar link del nombre
-        regex = re.compile(r'^([^,]+),\s*(https?:\/\/[^\s,]+),')
+class CertificationDetailView(APIView):
+    def get(self, request, id):
+        try:
+            # Validar que el id existe
+            if not id:
+                return Response(
+                    {'Error': 'Se requiere el ID de la certificación'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Obtener la certificación   
+            certification = Certificaciones.objects.get(id=id)
+            
+            # Separar cada instructor y formatear para mayor facilidad de mostrar en el front
+            certification_instructors = certification.instructores_certificacion.split('\n')
+            instructor_links = []
+            
+            # regex para separar link del nombre
+            regex = re.compile(r'^([^,]+),\s*(https?:\/\/[^\s,]+),')
+                
+            
+            for line in certification_instructors:
+                match = regex.match(line)
+                if match:
+                    name = match.group(1)
+                    link = match.group(2)
+                    
+                    # Diccionario con nombre y link
+                    instructor_links.append({
+                        'name': name,
+                        'link': link
+                    })
+                    
+            
+            # Serializar y retornar
+            serializer = CertificationSerializer(certification)
+            data = serializer.data
+            
+            
+            
+            data['instructores_certificacion'] = instructor_links
             
         
-        for line in certification_instructors:
-            match = regex.match(line)
-            if match:
-                name = match.group(1)
-                link = match.group(2)
-                
-                # Diccionario con nombre y link
-                instructor_links.append({
-                    'name': name,
-                    'link': link
-                })
-        
-        # Serializar y retornar
-        serializer = CertificationSerializer(certification)
-        data = serializer.data
-        
-        
-        
-        data['certification_instructors'] = instructor_links
-        
-    
-        #Separar items de aprendizaje
-        certification_learnings = certification.certification_learnings.split('\n')        
-        
-        data['certification_learnings'] = certification_learnings
-        
-        
-        #Separar habilidades
-        certification_skills = certification.certification_skills.split('-')
-        
-        data['certification_skills'] = certification_skills
-        
-        # Retornar los datos de la certificación
-        return Response(data)
-        
+            #   Separar items de aprendizaje
+            certification_learnings = certification.aprendizaje_certificacion.split('\n')        
+            
+            data['aprendizaje_certificacion'] = certification_learnings
+            
+            
+            
+            #Separar habilidades
+            certification_skills = certification.habilidades_certificacion.split('-')
+            
+            data['certification_skills'] = certification_skills
+            
+            # Retornar los datos de la certificación
+            print(data)
+            return Response(data)
+            
 
-        
-    except Certificaciones.DoesNotExist:
-        return Response(
-            {'error': 'Certificación no encontrada'},
-            status=status.HTTP_404_NOT_FOUND
-        )
-    except ValueError:
-        return Response(
-            {'error': 'ID Invalido'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+            
+        except Certificaciones.DoesNotExist:
+            return Response(
+                {'error': 'Certificación no encontrada'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError:
+            return Response(
+                {'error': 'ID Invalido'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 class filter_by_tags(APIView):
+    
+    pagination_class = CustomPagination
+    
     def get(self, request):
         params = dict(request.GET)
         
-        # Convertir los valores de params de listas a valores individuales si es necesario
-        for key in params:
-            if isinstance(params[key], list):
-                params[key] = [tag.strip() for tag in params[key] if tag.strip()]
         
+        # Extraer datos de paginacion
+        page = params.pop('page', [1])[0]
+        page_size = params.pop('page_size', [12])[0]
+        
+        #Limpiar y validar parametros
+        cleaned_params = {}
+        
+        
+        # Convertir los valores de params de listas a valores individuales si es necesario
+        for key, values in params.items():
+            if isinstance(values, list):
+                cleaned_params[key] = [tag.strip() for tag in values[0].split(',') if tag.strip()]
+            else:
+                cleaned_params[key] = [values.strip()] if values.strip() else []
+                
         category_to_model = {
             'tema': Temas,
             'universidad': Universidades,
@@ -183,12 +231,16 @@ class filter_by_tags(APIView):
             'habilidad': Habilidades
         }
         
-        queryset = Certificaciones.objects.all()
+        queryset = Certificaciones.objects.all().select_related(
+            'tema_certificacion'
+        )
+        
+        
         
         # Para depuración
         print("Parámetros recibidos:", params)
         
-        for category, tags in params.items():
+        for category, tags in cleaned_params.items():
             if category in category_to_model and tags:
                 model = category_to_model[category]
                 category_q = Q()
@@ -210,24 +262,66 @@ class filter_by_tags(APIView):
                     # Para depuración
                     print(f"Cantidad de resultados después de filtrar {category}:", queryset.count())
                     print("Query SQL:", queryset.query)
+                    
+        paginator = self.pagination_class()
+        paginated_queryset = paginator.paginate_queryset(queryset, request)
         
-        serializer = CertificationSerializer(queryset, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        
+        serializer = CertificationSerializer(paginated_queryset, many=True)
+        print(serializer.data)
+        return paginator.get_paginated_response(serializer.data)
     
     
-        
-# Esta funcion es para filtrar en los resultados por medio de la barra de busqueda
 
-def search_certifications(request):
-    query = request.GET.get('search', '')
-    
-    if query:
+
+class filter_by_search(APIView):
+    # Esta función es para filtrar en los resultados por medio de la barra de búsqueda
+    def post(self, request):
         
-        results  = Certificaciones.objects.filter(
-            Q(name__icontains=query) | 
-            Q(topic__icontains=query) |
-            Q(platform__icontains=query)
+        query_string = request.data.get('data', "")
+        
+        print("DATOS RECIBIDOS: ", query_string)
+        
+        # Filtrar por tema
+        tema = Temas.objects.filter(nombre__icontains=query_string).first()
+        
+        #Filtrar por nombre
+        nombre = Certificaciones.objects.filter(nombre__icontains=query_string).first()
+        
+        # Filtrar por universidad
+        universidad = Universidades.objects.filter(nombre__icontains=query_string).first()
+        
+        # Filtrar por empresa
+        empresa = Empresas.objects.filter(nombre__icontains=query_string).first()
+        
+        # Inicializar lista de resultados
+        filtered_results = Certificaciones.objects.none()
+        
+        # Filtrar por tema
+        if tema:
+            tema_results = Certificaciones.objects.filter(tema_certificacion_id=tema.id)
+            filtered_results = filtered_results | tema_results
+        
+        # Filtrar por universidad
+        if universidad:
+            universidad_results = Certificaciones.objects.filter(universidad_certificacion_id=universidad.id)
+            filtered_results = filtered_results | universidad_results
+        
+        # Filtrar por empresa
+        if empresa:
+            empresa_results = Certificaciones.objects.filter(empresa_certificacion=empresa.id)
+            filtered_results = filtered_results | empresa_results
+        
+        if nombre:
+            nombre_results = Certificaciones.objects.filter(nombre__icontains = query_string)
+            filtered_results = filtered_results | nombre_results
+            
+        # Serializar resultados
+        serializer = CertificationSearchSerializer(filtered_results.distinct(), many=True)
+        
+        # Devolver la respuesta con los datos serializados
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK
         )
-        
-        data = list(results.values())
-        return JsonResponse({''})

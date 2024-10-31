@@ -10,16 +10,16 @@ class Command(BaseCommand):
         university_images = {
             'Universidad de Palermo': 'assets/Universidades/Universidad-de-Palermo.png',
             'Pontificia Universidad Catolica de Chile': 'assets/Universidades/Pontificia-Universidad-Catolica-de-Chile.png',
-            'SAE-México': 'assets/Universidades/SAE-México.png',
+            'SAE-MÉXICO': 'assets/Universidades/SAE-México.png',
             'Universidad Anáhuac': 'assets/Universidades/Universidades-Anáhuac.png',
             'Berklee College of Music': 'assets/Universidades/Berklee-College-of-Music.png',
             'Universitat de Barcelona': 'assets/Universidades/Universitat-Autònoma-de-Barcelona.png',
             'Universidad Autónoma de Barcelona': 'assets/Universidades/Universitat-Autònoma-de-Barcelona.png',
             'Yad Vashem': 'assets/Universidades/Yad-Vashem.png',
             'Universidad de los Andes': 'assets/Universidades/Universidad-de-los-Andes.png',
-            'UNAM': 'assets/Universidades/UNAM.png',
+            'Universidad Nacional Autónoma de Mexico': 'assets/Universidades/UNAM.png',
             'Universidad Austral': 'assets/Universidades/Universidad-Austral.png',
-            'University of New Mexico': 'University-of-New-Mexico.png',
+            'University of New Mexico': 'assets/Universidades/University-of-New-Mexico.png',
             'Macquarie University': 'assets/Universidades/Macquarie-University.png',
             'University of Michigan': 'assets/Universidades/University-of-Michigan.png',
             'University of Virginia': 'assets/Universidades/University-of-Virginia.png',
@@ -27,16 +27,18 @@ class Command(BaseCommand):
             'Duke University': 'assets/Universidades/Duke-University.png',
             'Northwestern University': 'assets/Universidades/Northwestern-University.png',
             'Museum of Modern Art': 'assets/Universidades/Museum-of-Modern-Art.png',
-            'Parsons School of Design, TheNewSchool': 'assets/Universidades/Parsons-School-of-Design,-The-New-School.png',
+            'Parsons School of Design, The New School': 'assets/Universidades/Parsons-School-of-Design,-The-New-School.png',
             'University of Colorado Boulder': 'assets/Universidades/University-of-Colorado-Boulder.png',
             'University of Illinois Urbana-Champaign': 'assets/Universidades/University-of-Illinois-Urbana-Champaign.png',
             'Tecnológico de Monterrey': 'assets/Universidades/Tecnológico-de-Monterrey.png',
-            'The Chinese University of Hong Kong': 'assets/Universidades/The-Chinese-University-of-Hong-Kong.png',
+            'The-Chinese-University-of-Hong-Kong': 'assets/Universidades/The-Chinese-University-of-Hong-Kong.png',
             'The University of North Carolina at Chapel Hill': 'assets/Universidades/The-University-of-North-Carolina-at-Chapel-Hill.png',
             'California Institute of Arts': 'assets/Universidades/Calarts.png',
-            'Pontificia Universidad Catolica de Peru': 'assets/Universidades/Pontificia-Universidad-Católica-del-Perú.png',
+            'Pontificia Universidad Católica del Perú': 'assets/Universidades/Pontificia-Universidad-Católica-del-Perú.png',
             'Pontificia Universidad Catolica de Chile': 'assets/Universidades/Pontificia-Universidad-Católica-de-Chile.png',
-            'Wesleyan University': 'assets/Universidades/Wesleyan-University.png'
+            'Wesleyan University': 'assets/Universidades/Wesleyan-University.png',
+            'University of California, Irvine': 'assets/Universidades/University-of-California,-Irvine.png',
+            'IE Business School': 'assets/Universidades/IE-Business-School.png'
         }
         return university_images.get(university_name)
 
@@ -48,7 +50,7 @@ class Command(BaseCommand):
         }
         return platform_images.get(platform_name)
     
-    """def assign_enterprise_image(self, enterprise_name):
+    def assign_enterprise_image(self, enterprise_name):
         enterprise_images = {
             'Capitals Coalition': 'assets/Empresas/nonx',
             'DeepLearning.AI': 'assets/Empresas/DeepLearning.AI.png',
@@ -62,7 +64,8 @@ class Command(BaseCommand):
             'Banco Interamericano de Desarrollo': '',
             'Yad Vashem': 'assets/Empresas/Yad-Vashem.png',
             'Salesforce, SV Academy': 'assets/Empresas/Salesforce-SV-Academy.png'
-        }"""
+        }
+        return enterprise_images.get(enterprise_name)
     
     def get_or_create_topic(self, topic_id, topic_name):
         try: 
@@ -78,7 +81,7 @@ class Command(BaseCommand):
         excel_path = "C:\\Users\\felip\\Documents\\TOPEDUCATIONMICROSERVICES\\backend-django\\topeducation\\management\\commands\\test89.xlsx"
         
         # Imprimir información de depuración
-        df = pd.read_excel(excel_path, skiprows=1, nrows= 167)
+        df = pd.read_excel(excel_path, skiprows=1, nrows= 301)
         print("Columnas en el DataFrame:")
         for col in df.columns:
             print(f"- {col}")
@@ -110,7 +113,17 @@ class Command(BaseCommand):
                     platform_name = certification_platform.nombre
                     platform_img = self.assign_platform_image(platform_name)
                     
-                    #enterprise_id = row['EMPRESA']
+                    
+                    
+                    enterprise_id = row['EMPRESA']
+                    if enterprise_id == 0:
+                        certification_enterprise = None
+                        enterprise_name = None
+                    else:
+                        certification_enterprise = Empresas.objects.get(id=enterprise_id)
+                        enterprise_name = certification_enterprise.nombre
+                    
+                    enterprise_image = self.assign_enterprise_image(enterprise_name)
                     #certification_enterprise = Empresas.objects.get(id=enterprise_id)
                     #enterprise_name = certification_enterprise.nombre
                     #nterprise_img = self.assign_enterprise_image(enterprise_name)
@@ -131,7 +144,7 @@ class Command(BaseCommand):
                     
                     enterprise_id = row['EMPRESA']
                     certification_enterprise = None if enterprise_id == 0 else Empresas.objects.get(id=enterprise_id)
-
+                    
                     # Crear la certificación
                     Certificaciones.objects.create(
                         nombre=row['Titulo'],
@@ -155,7 +168,8 @@ class Command(BaseCommand):
                         region_universidad_certificacion=certification_region,
                         url_imagen_universidad_certificacion=university_image,
                         url_imagen_plataforma_certificacion=platform_img,
-                        #url_imagen_empresa_certificacion = enterprise_img
+                        url_imagen_empresa_certificacion = enterprise_image,
+                        imagen_final = university_image if university_image else enterprise_image
                     )
                     print(f"✓ Curso importado exitosamente: {row['Titulo']}")
             

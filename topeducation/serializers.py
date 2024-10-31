@@ -1,6 +1,8 @@
 # certifications/serializers.py
 from rest_framework import serializers
 from .models import *
+from django.db.models import F
+
 
 # CONVIERTE LOS MODELOS EN JSON PARA CONSUMIRLOS DESDE EL FRONT
 
@@ -25,11 +27,54 @@ class TopicsSerializer (serializers.ModelSerializer):
         model = Temas
         
         fields = ['id', 'nombre']
-
+        
+        
 class CertificationSerializer(serializers.ModelSerializer):
-    
-    tema_certificacion = TopicsSerializer(read_only = True)
+    tema_certificacion = TopicsSerializer(read_only=True)
+
     class Meta:
         model = Certificaciones
-        fields = '__all__'
+        fields = [
+            'id',
+            'nombre',
+            'tema_certificacion',
+            'url_imagen_universidad_certificacion',
+            'url_imagen_plataforma_certificacion',
+            'url_certificacion_original',
+            'metadescripcion_certificacion',
+            'lenguaje_certificacion',
+            'nivel_certificacion',
+            'tiempo_certificacion',
+            'contenido_certificacion',
+            'habilidades_certificacion'
+
+        ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+
+        # Acceder a los valores procesados en la vista y pasarlos correctamente
+        content = data['contenido_certificacion']
         
+        # Separar los módulos y el contenido
+        modules = content.split('\n', 1)
+        content_modules = modules[0].strip()
+        all_content = modules[1].replace('\n', ' ').strip() if len(modules) > 1 else ''
+
+        # Modificar la representación final de los datos
+        data['aprendizaje_certificacion'] = instance.aprendizaje_certificacion.split('\n')  # Si ya fue procesado en la vista
+        data['contenido_certificacion'] = all_content
+        data['cantidad_modulos'] = content_modules
+        data['image'] = data['url_imagen_universidad_certificacion'] or data.get('url_imagen_empresa_certificacion')
+
+        return data
+
+
+
+class CertificationSearchSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Certificaciones
+        fields = ['id', 'nombre', 'url_imagen_universidad_certificacion']
+
+    
