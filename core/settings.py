@@ -13,7 +13,7 @@ pymysql.install_as_MySQLdb()
 SECRET_KEY = str(os.getenv('SECRET_KEY'))
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False  # Cambiar a False en producción
+DEBUG = True  # Cambiar a False en producción
 
 ALLOWED_HOSTS = ['backend-top-production-0f82.up.railway.app']
 
