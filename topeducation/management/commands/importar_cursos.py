@@ -72,16 +72,16 @@ class Command(BaseCommand):
             return Temas.objects.get(id=topic_id)
         except Temas.DoesNotExist:
             try:
-                return Temas.objects.get(topic_name=topic_name)
+                return Temas.objects.get(nombre=topic_name)
             except Temas.DoesNotExist:
-                return Temas.objects.create(id=topic_id, topic_name=topic_name)
+                return Temas.objects.create(id=topic_id, nombre=topic_name)
 
     def handle(self, *args, **kwargs):
         # Lee el archivo Excel
         excel_path = "C:\\Users\\felip\\Documents\\TOPEDUCATIONMICROSERVICES\\backend-django\\topeducation\\management\\commands\\test89.xlsx"
         
         # Imprimir información de depuración
-        df = pd.read_excel(excel_path, skiprows=1, nrows= 301)
+        df = pd.read_excel(excel_path, skiprows=1, nrows= 20)
         print("Columnas en el DataFrame:")
         for col in df.columns:
             print(f"- {col}")

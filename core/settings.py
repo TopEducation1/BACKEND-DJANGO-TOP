@@ -74,6 +74,7 @@ WSGI_APPLICATION = 'core.wsgi.application'
 USER_DB = str(os.getenv('DATABASE_USER'))
 PASSWORD_DB = str(os.getenv('DATABASE_KEY'))
 DATABASE = str(os.getenv('DATABASE_NAME'))
+DATABASE_HOST = str(os.getenv('DATABASE_HOST'))
 
 DATABASES = {
     'default': {
@@ -81,8 +82,8 @@ DATABASES = {
         'NAME': DATABASE,
         'USER': USER_DB,
         'PASSWORD': PASSWORD_DB,
-        'HOST': 'localhost',
-        'PORT': '3306'
+        'HOST': DATABASE_HOST,
+        'PORT': '19750'
     }
 }
 
