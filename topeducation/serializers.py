@@ -38,6 +38,7 @@ class CertificationSerializer(serializers.ModelSerializer):
             'id',
             'nombre',
             'tema_certificacion',
+            'url_imagen_empresa_certificacion',
             'url_imagen_universidad_certificacion',
             'url_imagen_plataforma_certificacion',
             'url_certificacion_original',
@@ -66,7 +67,7 @@ class CertificationSerializer(serializers.ModelSerializer):
         data['aprendizaje_certificacion'] = instance.aprendizaje_certificacion.split('\n')  # Si ya fue procesado en la vista
         data['contenido_certificacion'] = all_content
         data['cantidad_modulos'] = content_modules
-        data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data.get('url_imagen_empresa_certificacion')
+        data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
 
         return data
 
