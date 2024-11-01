@@ -170,21 +170,7 @@ class CertificationDetailView(APIView):
             
             data['instructores_certificacion'] = instructor_links
             
-        
-            #   Separar items de aprendizaje
-            list_learnings = [certification.habilidades_certificacion.strip() for learning in certification.habilidades_certificacion.split('-')]
-            
-            data['aprendizaje_certificacion'] = list_learnings
-            
-            
-            
-            #Separar habilidades
-            certification_skills = certification.habilidades_certificacion.split('-')
-            
-            data['certification_skills'] = certification_skills
-            
-            # Retornar los datos de la certificación
-            print(data)
+
             return Response(data)
             
 
