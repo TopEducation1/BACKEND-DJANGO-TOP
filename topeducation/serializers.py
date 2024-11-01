@@ -52,6 +52,7 @@ class CertificationSerializer(serializers.ModelSerializer):
 
         ]
 
+    #Representación de los datos
     def to_representation(self, instance):
         data = super().to_representation(instance)
 
