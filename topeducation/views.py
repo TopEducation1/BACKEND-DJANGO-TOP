@@ -161,6 +161,7 @@ class CertificationDetailView(APIView):
                     })
                     
             
+            
             # Serializar y retornar
             serializer = CertificationSerializer(certification)
             data = serializer.data
@@ -171,9 +172,9 @@ class CertificationDetailView(APIView):
             
         
             #   Separar items de aprendizaje
-            certification_learnings = certification.aprendizaje_certificacion.split('\n')        
+            list_learnings = [certification.habilidades_certificacion.strip() for learning in certification.habilidades_certificacion.split('-')]
             
-            data['aprendizaje_certificacion'] = certification_learnings
+            data['aprendizaje_certificacion'] = list_learnings
             
             
             
