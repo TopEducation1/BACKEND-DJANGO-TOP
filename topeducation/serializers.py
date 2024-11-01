@@ -59,10 +59,26 @@ class CertificationSerializer(serializers.ModelSerializer):
         # Acceder a los valores procesados en la vista y pasarlos correctamente
         content = data['contenido_certificacion']
         
+        
+        
         # Separar los módulos y el contenido
         modules = content.split('\n', 1)
         content_modules = modules[0].strip()
         all_content = modules[1].replace('\n', ' ').strip() if len(modules) > 1 else ''
+        
+        
+        #Procesamiento de las habilidades
+        if isinstance(data['habilidades_certificacion'], str):
+            data['habilidades_certificacion'] = [
+                {
+                    "id": index +1,
+                    "nombre": habilidad.strip()
+                }
+                
+                for index, habilidad in enumerate(data['habilidades_certificacion'].split('-'))
+            ]
+            
+            return data
 
         # Modificar la representación final de los datos
         data['aprendizaje_certificacion'] = instance.aprendizaje_certificacion.split('\n')  # Si ya fue procesado en la vista
