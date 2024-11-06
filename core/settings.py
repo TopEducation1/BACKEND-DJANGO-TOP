@@ -15,16 +15,16 @@ SECRET_KEY = str(os.getenv('SECRET_KEY'))
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True  # Cambiar a False en producción
 
-ALLOWED_HOSTS = ['backend-top-production-0f82.up.railway.app', 'http://127.0.0.1:8000/']
+ALLOWED_HOSTS = ['backend-top-production-0f82.up.railway.app', '127.0.0.1', 'localhost']
 
 # Configuración de seguridad HTTPS
-SECURE_SSL_REDIRECT = True
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SECURE_HSTS_SECONDS = 31536000  # 1 año
-SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-SECURE_HSTS_PRELOAD = True
-SECURE_BROWSER_XSS_FILTER = True
-SECURE_CONTENT_TYPE_NOSNIFF = True
+#SECURE_SSL_REDIRECT = False
+#SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+#SECURE_HSTS_SECONDS = 31536000  # 1 año
+#SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+#SECURE_HSTS_PRELOAD = True
+#SECURE_BROWSER_XSS_FILTER = True
+#SECURE_CONTENT_TYPE_NOSNIFF = True
 
 # Application definition
 INSTALLED_APPS = [
@@ -56,7 +56,9 @@ CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
     "https://frontend-top-production.up.railway.app",
     "http://localhost:8080",
-    "http://localhost:3000"
+    "http://localhost:3000",
+    "http://127.0.0.1:3000" 
+
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_METHODS = [
@@ -83,8 +85,8 @@ CORS_ALLOW_HEADERS = [
 # CORS_ALLOW_ALL_ORIGINS = True
 
 # Configuración de cookies seguras
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = False
 CSRF_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_SAMESITE = 'Lax'
 

@@ -28,75 +28,102 @@ class TopicsSerializer (serializers.ModelSerializer):
         
         fields = ['id', 'nombre']
         
-        
-class CertificationSerializer(serializers.ModelSerializer):
-    tema_certificacion = TopicsSerializer(read_only=True)
-
+class CertificationSerializer(serializers.ModelSerializer): 
+    
+    
     class Meta:
         model = Certificaciones
-        fields = [
-            'id',
-            'nombre',
-            'tema_certificacion',
-            'url_imagen_empresa_certificacion',
-            'url_imagen_universidad_certificacion',
-            'url_imagen_plataforma_certificacion',
-            'url_certificacion_original',
-            'metadescripcion_certificacion',
-            'lenguaje_certificacion',
-            'nivel_certificacion',
-            'tiempo_certificacion',
-            'contenido_certificacion',
-            'habilidades_certificacion',
-            'imagen_final',
-            'aprendizaje_certificacion'
-
-        ]
-
-    #Representación de los datos
+        
+        fields = '__all__'  
     def to_representation(self, instance):
         data = super().to_representation(instance)
-
-        # Acceder a los valores procesados en la vista y pasarlos correctamente
+        
         content = data['contenido_certificacion']
         
         
         
-        # Separar los módulos y el contenido
-        modules = content.split('\n', 1)
-        content_modules = modules[0].strip()
-        all_content = modules[1].replace('\n', ' ').strip() if len(modules) > 1 else ''
+        
+        contenido_mod = data['contenido_certificacion']
+        cantidad_modulos = contenido_mod.split('\n')[0]
+        contenido_certificacion = contenido_mod.split('\n')[1:]
+        
+        data['contenido_certificacion'] = {
+            
+            "cantidad_modulos": cantidad_modulos,
+            "contenido_certificacion" : contenido_certificacion
+            }
         
         
-        #Procesamiento de las habilidades
+        tema_instance = instance.tema_certificacion
+        data['tema_certificacion'] = TopicsSerializer(tema_instance).data if tema_instance else None
+        
+        # Procesamiento de módulos
+        if isinstance(data['modulos_certificacion'], str):
+            
+            modulos_raw = data['modulos_certificacion'].split('\n')
+            modulos_procesados = []
+            current_module = None
+            print(modulos_raw[0])
+            print(modulos_raw[1])
+            
+            for linea in modulos_raw:
+                linea = linea.strip()
+                if not linea:
+                    continue
+                
+                if 'Módulo' in linea:
+                    if current_module:
+                        modulos_procesados.append(current_module)
+                        
+                    titulo_y_duracion = linea.split(' | Duración:')
+                    if len(titulo_y_duracion) > 1:
+                        titulo = titulo_y_duracion[0].split(':')[1].strip()
+                        duracion = titulo_y_duracion[1].strip()
+                    else:
+                       titulo = ''
+                       duracion = ''
+                        
+                    current_module = {
+                        'titulo': modulos_raw[0],
+                        'duracion': modulos_raw[1],
+                        'incluye': [],
+                        'contenido': []
+                    }
+                elif current_module:
+                    if 'Incluye' in linea:
+                        continue
+                    elif linea.startswith(('1 ', '2 ', '3 ', '4 ', '5 ', '6 ', '7 ', '8 ', '9 ')):
+                        current_module['incluye'].append(linea)
+                    else:
+                        current_module['contenido'].append(linea)
+                        
+            if current_module:
+                modulos_procesados.append(current_module)
+                
+            data['modulos_certificacion'] = modulos_procesados
+            #print(modulos_procesados)
+        # Procesamiento de las habilidades
         if isinstance(data['habilidades_certificacion'], str):
             data['habilidades_certificacion'] = [
                 {
                     "id": index +1,
                     "nombre": habilidad.strip()
                 }
-                
                 for index, habilidad in enumerate(data['habilidades_certificacion'].split('-'))
             ]
             
-            
-        
-        #Procesamiento de aprendizajes 
+        # Procesamiento de aprendizajes 
         if isinstance(data['aprendizaje_certificacion'], str):
             data['aprendizaje_certificacion'] = [
                 {
                     "id": index+1,
                     "nombre": aprendizaje.strip()
                 }
-                
                 for index, aprendizaje in enumerate(data['aprendizaje_certificacion'].split('\n'))
+                if aprendizaje.strip()
             ]
-            
-            
 
         # Modificar la representación final de los datos
-        data['contenido_certificacion'] = all_content
-        data['cantidad_modulos'] = content_modules
         data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
 
         return data
