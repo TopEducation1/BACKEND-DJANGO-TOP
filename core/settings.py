@@ -15,7 +15,7 @@ SECRET_KEY = str(os.getenv('SECRET_KEY'))
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True  # Cambiar a False en producción
 
-ALLOWED_HOSTS = ['backend-top-production-0f82.up.railway.app', '127.0.0.1', 'localhost', 'frontend-react-top.railway.internal']
+ALLOWED_HOSTS = ['backend-top-production-0f82.up.railway.app', '127.0.0.1', 'localhost']
 
 # Configuración de seguridad HTTPS
 #SECURE_SSL_REDIRECT = False
@@ -50,17 +50,17 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True
 
 # Configuración de CORS
 CORS_ALLOWED_ORIGINS = [
-    "frontend-react-top.railway.internal",
+    "http://frontend-react-top.railway.internal",
     "http://localhost:8080",
     "http://localhost:3000",
     "http://127.0.0.1:3000" 
 
 ]
 CORS_ALLOW_CREDENTIALS = True
+
 CORS_ALLOW_METHODS = [
     'DELETE',
     'GET',
@@ -116,10 +116,10 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': str(os.getenv('MYSQL_DATABASE')),
-        'USER': str(os.getenv('DATABASE_USER')),
-        'PASSWORD': str(os.getenv('DATABASE_KEY')),
+        'USER': str(os.getenv('MYSQLUSER')),
+        'PASSWORD': str(os.getenv('MYSQLPASSWORD')),
         'HOST': str(os.getenv('DATABASE_HOST')),
-        'PORT': str(os.getenv('DATABASE_PORT'))
+        'PORT': str(os.getenv('MYSQLPORT'))
     }
 }
 
