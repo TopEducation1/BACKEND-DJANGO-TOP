@@ -40,7 +40,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',  # Mover al inicio
+    'corsheaders.middleware.CorsMiddleware', 
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -119,7 +119,7 @@ DATABASES = {
         'USER': str(os.getenv('DATABASE_USER')),
         'PASSWORD': str(os.getenv('DATABASE_KEY')),
         'HOST': str(os.getenv('DATABASE_HOST')),
-        'PORT': '19750'
+        'PORT': str(os.getenv('DATABASE_PORT'))
     }
 }
 
