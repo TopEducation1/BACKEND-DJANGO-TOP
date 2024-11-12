@@ -55,6 +55,7 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'https://backend-django-top-production.up.railway.app',
+    'https://frontend-react-top-production.up.railway.app/'
 ]
 
 CORS_ALLOW_CREDENTIALS = True
