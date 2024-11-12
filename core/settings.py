@@ -18,6 +18,7 @@ DEBUG = True  # Cambiar a False en producción
 ALLOWED_HOSTS = ['backend-django-top-production.up.railway.app', '127.0.0.1', 'localhost']
 
 # Configuración de seguridad HTTPS
+"""
 SECURE_SSL_REDIRECT = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_HSTS_SECONDS = 31536000  # 1 año
@@ -25,6 +26,7 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
+"""
 
 
 # Application definition
@@ -53,13 +55,7 @@ MIDDLEWARE = [
 
 
 # Configuración de CORS
-CORS_ALLOWED_ORIGINS = [
-    "https://frontend-react-top-production.up.railway.app/",
-    "http://localhost:8080",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000" 
-
-]
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_METHODS = [
@@ -84,10 +80,12 @@ CORS_ALLOW_HEADERS = [
 
 
 # Configuración de cookies seguras
+"""
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 CSRF_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_SAMESITE = 'Lax'
+"""
 
 # El resto de tu configuración permanece igual
 ROOT_URLCONF = 'core.urls'
