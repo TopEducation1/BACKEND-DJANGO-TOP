@@ -15,7 +15,7 @@ SECRET_KEY = str(os.getenv('SECRET_KEY'))
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True  # Cambiar a False en producción
 
-ALLOWED_HOSTS = ['backend-top-production-0f82.up.railway.app', '127.0.0.1', 'localhost']
+ALLOWED_HOSTS = ['backend-django-top-production.up.railway.app', '127.0.0.1', 'localhost']
 
 # Configuración de seguridad HTTPS
 #SECURE_SSL_REDIRECT = False
@@ -52,7 +52,7 @@ MIDDLEWARE = [
 
 
 # Configuración de CORS
-CORS_ALLOWED_ORIGINS = [   
+CORS_ALLOWED_ORIGINS = [
     "https://frontend-react-top-production.up.railway.app/",
     "http://localhost:8080",
     "http://localhost:3000",
@@ -81,8 +81,6 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
-# Eliminar CORS_ALLOW_ALL_ORIGINS ya que es inseguro en producción
-# CORS_ALLOW_ALL_ORIGINS = True
 
 # Configuración de cookies seguras
 SESSION_COOKIE_SECURE = False
