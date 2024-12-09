@@ -10,14 +10,14 @@ class Command(BaseCommand):
         university_images = {
             'Universidad de Palermo': 'assets/Universidades/Universidad-de-Palermo.png',
             'Pontificia Universidad Catolica de Chile': 'assets/Universidades/Pontificia-Universidad-Catolica-de-Chile.png',
-            'SAE-MÉXICO': 'assets/Universidades/SAE-México.png',
+            'SAE-México': 'assets/Universidades/SAE-México.png',
             'Universidad Anáhuac': 'assets/Universidades/Universidades-Anáhuac.png',
             'Berklee College of Music': 'assets/Universidades/Berklee-College-of-Music.png',
             'Universitat de Barcelona': 'assets/Universidades/Universitat-Autònoma-de-Barcelona.png',
             'Universidad Autónoma de Barcelona': 'assets/Universidades/Universitat-Autònoma-de-Barcelona.png',
             'Yad Vashem': 'assets/Universidades/Yad-Vashem.png',
             'Universidad de los Andes': 'assets/Universidades/Universidad-de-los-Andes.png',
-            'Universidad Nacional Autónoma de Mexico': 'assets/Universidades/UNAM.png',
+            'UNAM': 'assets/Universidades/UNAM.png',
             'Universidad Austral': 'assets/Universidades/Universidad-Austral.png',
             'University of New Mexico': 'assets/Universidades/University-of-New-Mexico.png',
             'Macquarie University': 'assets/Universidades/Macquarie-University.png',
@@ -38,21 +38,38 @@ class Command(BaseCommand):
             'Pontificia Universidad Catolica de Chile': 'assets/Universidades/Pontificia-Universidad-Católica-de-Chile.png',
             'Wesleyan University': 'assets/Universidades/Wesleyan-University.png',
             'University of California, Irvine': 'assets/Universidades/University-of-California,-Irvine.png',
-            'IE Business School': 'assets/Universidades/IE-Business-School.png'
+            'IE Business School': 'assets/Universidades/IE-Business-School.png',
+            'university-of-florida': 'assets/Universidades/university-of-florida.png',
+            'princeton-university': 'assets/Universidades/princeton-university.png',
+            'The-State-University-of-New-York': 'assets/Universidades/The-State-University-of-New-York.png',
+            'University-of-Maryland-College-Park': 'assets/Universidades/University-of-Maryland-College-Park',
+            'universidad-autónoma-metropolitana': 'assets/Universidades/universidad-autónoma-metropolitana',
+            'Università-di-Napoli-Federico-II': 'assets/Universidades/Università-di-Napoli-Federico-II',
+            'university-of-minnesota': 'assets/Universidades/university-of-minnesota',
+            'Universidad Nacional de Colombia': 'assets/Universidades/Universidad-nacional-de-colombia.png',
+            'University of Cape Town': 'assets/Universidades/University-of-cape-town.png',
+            'ESADE Business and Law School': 'assets/Universidades/',
+            'Università di Napoli Federico II': 'assets/Universidades/Università-di-Napoli-Federico-II.png',
+            'ESADE-Business-and-Law-School': 'assets/Universidades/ESADE-Business-and-Law-School.png',
+            'universidad-autónoma-metropolitana': 'assets/Universidades/universidad-autónoma-metropolitana.png',
+            'Yale University': 'assets/Universidades/Yale-University.png'
+
+
+
         }
         return university_images.get(university_name)
 
     def assign_platform_image(self, platform_name):
         platform_images = {
-            'edX': 'assets/Plataformas/Edx Mini logo.svg',
-            'Coursera': 'assets/Plataformas/Coursera mini logo.svg',
+            'edX': 'assets/Plataformas/Edx Mini logo.png',
+            'Coursera': 'assets/Plataformas/Coursera mini logo.png',
             'MasterClass': 'assets/Plataformas/MasterClass logo mini.svg',
         }
         return platform_images.get(platform_name)
     
     def assign_enterprise_image(self, enterprise_name):
         enterprise_images = {
-            'Capitals Coalition': 'assets/Empresas/nonx',
+            'Capitals Coalition': 'assets/Empresas/Capitals-Coalition.png',
             'DeepLearning.AI': 'assets/Empresas/DeepLearning.AI.png',
             'Big Interview': 'assets/Empresas/Big-Interview.png',
             'UBITS': 'assets/Empresas/UBITS.png',
@@ -61,9 +78,13 @@ class Command(BaseCommand):
             'Pathstream': 'assets/Empresas/Pathstream.png',
             'SalesForce': 'assets/Empresas/Salesforce.png',
             'The Museum of Modern Art': 'assets/Empresas/Museum-of-Modern-Art.png',
-            'Banco Interamericano de Desarrollo': '',
+            'Banco Interamericano de Desarrollo': 'assets/Empresas/Banco-Interamericano-de-Desarrollo.png',
             'Yad Vashem': 'assets/Empresas/Yad-Vashem.png',
-            'Salesforce, SV Academy': 'assets/Empresas/Salesforce-SV-Academy.png'
+            'Salesforce, SV Academy': 'assets/Empresas/Salesforce-SV-Academy.png',
+            'hpe-aruba-networking': 'assets/Empresas/hpe-aruba-networking.png',
+            'deep-teaching-solutions': 'assets/Empresas/deep-teaching-solutions.png',
+            'Google Cloud': 'assets/Empresas/Google-Cloud.png',
+            'Berklee College of Music': 'assets/Empresas/Berklee-College-of-Music.png'
         }
         return enterprise_images.get(enterprise_name)
     
@@ -78,10 +99,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
         # Lee el archivo Excel
-        excel_path = "C:\\Users\\felip\\Documents\\TOPEDUCATIONMICROSERVICES\\backend-django\\topeducation\\management\\commands\\test89.xlsx"
+        excel_path = "C:\\Users\\felip\\Documents\\TOPEDUCATIONEENVDESARROLLO\\BACKEND-TOP\\topeducation\\management\\commands\\test89.xlsx"
         
         # Imprimir información de depuración
-        df = pd.read_excel(excel_path, skiprows=1, nrows= 384)
+        df = pd.read_excel(excel_path, skiprows=1)
         print("Columnas en el DataFrame:")
         for col in df.columns:
             print(f"- {col}")
@@ -159,7 +180,7 @@ class Command(BaseCommand):
                         lenguaje_certificacion=row['Idioma'],
                         aprendizaje_certificacion=row['¿Qué aprenderás?'],
                         habilidades_certificacion =row['Habilidades que obtendrás'],
-                        experiencia_certificacion= row['Adquiere experiencia en la materia de tu interés\n'],
+                        experiencia_certificacion= row['Adquiere experiencia en la materia de tu interés'],
                         contenido_certificacion = row['Contenido'],
                         modulos_certificacion=row['Modulos'],
                         testimonios_certificacion=row['Testimonios'],
