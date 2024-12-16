@@ -62,6 +62,21 @@ class CertificationList(APIView):
         serializer = CertificationSerializer(paginated_queryset, many = True)
 
         return paginator.get_paginated_response(serializer.data)
+
+class CertificationsCafam(APIView):
+    
+    def get(self, request):
+        
+        #Recibir el parametro de la cantidad de certificaciones
+        amount = int(request.query_params.get('amount', 7))
+        
+        #Consultar las certificaciones limitando la cantidad
+        certificationsCafam_queryset = Certificaciones.objects.all()[:amount]
+        
+        
+        serializer = CertificationSerializer(certificationsCafam_queryset, many = True)
+        
+        return Response(serializer.data, status=status.HTTP_200_OK)
     
     
 
