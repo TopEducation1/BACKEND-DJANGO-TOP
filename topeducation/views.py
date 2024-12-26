@@ -81,23 +81,42 @@ class CertificationsCafam(APIView):
     
 
 @csrf_exempt
-@api_view(['POST'])
-def receive_tags(request):
-    if request.method == 'POST':
-        tags = request.data.get('tags', [])
-        if not isinstance(tags, list):
-            return Response({"Error": "Formato de datos invalido"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        
-        if not all(isinstance(tag, str) for tag in tags):
-            return Response({"Error": "Cada tag debe ser una cadena de texto"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        print(f"Tags recibidos: {tags}")
-        
-        
-        return Response({"message": "Tags recibidos correctamente"}, status = status.HTTP_200_OK)
+@api_view(['GET'])
+def filter_certifications(request):
+    tema = request.GET.get('temas')
+    plataforma = request.GET.get('plataformas')
+    empresa = request.GET.get('empresas')
+    universidad = request.GET.get('universidades')
+    page = int(request.GET.get('page', 1))
+    page_size = int(request.GET.get('page_size', 16))
     
-    return Response({"error": "Metodo no permitido"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+    queryset = Certificaciones.objects.all()
+    
+    if tema:
+        temas = tema.split(',')
+        queryset = queryset.filter(tema_certificacion__nombre__in=temas)
+    
+    if plataforma:
+        plataformas = plataforma.split(',')
+        queryset = queryset.filter(plataforma_certificacion__nombre__in=plataformas)
+    
+    if empresa:
+        empresas = empresa.split(',')
+        queryset = queryset.filter(empresa_certificacion__in=empresas)
+        
+    if universidad:
+        universidades = universidad.split(',')
+        queryset = queryset.filter(universidad_certificacion__nombre__in=universidades)
+
+    paginator = paginator(queryset, page_size)
+    results = paginator.get_page(page)
+    
+    serializer = CertificationSerializer(results, many=True)
+    
+    return Response({
+        'count': paginator.count,
+        'results': serializer.data
+    })
 
 
 
