@@ -81,7 +81,7 @@ class CertificationsCafam(APIView):
     
 
 @csrf_exempt
-@api_view(['GET'])
+@api_view(['GET'])  # Changed to GET since frontend uses GET
 def filter_certifications(request):
     tema = request.GET.get('temas')
     plataforma = request.GET.get('plataformas')
