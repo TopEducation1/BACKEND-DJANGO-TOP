@@ -159,12 +159,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 MEDIA_URL = '/ASSETS/'
-MEDIA_ROOT = os.path.join('C:/Users/felip/Documents/TOPEDUCATIONMICROSERVICES/frontend-react/public/assets')
+
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'static'),
-]
+
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
