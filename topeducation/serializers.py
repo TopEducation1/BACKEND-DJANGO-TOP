@@ -63,8 +63,7 @@ class CertificationSerializer(serializers.ModelSerializer):
             modulos_raw = data['modulos_certificacion'].split('\n')
             modulos_procesados = []
             current_module = None
-            print(modulos_raw[0])
-            print(modulos_raw[1])
+            
             
             for linea in modulos_raw:
                 linea = linea.strip()
@@ -125,6 +124,8 @@ class CertificationSerializer(serializers.ModelSerializer):
 
         # Modificar la representación final de los datos
         data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
+        
+        data['plataforma_certificacion_id'] = instance.plataforma_certificacion_id
 
         return data
 

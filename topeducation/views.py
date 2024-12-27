@@ -201,79 +201,76 @@ class CertificationDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-
 class filter_by_tags(APIView):
-    
     pagination_class = CustomPagination
     
     def get(self, request):
-        params = dict(request.GET)
-        
-        
-        # Extraer datos de paginacion
-        page = params.pop('page', [1])[0]
-        page_size = params.pop('page_size', [12])[0]
-        
-        #Limpiar y validar parametros
-        cleaned_params = {}
-        
-        
-        # Convertir los valores de params de listas a valores individuales si es necesario
-        for key, values in params.items():
-            if isinstance(values, list):
-                cleaned_params[key] = [tag.strip() for tag in values[0].split(',') if tag.strip()]
-            else:
-                cleaned_params[key] = [values.strip()] if values.strip() else []
+        try:
+            # Obtener los parámetros de la request
+            params = request.query_params.dict()
+            print(params)
+            
+            # Extraer parámetros de paginación
+            page = params.pop('page', '1')
+            page_size = params.pop('page_size', '12')
+            
+            # Iniciar el queryset base
+            queryset = Certificaciones.objects.all()
+            
+            if 'plataforma' in params:
+                platform_name = params['plataforma']
+                print(platform_name)
+                platform_mapping = {
+                    'EdX': 1,
+                    "Coursera": 2,
+                    'MasterClass': 3
+                }
                 
-        category_to_model = {
-            'tema': Temas,
-            'universidad': Universidades,
-            'empresa': Empresas,
-            'plataforma': Plataformas,
-            'habilidad': Habilidades
-        }
-        
-        queryset = Certificaciones.objects.all().select_related(
-            'tema_certificacion'
-        )
-        
-        
-        
-        # Para depuración
-        print("Parámetros recibidos:", params)
-        
-        for category, tags in cleaned_params.items():
-            if category in category_to_model and tags:
-                model = category_to_model[category]
-                category_q = Q()
+                platform_id = platform_mapping.get(platform_name)
+                print(platform_id)
+                if platform_id:
+                    queryset = queryset.filter(plataforma_certificacion_id = platform_id)
+                    print(queryset)
                 
-                # Construir query para tags dentro de la categoría (OR)
-                for tag in tags:
-                    # Obtener el ID del tag
-                    try:
-                        tag_obj = model.objects.get(nombre=tag)
-                        field_name = f"{category}_certificacion"
-                        category_q |= Q(**{f"{field_name}": tag_obj})
-                    except model.DoesNotExist:
-                        print(f"Tag no encontrado: {tag} en categoría {category}")
-                        continue
                 
-                # Aplicar el filtro de esta categoría
-                if category_q:
-                    queryset = queryset.filter(category_q)
-                    # Para depuración
-                    print(f"Cantidad de resultados después de filtrar {category}:", queryset.count())
-                    print("Query SQL:", queryset.query)
-                    
-        paginator = self.pagination_class()
-        paginated_queryset = paginator.paginate_queryset(queryset, request)
-        
-        
-        
-        serializer = CertificationSerializer(paginated_queryset, many=True)
-        print(serializer.data)
-        return paginator.get_paginated_response(serializer.data)
-    
+            
+            # Mapeo de parámetros del frontend a campos del modelo
+            field_mapping = {
+                'temas': 'tema_certificacion__nombre',
+                'universidad': 'universidad_certificacion__nombre',
+                'empresa': 'empresa_certificacion__nombre',
+            }
+            
+            
+            
+            # Aplicar filtros
+            for param, values in params.items():
+                if param in field_mapping and param != 'plataforma':
+                    field_name = field_mapping[param]
+                    # Si el valor viene como lista separada por comas
+                    if ',' in values:
+                        tags = [tag.strip() for tag in values.split(',')]
+                        queryset = queryset.filter(**{f"{field_name}__in": tags})
+                    else:
+                        queryset = queryset.filter(**{f"{field_name}": values})
+                        print(queryset)
+                        
+            # Aplicar paginación
+            paginator = self.pagination_class()
+            paginated_queryset = paginator.paginate_queryset(queryset, request)
+            
+            # Serializar resultados
+            serializer = CertificationSerializer(paginated_queryset, many=True)
+            
+            # Retornar respuesta paginada
+            return paginator.get_paginated_response(serializer.data)
+            
+        except Exception as e:
+            print(f"Error en filter_by_tags: {str(e)}")
+            return Response(
+                {'error': 'Error al filtrar certificaciones'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
 
 
