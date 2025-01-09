@@ -231,6 +231,58 @@ class filter_by_tags(APIView):
                 if platform_id:
                     queryset = queryset.filter(plataforma_certificacion_id = platform_id)
                     print(queryset)
+            
+            if 'empresas' in params:
+                empresa_nombre = params['empresas']
+                print(empresa_nombre)
+                empresa_mapping = {
+                    'Capitals Coalition': 1,
+                    'DeepLearning.AI': 2,
+                    'Big Interview': 3,
+                    'UBITS': 4,
+                    'HubSpot Academy': 5,
+                    'SV Academy': 6,
+                    'Pathstream': 7,
+                    'Salesforce': 8,
+                    'The Museum of Modern Art': 9,
+                    'Banco Interamericano de Desarrollo': 10,
+                    'Yad Vashem': 11,
+                    'Google': 12 ,
+                    'Microsoft': 13,
+                    'Google Cloud': 21,
+                    'Salesforce, SV Academy': 22,
+                    'HPE Aruba Networking': 23,
+                    'Deep Teaching Solutions': 24,
+                    'edX': 25,
+                    'IBM': 26,
+                    'Qualtrics XMI':27,
+                    'Intuit': 28,
+                    'EIT_Food': 29,
+                    'RedHat': 30,
+                    'LTTx': 31,
+                    'Statistics.com': 32,
+                    'Banco Estatal de la India': 33,
+                    'AWS': 34,
+                    'IIM Bangalore Marketing': 35,
+                    'HP': 36,
+                    'Xccelerate': 37,
+                    'ArmEducation': 38,
+                    'LinuxFoundation': 39,
+                    'Fundación Raspberry Pi': 40,
+                    'Asociación Estadounidense de Psicología': 41,
+                    'MindEdge': 42,
+                    'NEMIC': 43,
+                    'Smithsonian': 44,
+                    'Catalyst': 45,
+                    'Logyca': 46  
+                }
+                
+                empresa_id = empresa_mapping.get(empresa_nombre)
+                print(empresa_id)
+                if empresa_id:
+                    queryset = queryset.filter(empresa_certificacion = empresa_id)
+                    print(queryset)
+                
                 
                 
             
@@ -239,9 +291,7 @@ class filter_by_tags(APIView):
                 'temas': 'tema_certificacion__nombre',
                 'universidad': 'universidad_certificacion__nombre',
                 'empresa': 'empresa_certificacion__nombre',
-            }
-            
-            
+            }           
             
             # Aplicar filtros
             for param, values in params.items():
