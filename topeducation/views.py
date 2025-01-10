@@ -284,7 +284,108 @@ class filter_by_tags(APIView):
                     queryset = queryset.filter(empresa_certificacion = empresa_id)
                     print(queryset)
                 
-                
+            if 'universidades' in params:
+                universidad_nombre = params['universidades']
+                # Mapping de universidades para el filtrado
+                universidad_mapping = {
+                    'Macquarie University': 1,
+                    'IE Business School': 2,
+                    'Universidad Autónoma de Barcelona': 3,
+                    'Universidad Carlos III de Madrid': 4,
+                    'Universidad Nacional de Colombia': 5,
+                    'University of New Mexico': 6,
+                    'University of Michigan': 7,
+                    'University of Virginia': 8,
+                    'Harvard University': 9,
+                    'Yale University': 10,
+                    'Universidad Austral': 11,
+                    'Universidad de Palermo': 19,
+                    'Pontificia Universidad Catolica de Chile': 20,
+                    'SAE-México': 21,
+                    'Universidad Anáhuac': 22,
+                    'Berklee College of Music': 23,
+                    'Yad Vashem': 24,
+                    'Universidad de los Andes': 25,
+                    'UNAM': 26,
+                    'Universitat de Barcelona': 28,
+                    'Pontificia Universidad Catolica de Peru': 29,
+                    'Duke University': 30,
+                    'California Institute of Arts': 31,
+                    'Wesleyan University': 32,
+                    'University of Colorado Boulder': 33,
+                    'Northwestern University': 34,
+                    'The University of North Carolina at Chapel Hill': 35,
+                    'University of California, Irvine': 36,
+                    'Tecnológico de Monterrey': 37,
+                    'University of Illinois Urbana-Champaign': 38,
+                    'Museum of Modern Art': 39,
+                    'Parsons School of Design, The New School': 40,
+                    'The Chinese University of Hong Kong': 41,
+                    'University of Cape Town': 42,
+                    'IESE Business School': 43,
+                    'Universidad Autónoma Metropolitana': 73,
+                    'University of Maryland, College Park': 74,
+                    'University of Florida': 75,
+                    'Princeton University': 76,
+                    'Università di Napoli Federico II': 77,
+                    'The State University of New York': 78,
+                    'University of Minnesota': 79,
+                    'Stanford University': 80,
+                    'Columbia University': 81,
+                    'University Carlos III of Madrid': 82,
+                    'Massachusetts Institute of Technology': 83,
+                    'The University of Chicago': 84,
+                    'University of Toronto': 85,
+                    'Peking University': 86,
+                    'Universitat Politècnica de València': 87,
+                    'Universidad de Maryland Estados Unidos': 88,
+                    'Universidad del Rosario': 89,
+                    'Universidad y centro de investigación de Wageningen': 90,
+                    'Rochester Institute of Technology': 91,
+                    'Universidad de los Estudios de Nápoles Federico II': 92,
+                    'New York Institute of Finance': 93,
+                    'Universidad de Waseda': 94,
+                    'LCI Education': 95,
+                    'Universidad Tecnológica de Delft': 96,
+                    'Babson College': 97,
+                    'Pontificia Universidad Javeriana': 98,
+                    'University of California, Davis': 99,
+                    'HEC Montreal': 100,
+                    'SDG Academy': 101,
+                    'University of Maryland, Baltimore County': 102,
+                    'Universidad Católica de Lovaina': 103,
+                    'Instituto Orfeo': 104,
+                    'Universidad de Alaska Fairbanks': 105,
+                    'Universidad Nacional de Córdoba': 106,
+                    'National University of Singapore': 107,
+                    'RWTH Aachen University': 108,
+                    'EdimburgoX': 109,
+                    'The University of Adelaide': 110,
+                    'Universidad Autónoma de Madrid': 111,
+                    'Universidad de Tel Aviv': 112,
+                    'Universidad Técnica de Múnich': 113,
+                    'Davidson College': 114,
+                    'Universidad de Maryland': 115,
+                    'Academia de Mar X': 116,
+                    'Imperial College de Londres': 117,
+                    'Universidad Politécnica de Hong Kong': 118,
+                    'Universidad Côte d\'Azur': 119,
+                    'Universidad de Doane': 120,
+                    'Escuela Politécnica Federal de Lausana': 121,
+                    'Universidad de Curtin': 122,
+                    'Universidad de Washington': 123,
+                    'Universidad de Massachusetts Estados Unidos': 124,
+                    'Universidad Nacional de Singapur': 125,
+                    'Escuela de Negocios Sauder de la UBC': 127,
+                    'EdX': 176
+                }
+                universidad_id = universidad_mapping.get(universidad_nombre)
+                if universidad_id:
+                    queryset = queryset.filter(universidad_certificacion_id = universidad_id)
+                    print(universidad_id)
+                else:
+                    print("FALLO ID")
+        
                 
             
             # Mapeo de parámetros del frontend a campos del modelo
@@ -312,6 +413,7 @@ class filter_by_tags(APIView):
             
             # Serializar resultados
             serializer = CertificationSerializer(paginated_queryset, many=True)
+            
             
             # Retornar respuesta paginada
             return paginator.get_paginated_response(serializer.data)
