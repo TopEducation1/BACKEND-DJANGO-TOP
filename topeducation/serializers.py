@@ -1,4 +1,5 @@
 # certifications/serializers.py
+from datetime import datetime
 from rest_framework import serializers
 from .models import *
 from django.db.models import F
@@ -35,6 +36,12 @@ class CertificationSerializer(serializers.ModelSerializer):
         model = Certificaciones
         
         fields = '__all__'  
+        
+    def get_fecha_certificacion(self, instance):
+        fecha = instance.fecha_creado
+        if isinstance(fecha, datetime):
+            return fecha.date()
+        return fecha
     def to_representation(self, instance):
         data = super().to_representation(instance)
         

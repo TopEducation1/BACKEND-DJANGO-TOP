@@ -1,3 +1,4 @@
+from datetime import timedelta, timezone
 import re
 from django.shortcuts import render
 from rest_framework import viewsets
@@ -373,4 +374,41 @@ class filter_by_search(APIView):
         return Response(
             serializer.data,
             status=status.HTTP_200_OK
+        )
+        
+        
+@api_view(['GET'])
+def latest_certifications(request):
+    try:
+        page = int(request.GET.get('page', 1))
+        page_size = int(request.GET.get('page_size', 16))
+        
+        # Obtener certificaciones de los últimos 10 días
+        limit_date = datetime.now() - timedelta(days=10)
+        
+        # Obtener y ordenar las certificaciones
+        queryset = Certificaciones.objects.filter(
+            fecha_creado__gte=limit_date
+        ).order_by('-fecha_creado')
+        
+        # Crear el paginador
+        paginator = CustomPagination()
+        paginator.page_size = page_size
+        
+        # Paginar el queryset
+        paginated_queryset = paginator.paginate_queryset(queryset, request)
+        
+        # Serializar los resultados
+        serializer = CertificationSerializer(paginated_queryset, many=True)
+        
+        print(serializer.data)
+        
+        # Usar el método de paginación personalizada
+        return paginator.get_paginated_response(serializer.data)
+        
+    except Exception as e:
+        print(e)
+        return Response(
+            {'error': f'Error al obtener las certificaciones recientes: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
