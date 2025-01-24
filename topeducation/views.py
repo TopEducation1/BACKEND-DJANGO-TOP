@@ -393,13 +393,13 @@ class filter_by_tags(APIView):
                 'temas': 'tema_certificacion__nombre',
                 'universidad': 'universidad_certificacion__nombre',
                 'empresa': 'empresa_certificacion__nombre',
+                'habilidades': 'tema_certificacion__nombre'
             }           
             
             # Aplicar filtros
             for param, values in params.items():
                 if param in field_mapping and param != 'plataforma':
                     field_name = field_mapping[param]
-                    # Si el valor viene como lista separada por comas
                     if ',' in values:
                         tags = [tag.strip() for tag in values.split(',')]
                         queryset = queryset.filter(**{f"{field_name}__in": tags})
