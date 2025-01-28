@@ -56,7 +56,7 @@ CORS_ALLOWED_ORIGINS = [
     'https://backend-django-top-production.up.railway.app',
     'https://frontend-react-top-production.up.railway.app',
     'https://top.education'
-    'www.top.education'
+    'https://www.top.education'
 ]
 
 CORS_ALLOW_CREDENTIALS = True
