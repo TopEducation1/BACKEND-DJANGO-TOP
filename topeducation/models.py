@@ -95,7 +95,8 @@ class Certificaciones(models.Model):
     url_imagen_plataforma_certificacion = models.TextField(blank=True, null=True)
     url_imagen_empresa_certificacion = models.TextField(blank=True, null=True)
     imagen_final = models.TextField(blank=True, null=True)
-    fecha_creado = models.DateField(auto_now_add=True, null=False)
+    fecha_creado_cert = models.DateField(auto_now_add=True, null=False)
+    video_certificacion = models.CharField(default='None', null = True, max_length=1000)
     
     def __str__(self):
         

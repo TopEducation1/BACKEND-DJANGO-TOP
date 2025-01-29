@@ -87,12 +87,13 @@ class Command(BaseCommand):
                         contenido_certificacion=row['Lecciones'],
                         nivel_certificacion="NONE",  # Campo por defecto si es necesario
                         lenguaje_certificacion="NONE",  # Campo por defecto si es necesario
-                        experiencia_certificacion="NONE",  # Campo por defecto si es necesario
+                        experiencia_certificacion=row["Acerca de esta clase"],  # Campo por defecto si es necesario
                         modulos_certificacion="NONE",  # Campo por defecto si es necesario
                         testimonios_certificacion=descripcion_instructor,  # Usamos este campo para la descripción del instructor
                         url_imagen_plataforma_certificacion=platform_img,
                         tema_certificacion_id = certification_topic.id,
-                        url_imagen_universidad_certificacion = row['Imagen']
+                        url_imagen_universidad_certificacion = row['Imagen'],
+                        video_certificacion = row['Link video'] 
                         
                     )
                     print(f"✓ Curso importado exitosamente: {row['Titulo']}")

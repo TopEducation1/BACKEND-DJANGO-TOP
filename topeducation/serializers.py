@@ -128,6 +128,16 @@ class CertificationSerializer(serializers.ModelSerializer):
                 for index, aprendizaje in enumerate(data['aprendizaje_certificacion'].split('\n'))
                 if aprendizaje.strip()
             ]
+            
+        # Procesamiento del video
+        if isinstance(data.get('video_certificacion'), str):
+            video_url = data['video_certificacion'].strip()
+            if video_url:
+                data['video_certificacion'] = {
+                    "url": video_url
+                }
+            else:
+                data['video_certificacion'] = None
 
         # Modificar la representación final de los datos
         data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
