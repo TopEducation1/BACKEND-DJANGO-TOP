@@ -4,7 +4,8 @@ from django.db import transaction
 from topeducation.models import *
 
 class Command(BaseCommand):
-    help = 'Importar cursos desde un archivo Excel y asignar imágenes a las plataformas y universidades'
+    help = 'Importar cursos desde un archivo Excel y asignar imágenes a las plataformas y universidades para que concuerden'
+
 
     def assign_university_image(self, university_name):
         university_images = {
