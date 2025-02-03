@@ -1,8 +1,5 @@
 from django.db import models
-
-
-
-
+from django.utils.text import slugify
 
 class Habilidades (models.Model):
     nombre = models.CharField(max_length=250)
@@ -73,6 +70,7 @@ class Plataformas (models.Model):
 
 class Certificaciones(models.Model):
     nombre = models.CharField(max_length=500)
+    slug = models.SlugField(max_length=500, default="default-slug")
     tema_certificacion = models.ForeignKey(Temas, on_delete=models.SET_NULL, null=True)
     palabra_clave_certificacion = models.TextField()
     plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.SET_NULL, null=True)
@@ -97,6 +95,18 @@ class Certificaciones(models.Model):
     imagen_final = models.TextField(blank=True, null=True)
     fecha_creado_cert = models.DateField(auto_now_add=True, null=False)
     video_certificacion = models.CharField(default='None', null = True, max_length=1000)
+    
+    def save(self, *args, **kwargs):
+        if not self.slug or self.slug.startswith("slice"):  # Si el slug es inválido
+            # Generar slug desde el nombre (¡sin slices!)
+            self.slug = slugify(self.nombre)  # ← ¡Corregir aquí!
+            # Asegurar unicidad
+            base_slug = self.slug
+            counter = 1
+            while Certificaciones.objects.filter(slug=self.slug).exists():
+                self.slug = f"{base_slug}-{counter}"
+                counter += 1
+        super().save(*args, **kwargs)
     
     def __str__(self):
         

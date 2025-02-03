@@ -144,17 +144,17 @@ class TopicsList (APIView):
 
 # Esta función obtiene el id de la certificación que el usuario quiere ver en vista especifica y retorna toda su información
 class CertificationDetailView(APIView):
-    def get(self, request, id):
+    def get(self, request, slug):
         try:
-            # Validar que el id existe
-            if not id:
+            if not slug:
                 return Response(
-                    {'Error': 'Se requiere el ID de la certificación'},
+                    {'Error': 'Se requiere el nombre de la certificación'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
             # Obtener la certificación   
-            certification = Certificaciones.objects.get(id=id)
+            print("VISTA DETALLADAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            certification = Certificaciones.objects.get(slug=slug)
             
             # Separar cada instructor y formatear para mayor facilidad de mostrar en el front
             certification_instructors = certification.instructores_certificacion.split('\n')
