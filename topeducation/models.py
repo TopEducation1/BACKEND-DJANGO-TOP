@@ -97,10 +97,8 @@ class Certificaciones(models.Model):
     video_certificacion = models.CharField(default='None', null = True, max_length=1000)
     
     def save(self, *args, **kwargs):
-        if not self.slug or self.slug.startswith("slice"):  # Si el slug es inválido
-            # Generar slug desde el nombre (¡sin slices!)
-            self.slug = slugify(self.nombre)  # ← ¡Corregir aquí!
-            # Asegurar unicidad
+        if not self.slug or self.slug.startswith("slice"):
+            self.slug = slugify(self.nombre) 
             base_slug = self.slug
             counter = 1
             while Certificaciones.objects.filter(slug=self.slug).exists():
@@ -109,7 +107,6 @@ class Certificaciones(models.Model):
         super().save(*args, **kwargs)
     
     def __str__(self):
-        
         return self.nombre
     
     class Meta:
@@ -137,7 +134,6 @@ class Blog(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug or self.slug.startswith("slice") or self.slug == 'default-slug':  
             self.slug = slugify(self.titulo_blog) 
-            # Asegurar unicidad
             base_slug = self.slug
             counter = 1
             while Blog.objects.filter(slug=self.slug).exists():
