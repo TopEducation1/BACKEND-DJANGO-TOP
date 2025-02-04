@@ -7,6 +7,14 @@ from django.db.models import F
 
 # CONVIERTE LOS MODELOS EN JSON PARA CONSUMIRLOS DESDE EL FRONT
 
+class BlogSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = Blog
+        
+        fields = '__all__'
+        
+
 class SkillsSerializer(serializers.ModelSerializer):
     
     class Meta:

@@ -38,6 +38,25 @@ class CustomPagination(PageNumberPagination):
 
 
 
+#Api config to get the blogs
+class BlogList(APIView):
+    
+    pagination_class = CustomPagination
+    
+    #GET METHOD REQUESTED BY THE FRONT
+    
+    def get(self, request):
+        
+        blogs_queryset = Blog.objects.all()
+        
+        paginator = self.pagination_class()
+        
+        paginated_queryset = paginator.paginate_queryset(blogs_queryset, request)
+        
+        serializer = BlogSerializer(paginated_queryset, many = True)
+        
+        return paginator.get_paginated_response(serializer.data)
+
 
 # EndPoint to get the certifications
 class CertificationList(APIView):
@@ -153,7 +172,6 @@ class CertificationDetailView(APIView):
                 )
             
             # Obtener la certificación   
-            print("VISTA DETALLADAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
             certification = Certificaciones.objects.get(slug=slug)
             
             # Separar cada instructor y formatear para mayor facilidad de mostrar en el front

@@ -131,11 +131,11 @@ class Blog(models.Model):
     contenido_blog = models.TextField(blank=True, null=True)
     autor_blog = models.ForeignKey(Autor, on_delete=models.SET_NULL, null=True, blank=True)
     url_imagen_blog = models.TextField(blank=True, null=True)
-    fecha_blog_redacccion = models.DateField(auto_now_add=True, null=False, blank=False)
+    fecha_blog_redaccion = models.DateField(auto_now_add=True, null=False, blank=False)
     
     class Meta:
         db_table = "blog"
-        ordering = ['-fecha_blog_redacccion'] # Ordenar por fecha de redaccion descendente
+        ordering = ['-fecha_blog_redaccion'] # Ordenar por fecha de redaccion descendente
         verbose_name = "Blog"
         verbose_name_plural = "Blogs"
         
