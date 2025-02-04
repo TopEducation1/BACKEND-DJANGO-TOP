@@ -13,5 +13,6 @@ urlpatterns = [
     path('certificaciones/busqueda/', filter_by_search.as_view(), name='filter_by_search'),
     path('certificacionesInterest/', CertificationsCafam.as_view(), name="certificaciones_interest"),
     path('ultimasCertificaciones/', latest_certifications, name="last_certifications"),
-    path('blogs/', BlogList.as_view(), name="blog-list")
+    path('blogs/', BlogList.as_view(), name="blog-list"),
+    path('blog/<slug:slug>/', BlogDetailView.as_view(), name="get-blog")
 ]

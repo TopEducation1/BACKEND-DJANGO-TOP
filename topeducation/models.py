@@ -127,15 +127,27 @@ class Autor(models.Model):
     
         
 class Blog(models.Model):
+    slug = models.SlugField(max_length=500, default="default-slug")
     titulo_blog = models.CharField(max_length=300, default='titulo', blank=False, null=False)
     contenido_blog = models.TextField(blank=True, null=True)
     autor_blog = models.ForeignKey(Autor, on_delete=models.SET_NULL, null=True, blank=True)
     url_imagen_blog = models.TextField(blank=True, null=True)
     fecha_blog_redaccion = models.DateField(auto_now_add=True, null=False, blank=False)
     
+    def save(self, *args, **kwargs):
+        if not self.slug or self.slug.startswith("slice") or self.slug == 'default-slug':  
+            self.slug = slugify(self.titulo_blog) 
+            # Asegurar unicidad
+            base_slug = self.slug
+            counter = 1
+            while Blog.objects.filter(slug=self.slug).exists():
+                self.slug = f"{base_slug}-{counter}"
+                counter += 1
+        super().save(*args, **kwargs)
+    
     class Meta:
         db_table = "blog"
-        ordering = ['-fecha_blog_redaccion'] # Ordenar por fecha de redaccion descendente
+        ordering = ['-fecha_blog_redaccion']
         verbose_name = "Blog"
         verbose_name_plural = "Blogs"
         

@@ -160,6 +160,35 @@ class TopicsList (APIView):
         return Response(topics_serializer.data)
     
 
+class BlogDetailView(APIView):
+    
+    def get(self, request, slug):
+        try:
+            if not slug:
+                return Response(
+                    {'Error': 'Se requiere el nombre de el blog'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+            blog = Blog.objects.get(slug = slug)
+            
+            serializer = BlogSerializer(blog)
+            data = serializer.data
+            
+            return Response(data)
+        
+        except Certificaciones.DoesNotExist:
+            
+            return Response(
+                {'error': 'Blog no encontrado'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
+        except ValueError:
+            return Response(
+                {'error': 'Nombre invalido'},
+                status=status.HTTP_400_BAD_REQUEST
+            ) 
 
 # Esta función obtiene el id de la certificación que el usuario quiere ver en vista especifica y retorna toda su información
 class CertificationDetailView(APIView):
