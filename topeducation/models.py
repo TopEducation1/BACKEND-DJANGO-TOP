@@ -113,39 +113,43 @@ class Certificaciones(models.Model):
         db_table = 'Certificaciones'
         
 
+from django.db import models
+
 class Autor(models.Model):
-    nombre_autor = models.CharField(max_length=250, null=False, blank=False)
-    
+    nombre_autor = models.CharField(max_length=255)
+
     class Meta:
-        db_table = "autor"
-    
-    def __str__(self):
-        return self.nombre_autor
-    
-        
+        managed = False  # Para evitar que Django gestione la tabla
+        db_table = 'autores'
+
+class CategoriaBlog(models.Model):
+    nombre_categoria_blog = models.CharField(max_length=255)
+
+    class Meta:
+        managed = False
+        db_table = 'categorias_blog'
+
 class Blog(models.Model):
+    nombre_blog = models.CharField(max_length=255)
+    metadescripcion_blog = models.TextField()
+    miniatura_blog = models.TextField()
+    palabra_clave_blog = models.CharField(max_length=255)
+    autor_blog = models.ForeignKey(Autor, on_delete=models.CASCADE, db_column='autor_blog_id')
+    categoria_blog = models.ForeignKey(CategoriaBlog, on_delete=models.CASCADE, db_column='categoria_blog_id')
+    objetivo_blog = models.TextField()
+    contenido = models.TextField()
     slug = models.SlugField(max_length=500, default="default-slug")
-    titulo_blog = models.CharField(max_length=300, default='titulo', blank=False, null=False)
-    contenido_blog = models.TextField(blank=True, null=True)
-    autor_blog = models.ForeignKey(Autor, on_delete=models.SET_NULL, null=True, blank=True)
-    url_imagen_blog = models.TextField(blank=True, null=True)
-    fecha_blog_redaccion = models.DateField(auto_now_add=True, null=False, blank=False)
     
     def save(self, *args, **kwargs):
         if not self.slug or self.slug.startswith("slice") or self.slug == 'default-slug':  
-            self.slug = slugify(self.titulo_blog) 
+            self.slug = slugify(self.nombre_blog) 
             base_slug = self.slug
             counter = 1
             while Blog.objects.filter(slug=self.slug).exists():
                 self.slug = f"{base_slug}-{counter}"
                 counter += 1
         super().save(*args, **kwargs)
-    
+
     class Meta:
-        db_table = "blog"
-        ordering = ['-fecha_blog_redaccion']
-        verbose_name = "Blog"
-        verbose_name_plural = "Blogs"
-        
-    def __str__(self):
-        return self.titulo_blog
+        managed = False
+        db_table = 'blogs'

@@ -4,7 +4,6 @@ from django.db import transaction
 from topeducation.models import *
 import os
 
-
 class Command(BaseCommand):
     help = 'Importar cursos desde un archivo Excel con nuevo formato de columnas'
 
