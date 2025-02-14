@@ -14,6 +14,25 @@ class BlogSerializer(serializers.ModelSerializer):
         
         fields = '__all__'
         
+        
+    def to_representation(self, instance):
+        
+        representation = super().to_representation(instance)
+        
+        try:
+            
+            auto = Autor.objects.get(id = instance.autor_blog_id)
+            categoria = CategoriaBlog.objects.get(id = instance.categoria_blog_id)
+            representation['categoria_blog_id'] = categoria.nombre_categoria_blog
+            representation['autor_blog_id'] = auto.nombre_autor
+            
+        except CategoriaBlog.DoesNotExist:
+            representation['categoria_blog_id'] = None
+            representation['autor_blog_id'] = None
+        
+        return representation
+            
+        
 
 class SkillsSerializer(serializers.ModelSerializer):
     

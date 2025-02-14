@@ -139,6 +139,9 @@ class Blog(models.Model):
     objetivo_blog = models.TextField()
     contenido = models.TextField()
     slug = models.SlugField(max_length=500, default="default-slug")
+    fecha_redaccion_blog = models.DateField(default='2025-01-01')
+    url_img_autor = models.URLField()
+    url_img_cta = models.URLField()
     
     def save(self, *args, **kwargs):
         if not self.slug or self.slug.startswith("slice") or self.slug == 'default-slug':  
