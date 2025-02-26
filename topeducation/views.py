@@ -82,6 +82,23 @@ class CertificationList(APIView):
         serializer = CertificationSerializer(paginated_queryset, many = True)
 
         return paginator.get_paginated_response(serializer.data)
+    
+    
+#This view is to send the Masterclass certifications to display a masterclasss slider in frontend    
+class MasterclassCertificationsGrids(APIView):
+    
+    def get(self, request):
+        
+        amount = int(request.query_params.get('amount', 3))
+        
+        masterclass_certifications_queryset = Certificaciones.objects.filter(plataforma_certificacion_id = 3)[:amount]
+        
+        serializer = CertificationSerializer(masterclass_certifications_queryset, many = True)
+        
+        return Response (serializer.data, status=status.HTTP_200_OK)     
+
+
+
 
 class CertificationsCafam(APIView):
     

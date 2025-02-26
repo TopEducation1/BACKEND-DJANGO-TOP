@@ -14,5 +14,6 @@ urlpatterns = [
     path('certificacionesInterest/', CertificationsCafam.as_view(), name="certificaciones_interest"),
     path('ultimasCertificaciones/', latest_certifications, name="last_certifications"),
     path('blogs/', BlogList.as_view(), name="blog-list"),
-    path('blog/<slug:slug>/', BlogDetailView.as_view(), name="get-blog")
+    path('blog/<slug:slug>/', BlogDetailView.as_view(), name="get-blog"),
+    path('masterclass-certificaciones-grid/', MasterclassCertificationsGrids.as_view(), name="masterclass-certificaciones-grid/")
 ]

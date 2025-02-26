@@ -30,76 +30,82 @@ class Command(BaseCommand):
             return
 
         # Contenido HTML formateado (el que está arriba)
-        contenido_html = """<h1>edX vs. Coursera ¿Cuál plataforma educativa es mejor?</h1>
-
-<p>En los últimos años, las plataformas educativas en línea se han vuelto indispensables para el aprendizaje a distancia, y dos de las más destacadas son edX y Coursera. Ambas plataformas colaboran con universidades y organizaciones de prestigio para ofrecer una amplia gama de cursos y programas educativos. Desde habilidades técnicas hasta humanidades, edX y Coursera han transformado el acceso al conocimiento a nivel global, permitiendo a millones de personas mejorar sus competencias profesionales y personales.</p>
-
-<p>Este artículo ofrece una comparación objetiva entre las características de edX vs Coursera. Se exploran aspectos como la variedad de cursos, los métodos de aprendizaje, y los beneficios que cada plataforma presenta. Con esta información, podrás evaluar cuál opción se ajusta mejor a sus necesidades y metas educativas, sin una conclusión que favorezca a una plataforma sobre la otra.</p>
-
-<img src="/assets/Piezas/edx_vs_coursera_cual_plataforma_educativa_es_mejor_miniatura.png" alt="edX vs Coursera">
-
-<h2>Origen de edX</h2>
-
-<p>edX es una plataforma educativa en línea fundada en 2012 por el MIT y la Universidad de Harvard, con el objetivo de hacer accesible la educación de calidad a nivel global. Actualmente, cuenta con más de 45 millones de estudiantes y ofrece cursos gratuitos y de pago en áreas como tecnología, negocios y ciencias. Los certificados de cursos varían entre $50 y $300 USD, mientras que los programas avanzados, como micromásters y grados completos, tienen costos más altos.</p>
-
-<h3>Principales características de edX</h3>
-
-<p>edX destaca por sus cursos autoguiados, que permiten a los estudiantes avanzar a su propio ritmo. Ofrece certificaciones verificadas para aquellos que deseen validar sus conocimientos, además de programas de grado en áreas como tecnología, ciencias, negocios y más. La plataforma es conocida por su enfoque en la educación superior, con contenido de alta calidad proveniente de universidades y organizaciones líderes.</p>
-
-<p>Para más información, visita <a href="https://www.edx.org" target="_blank">edx.org</a>.</p>
-
-<h2>Origen de Coursera</h2>
-
-<p>Coursera es una plataforma educativa en línea fundada en 2012 por profesores de la Universidad de Stanford con el objetivo de democratizar la educación de calidad. Colabora con más de 275 universidades y empresas líderes como Google e IBM, ofreciendo cursos gratuitos y de pago en diversas áreas. Cuenta con más de 124 millones de usuarios, y los precios para certificaciones varían entre $39 y $79 USD al mes, con programas de grado que tienen precios más elevados.</p>
-
-<h3>Principales características de Coursera</h3>
-
-<p>Coursera ofrece cursos especializados en diversas disciplinas, con la posibilidad de obtener certificaciones, así como acceder a programas de licenciatura y maestría. Una de sus principales ventajas es la flexibilidad de aprendizaje, ya que los estudiantes pueden elegir entre cursos autoguiados o con fechas límite, adaptándose a su propio ritmo y disponibilidad. Además, sus alianzas con instituciones y empresas aseguran un contenido actualizado y relevante.</p>
-
-<p>Para más información, visita <a href="https://www.coursera.org" target="_blank">coursera.org</a>.</p>
-
-<div class="cta">
-    <a href="https://info.top.education/es-mx/como-encontrar-trabajo-con-poca-experiencia" target="_blank">Cómo encontrar trabajo con poca experiencia</a>
+        contenido_html = """<h1>Guía: cómo encontrar trabajo con poca experiencia</h1>
+ 
+ <p>En un mundo laboral cada vez más competitivo, encontrar trabajo con poca experiencia puede resultar desafiante.</p>
+ 
+ <p>Sin embargo, con la combinación adecuada de estrategias, enfoque y determinación, es posible abrirse camino hacia oportunidades laborales gratificantes y relevantes; esta guía está diseñada para proporcionar consejos prácticos y recursos útiles para aquellos que buscan ingresar al mercado laboral.</p>
+ 
+ <img src="/assets/Piezas/como_encontrar_trabajo_con_poca_experiencia_miniatura.png" alt="Como encontrar trabajo con poca experiencia"/>
+    
+<h2>Importancia de la experiencia laboral</h2>
+ 
+ <p>La experiencia laboral es un activo invaluable que los empleadores valoran profundamente al evaluar candidatos.</p>
+ 
+ <p>No obstante, la noción de "trabajo con poca experiencia" no debería desalentar a los buscadores de empleo, ya que la experiencia va más allá de la cantidad de años en el campo laboral.</p>
+ 
+ <p>Los empleadores buscan evidencia de habilidades prácticas, capacidades de resolución de problemas y adaptabilidad, los empleadores también reconocen el valor del potencial y la motivación intrínseca en los candidatos con poca experiencia.</p>
+ 
+ <div class="cta">
+    <a href="https://info.top.education/es-mx/como-encontrar-trabajo-con-poca-experiencia" target="_blank"></a>
+ </div>
+ 
+ <h2>Consejos para elaborar un currículum impactante</h2>
+ 
+ <p>Cuando se trata de crear un currículum efectivo para aquellos que buscan trabajo con poca experiencia, es fundamental destacar tanto las habilidades como los logros relevantes de manera estratégica.</p>
+ 
+ <p>La estructura de tu currículum debe incluir secciones bien definidas, como un resumen profesional, experiencia laboral (así sea limitada), educación, habilidades y logros.</p>
+ 
+ <p>En lugar de centrarte únicamente en la experiencia laboral previa, destaca tus habilidades transferibles y logros significativos; utiliza frases concisas y poderosas para describir cómo estos han contribuido de manera significativa, incluso con una experiencia limitada.</p>
+ 
+ <h2>¿Cómo prepararse para la entrevista?</h2>
+ 
+ <p>Cuando te enfrentes a preguntas sobre tu experiencia laboral durante una entrevista, es esencial destacar tus habilidades, en lugar de centrarte en tu poca experiencia laboral, resalta tus experiencias académicas o proyectos que demuestren capacidades relevantes para el puesto al que aspiras.</p>
+ 
+ <p>Utiliza ejemplos concretos para ilustrar cómo has aplicado estas habilidades en situaciones prácticas y cómo estás preparado para enfrentar los desafíos del nuevo rol.</p>
+ 
+ <p>Al demostrar tu motivación, capacidad de aprendizaje y entusiasmo por crecer profesionalmente, podrás compensar la falta de experiencia laboral directa y presentarte como un candidato valioso y comprometido.</p>
+ 
+ <h2>Redes profesionales y su importancia</h2>
+ 
+ <p>Construir y aprovechar redes profesionales es fundamental para avanzar en tu carrera, incluso si tienes poca experiencia.</p>
+ 
+ <ul>
+     <li>Comienza por establecer perfiles en plataformas profesionales como LinkedIn, donde puedes conectar con personas de tu industria y participar en grupos de discusión relevantes.</li>
+     <li>No subestimes el poder de las relaciones personales; asiste a eventos de networking, conferencias o charlas profesionales donde puedas conocer a otros en tu campo.</li>
+     <li>Sé proactivo al buscar mentores o profesionales con más experiencia que estén dispuestos a guiarte y brindarte consejos.</li>
+     <li>Además, no tengas miedo de pedir información o consejos a personas que admires en tu industria.</li>
+ </ul>
+ 
+ <p>Recuerda que cada conexión que hagas puede abrir nuevas oportunidades y ofrecer valiosos conocimientos, incluso en las etapas iniciales de tu carrera.</p>
+ 
+ <h2>Estrategias para conseguir experiencia práctica</h2>
+ 
+ <p>Cuando te encuentras en la situación de querer ganar experiencia práctica, pero careces de experiencia laboral previa, existen diversas estrategias que puedes emplear para construir un historial sólido.</p>
+ 
+ <p>Una opción es buscar oportunidades de voluntariado en organizaciones sin fines de lucro con tu campo de interés; otra alternativa es realizar proyectos independientes o freelancing, ofreciendo tus servicios en plataformas en línea o a través de tu red de contactos.</p>
+ 
+ <p>Al combinar estas estrategias con una actitud proactiva y un enfoque en el aprendizaje continuo, podrás desarrollar una base sólida de experiencia práctica, incluso cuando partas desde cero en términos de experiencia laboral.</p>
+ 
+ <p>Si bien la experiencia tradicional puede ser un factor determinante, lo que abre oportunidades es estar dispuestos a demostrar valía y compromiso en el proceso de selección.</p>
+ 
+ <img src="/assets/Piezas/como_encontrar_trabajo_con_poca_experiencia_vertical.png" alt="Como encontrar trabajo con poca experiencia">
+ 
+ <h2>Conclusión</h2>
+ 
+ <p>La búsqueda de empleo puede ser desafiante, especialmente cuando se tiene poca experiencia, sin embargo, con las estrategias adecuadas y una mentalidad perseverante, es posible alcanzar el éxito.</p>
+ 
+ <p>A lo largo de esta guía, hemos proporcionado consejos prácticos, recursos útiles y orientación valiosa para ayudarte a navegar por este proceso con confianza y determinación.</p>
+ 
+ <p>Pero este es solo el comienzo de tu viaje hacia una carrera gratificante, para obtener aún más información detallada, herramientas y ejemplos prácticos que te ayudarán a destacarte en tu búsqueda de empleo, te invitamos a descargar nuestra guía completa.</p>
+ 
+ <p>¡No dejes pasar esta oportunidad para impulsar tu carrera hacia el éxito!</p>
+ 
+ <div class="cta">
+    <a href="https://info.top.education/es-mx/como-encontrar-trabajo-con-poca-experiencia" target="_blank">CTA Cómo encontrar trabajo con poca experiencia</a>
 </div>
 
-<h2>edX vs. Coursera: Métodos de aprendizaje</h2>
 
-<p>Tanto edX como Coursera ofrecen un alto nivel de flexibilidad, permitiendo a los usuarios aprender a su propio ritmo. Ambas plataformas cuentan con cursos autoguiados y la posibilidad de elegir entre varios programas de estudio, aunque Coursera ofrece más opciones con fechas de inicio programadas y plazos definidos. edX, por su parte, tiende a enfocarse más en el autoaprendizaje con menos restricciones de tiempo. En cuanto a certificaciones, Coursera ofrece programas con proyectos prácticos, mientras que edX se enfoca más en evaluaciones académicas tradicionales.</p>
-
-<span>Quizás te interese leer: <a href="#" target="_blank">Estas son las 3 mejores páginas de e-learning</a></span>
-
-<h2>Variedad de cursos y programas disponibles</h2>
-
-<p>Tanto edX como Coursera ofrecen una amplia gama de cursos, pero con enfoques diferentes. edX tiene más de 4,000 cursos centrados en tecnología, ciencias y humanidades, con un fuerte enfoque en programas universitarios y grados completos. Coursera, con más de 7,000 cursos, combina contenido académico y profesional, colaborando con empresas como Google e IBM, y se especializa en certificaciones valoradas en el mercado laboral.</p>
-
-<h2>¿Cuál plataforma es mejor para ti?</h2>
-
-<p>No existe una respuesta única sobre cuál es la mejor plataforma entre edX y Coursera, ya que esto depende de los intereses y objetivos de cada persona. Por ejemplo, si buscas un enfoque académico profundo con grados completos, edX puede ser la mejor opción. En cambio, Coursera podría ser más adecuada para quienes buscan certificaciones profesionales o aprender habilidades específicas que son demandadas en el mundo empresarial. Cada plataforma ofrece beneficios distintos, dependiendo de lo que el usuario necesite.</p>
-
-<img src="/assets/Piezas/edx_vs_coursera_cual_plataforma_educativa_es_mejor_vertical.png" alt="edX vs Coursera">
-
-<h2>Consejos para elegir entre edX y Coursera</h2>
-
-<ul>
-    <li><strong>Investiga las instituciones asociadas:</strong> Si valoras estudiar cursos respaldados por universidades de renombre, revisa qué instituciones están asociadas con los programas que te interesan. edX tiende a colaborar con universidades tradicionales, mientras que Coursera se asocia con empresas líderes.</li>
-    <li><strong>Explora la oferta de programas:</strong> Si planeas realizar un programa completo como un máster o especialización, revisa cuál de las plataformas ofrece un programa más alineado con tus intereses y el nivel de profundidad que buscas.</li>
-    <li><strong>Accesibilidad y comunidad:</strong> Considera qué plataforma te ofrece una mejor experiencia de usuario. Coursera tiene una comunidad más activa con foros y proyectos colaborativos, mientras que edX puede tener una experiencia más académica y estructurada.</li>
-    <li><strong>Opiniones de los usuarios:</strong> Revisa las opiniones y reseñas de otros usuarios en cada plataforma. Coursera, al estar más orientada a habilidades prácticas y empleabilidad, suele recibir comentarios positivos por la aplicabilidad de sus cursos. En edX, los estudiantes valoran la calidad académica de los cursos y la profundidad de los contenidos.</li>
-</ul>
-
-<span>Quizás te interese leer: <a href="#" target="_blank">Cómo elegir el proveedor de educación en línea para su empresa, consejos, tips y más</a></span>
-
-<img src="/assets/Piezas/edx_vs_coursera_cual_plataforma_educativa_es_mejor_tabla.png" alt="edX vs Coursera">
-
-<h2>Accede a lo mejor de edX y Coursera en Top Education</h2>
-
-<p>En Top Education tienes la oportunidad de acceder fácilmente a los cursos más destacados tanto de edX como de Coursera, todo desde una sola plataforma. Esto te permite explorar una amplia variedad de contenido educativo impartido por dos de las plataformas líderes en el mundo de la formación online. Podrás encontrar cursos diseñados para cubrir todo tipo de áreas de conocimiento, desde habilidades técnicas hasta desarrollo personal, adaptados a tus intereses y necesidades.</p>
-
-<p>Además, al contar con las mejores opciones de aprendizaje en un solo lugar, tendrás la oportunidad de mejorar tus competencias y avanzar tanto en tu desarrollo profesional como en el personal. No pierdas la ocasión de aprovechar estos recursos educativos de calidad mundial y darle un impulso a tu carrera.</p>
-
-<div class="cta">
-    <a href="https://info.top.education/es-mx/como-encontrar-trabajo-con-poca-experiencia" target="_blank">Cómo encontrar trabajo con poca experiencia</a>
-</div>
 """
 
         row = next(ws.iter_rows(min_row=2, max_row=2))
