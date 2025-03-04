@@ -21,6 +21,10 @@ from django.views import View
 
 
 
+def get_certifications(request):
+    certifications = Certificaciones.objects.values('slug')
+    return JsonResponse(list(certifications), safe=False)
+
 class CustomPagination(PageNumberPagination):
     page_size = 12
     page_size_query_param = 'page_size'

@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.sitemaps',
     'rest_framework',
     'topeducation',
     'corsheaders',
@@ -56,7 +57,8 @@ CORS_ALLOWED_ORIGINS = [
     'https://backend-django-top-production.up.railway.app',
     'https://frontend-react-top-production.up.railway.app',
     'https://top.education',
-    'https://www.top.education'
+    'https://www.top.education',
+    'http://localhost:45678'
 ]
 
 CORS_ALLOW_CREDENTIALS = True
