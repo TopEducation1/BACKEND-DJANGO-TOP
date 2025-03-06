@@ -179,6 +179,6 @@ class CertificationSearchSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Certificaciones
-        fields = ['id', 'nombre', 'url_imagen_universidad_certificacion', 'slug']
+        fields = '__all__'
 
     
