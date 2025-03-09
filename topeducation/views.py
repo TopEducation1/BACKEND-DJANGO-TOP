@@ -302,7 +302,9 @@ class filter_by_tags(APIView):
                     print(queryset)
             
             if 'empresas' in params:
-                empresa_nombre = params['empresas']
+                
+                empresa_nombre = params['empresas'].strip()
+                print(f"EMPRESA RECIBIDA{empresa_nombre}")
                 print(empresa_nombre)
                 empresa_mapping = {
                     'Capitals Coalition': 1,
@@ -316,7 +318,7 @@ class filter_by_tags(APIView):
                     'The Museum of Modern Art': 9,
                     'Banco Interamericano de Desarrollo': 10,
                     'Yad Vashem': 11,
-                    'Google': 12 ,
+                    'Google': 12,
                     'Microsoft': 13,
                     'Google Cloud': 21,
                     'Salesforce, SV Academy': 22,
