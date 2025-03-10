@@ -355,7 +355,7 @@ class filter_by_tags(APIView):
                     print(queryset)
                 
             if 'universidades' in params:
-                universidad_nombre = params['universidades']
+                universidad_nombre = params['universidades'].strip()
                 # Mapping de universidades para el filtrado
                 universidad_mapping = {
                     'Macquarie University': 1,

@@ -60,6 +60,7 @@ CORS_ALLOWED_ORIGINS = [
     'https://www.top.education',
     'http://localhost:45678',
     
+    
 ]
 
 CORS_ALLOW_CREDENTIALS = True
