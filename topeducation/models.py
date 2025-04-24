@@ -12,6 +12,7 @@ class Habilidades (models.Model):
 
 class Temas (models.Model):
     nombre = models.CharField(max_length=250)
+    tem_col = models.CharField(max_length=10)
     
     def __str__(self):
         return self.nombre
@@ -58,6 +59,7 @@ class Empresas (models.Model):
         
 class Plataformas (models.Model):
     nombre = models.CharField(max_length=500)
+    plat_img = models.CharField(max_length=200)
     
     def __str__(self):
         return self.nombre
@@ -72,8 +74,7 @@ class Certificaciones(models.Model):
     nombre = models.CharField(max_length=500)
     slug = models.SlugField(max_length=500, default="default-slug")
     tema_certificacion = models.ForeignKey(Temas, on_delete=models.SET_NULL, null=True)
-    palabra_clave_certificacion = models.TextField()
-    plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.SET_NULL, null=True)
+    palabra_clave_certificacion = models.TextField()    
     url_certificacion_original = models.CharField(max_length=300, default="Null")
     metadescripcion_certificacion = models.TextField(default="NONE")
     instructores_certificacion = models.TextField(default="NONE")
@@ -92,8 +93,10 @@ class Certificaciones(models.Model):
     url_imagen_universidad_certificacion = models.TextField(blank=True, null=True)
     url_imagen_plataforma_certificacion = models.TextField(blank=True, null=True)
     url_imagen_empresa_certificacion = models.TextField(blank=True, null=True)
+    plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.SET_NULL,null = True)
     imagen_final = models.TextField(blank=True, null=True)
     fecha_creado_cert = models.DateField(auto_now_add=True, null=False)
+    fecha_creado = models.DateField(auto_now_add=True, null=False)
     video_certificacion = models.CharField(default='None', null = True, max_length=1000)
     
     def save(self, *args, **kwargs):

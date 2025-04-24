@@ -1,4 +1,5 @@
 from datetime import timedelta, timezone
+from datetime import datetime
 import re
 from django.shortcuts import render
 from rest_framework import viewsets
@@ -18,7 +19,6 @@ from django.db.models import Q
 from django.core.paginator import EmptyPage, PageNotAnInteger
 from rest_framework.pagination import PageNumberPagination
 from django.views import View
-
 
 
 def get_certifications(request):
@@ -67,6 +67,30 @@ class CertificationList(APIView):
     
     pagination_class = CustomPagination
     
+    def get(self, request):
+        # Queryset de las certificaciones
+        certifications_queryset = Certificaciones.objects.all().select_related(
+            'tema_certificacion'
+        )
+        
+        print(f"Total certificaciones: {certifications_queryset.count()}")
+        
+        paginator = self.pagination_class()
+        paginated_queryset = paginator.paginate_queryset(certifications_queryset, request)
+        
+        print(f"Paginated queryset: {paginated_queryset}")
+        
+        serializer = CertificationSerializer(paginated_queryset, many=True)
+        
+        print(f"Serialized data: {serializer.data}")
+        
+        return paginator.get_paginated_response(serializer.data)
+
+
+'''class CertificationList(APIView):
+    
+    pagination_class = CustomPagination
+    
     # DEFINIR EL METODO GET QUE SE REALIZA DESDE EL FRONT    
     def get(self, request):
         
@@ -77,15 +101,12 @@ class CertificationList(APIView):
             'tema_certificacion'
         )
         
-        
-        
         paginator = self.pagination_class()
         paginated_queryset = paginator.paginate_queryset(certifications_queryset, request)
         
-        
         serializer = CertificationSerializer(paginated_queryset, many = True)
 
-        return paginator.get_paginated_response(serializer.data)
+        return paginator.get_paginated_response(serializer.data)'''
     
     
 #This view is to send the Masterclass certifications to display a masterclasss slider in frontend    
@@ -101,9 +122,6 @@ class MasterclassCertificationsGrids(APIView):
         
         return Response (serializer.data, status=status.HTTP_200_OK)     
 
-
-
-
 class CertificationsCafam(APIView):
     
     def get(self, request):
@@ -118,8 +136,7 @@ class CertificationsCafam(APIView):
         serializer = CertificationSerializer(certificationsCafam_queryset, many = True)
         
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
-    
+
 
 @csrf_exempt
 @api_view(['POST'])
@@ -140,11 +157,6 @@ def receive_tags(request):
     
     return Response({"error": "Metodo no permitido"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
-
-
-
-    
-  
   
 #EndPoint to get the skills  
 class SkillsList (APIView):
@@ -179,7 +191,16 @@ class TopicsList (APIView):
         topics_serializer = TopicsSerializer(topics, many = True)
         
         return Response(topics_serializer.data)
+
+class PlataformaList (APIView):
     
+    def get(self, request):
+        
+        #Queryset of the Plataforma
+        plataformas =  Plataformas.objects.all()
+        plataformas_serializer = PlataformaSerializer(plataformas, many = True)
+        
+        return Response(plataformas_serializer.data)
 
 class BlogDetailView(APIView):
     
@@ -285,22 +306,48 @@ class filter_by_tags(APIView):
             
             # Iniciar el queryset base
             queryset = Certificaciones.objects.all()
-            
+            print(queryset)
             if 'plataforma' in params:
                 platform_name = params['plataforma']
                 print(platform_name)
                 platform_mapping = {
                     'EdX': 1,
                     "Coursera": 2,
-                    'MasterClass': 3
+                    'MasterClass': 3,
+                    'Nuevo en Top.Education': 4
                 }
                 
                 platform_id = platform_mapping.get(platform_name)
                 print(platform_id)
-                if platform_id:
-                    queryset = queryset.filter(plataforma_certificacion_id = platform_id)
-                    print(queryset)
-            
+                
+                if platform_id == 4:
+                    # Calcular la fecha límite de 3 meses atrás
+                    fecha = datetime.now() - timedelta(days=10)
+                    fecha_limite = fecha.strftime("%Y-%m-%d")
+                    queryset = queryset.filter(fecha_creado__gt=fecha_limite)
+                elif platform_id:
+                    queryset = queryset.filter(plataforma_certificacion_id=platform_id)
+            if 'aliados' in params:
+                platform_name = params['aliados']
+                print(platform_name)
+                platform_mapping = {
+                    'EdX': 1,
+                    "Coursera": 2,
+                    'MasterClass': 3,
+                    'Nuevo en Top.Education': 4
+                }
+                
+                platform_id = platform_mapping.get(platform_name)
+                print(platform_id)
+                
+                if platform_id == 4:
+                    # Calcular la fecha límite de 3 meses atrás
+                    fecha = datetime.now() - timedelta(days=10)
+                    fecha_limite = fecha.strftime("%Y-%m-%d")
+                    queryset = queryset.filter(fecha_creado__gt=fecha_limite)
+                elif platform_id:
+                    queryset = queryset.filter(plataforma_certificacion_id=platform_id)   
+
             if 'empresas' in params:
                 
                 empresa_nombre = params['empresas'].strip()
@@ -355,7 +402,7 @@ class filter_by_tags(APIView):
                     print(queryset)
                 
             if 'universidades' in params:
-                universidad_nombre = params['universidades'].strip()
+                universidad_nombre = params['universidades']
                 # Mapping de universidades para el filtrado
                 universidad_mapping = {
                     'Macquarie University': 1,
@@ -463,11 +510,12 @@ class filter_by_tags(APIView):
                 'temas': 'tema_certificacion__nombre',
                 'universidad': 'universidad_certificacion__nombre',
                 'empresa': 'empresa_certificacion__nombre',
-                'habilidades': 'tema_certificacion__nombre'
+                'habilidades': 'tema_certificacion__nombre',
+                'nuevo': 'tema_certificacion__nombre'
             }           
             
             # Aplicar filtros
-            for param, values in params.items():
+            '''for param, values in params.items():
                 if param in field_mapping and param != 'plataforma':
                     field_name = field_mapping[param]
                     if ',' in values:
@@ -475,8 +523,18 @@ class filter_by_tags(APIView):
                         queryset = queryset.filter(**{f"{field_name}__in": tags})
                     else:
                         queryset = queryset.filter(**{f"{field_name}": values})
-                        print(queryset)
-                        
+                        print(queryset)'''
+            query = Q()
+            for param, values in params.items():
+                if param in field_mapping and param != 'plataforma':
+                    field_name = field_mapping[param]
+                    if ',' in values:
+                        tags = [tag.strip() for tag in values.split(',')]
+                        query |= Q(**{f"{field_name}__in": tags})
+                    else:
+                        query |= Q(**{f"{field_name}": values})
+            queryset = queryset.filter(query)
+            print("Query: ",query)
             # Aplicar paginación
             paginator = self.pagination_class()
             paginated_queryset = paginator.paginate_queryset(queryset, request)

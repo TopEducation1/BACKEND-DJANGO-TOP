@@ -7,6 +7,7 @@ urlpatterns = [
     path('skills/', SkillsList.as_view(), name='skills_list'),
     path('universities/', UniversitiesList.as_view(), name='universities_list'),
     path('topics/', TopicsList.as_view(), name='topics_list'),
+    path('plataformas/', PlataformaList.as_view(), name='plataforma_list'),
     path('api/searchTags/', receive_tags, name='receive_tags'),
     path('certificacion/<slug:slug>/', CertificationDetailView.as_view(), name='get-certification'),
     path('certificaciones/filter/', filter_by_tags.as_view()    , name='filter-by-tags'),
