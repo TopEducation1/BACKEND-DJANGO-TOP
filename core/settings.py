@@ -28,6 +28,7 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_SSL_REDIRECT = False
 
 
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -59,7 +60,6 @@ CORS_ALLOWED_ORIGINS = [
     'https://top.education',
     'https://www.top.education',
     'http://localhost:45678',
-    
     
 ]
 
@@ -163,11 +163,9 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = 'static/'
-MEDIA_URL = '/ASSETS/'
-
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 
-
+MEDIA_URL = ''
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
