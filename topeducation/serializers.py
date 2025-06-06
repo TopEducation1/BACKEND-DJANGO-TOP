@@ -10,21 +10,25 @@ from django.db.models import F
 class BlogSerializer(serializers.ModelSerializer):
     
     class Meta:
-        model = Blog
-        
+        model = Blog 
         fields = '__all__'
-        
         
     def to_representation(self, instance):
         
         representation = super().to_representation(instance)
         
+        categoria_instance = instance.categoria_blog
+        representation['categoria_blog'] = CategoriesSerializer(categoria_instance).data if categoria_instance else None
+
         try:
             
             auto = Autor.objects.get(id = instance.autor_blog_id)
             categoria = CategoriaBlog.objects.get(id = instance.categoria_blog_id)
             representation['categoria_blog_id'] = categoria.nombre_categoria_blog
             representation['autor_blog_id'] = auto.nombre_autor
+            representation['autor_img'] = auto.auto_img
+            autor_instance = instance.autor_blog
+            representation['autor_blog'] = AuthorsSerializer(autor_instance).data if autor_instance else None
             
         except CategoriaBlog.DoesNotExist:
             representation['categoria_blog_id'] = None
@@ -32,7 +36,15 @@ class BlogSerializer(serializers.ModelSerializer):
         
         return representation
             
-        
+class AuthorsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Autor
+        fields = '__all__'
+
+class CategoriesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CategoriaBlog
+        fields = '__all__'
 
 class SkillsSerializer(serializers.ModelSerializer):
     
@@ -46,7 +58,7 @@ class UniverisitiesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Universidades
         
-        fields = '__all__'    
+        fields = ['id', 'nombre','region_universidad_id','univ_img']   
 
 
 class TopicsSerializer (serializers.ModelSerializer):
@@ -54,7 +66,7 @@ class TopicsSerializer (serializers.ModelSerializer):
     class Meta:
         model = Temas
         
-        fields = ['id', 'nombre','tem_col']
+        fields = ['id', 'nombre','tem_col','tem_img']
 
 class PlataformaSerializer (serializers.ModelSerializer):
     
@@ -62,6 +74,13 @@ class PlataformaSerializer (serializers.ModelSerializer):
         model = Plataformas
         
         fields = ['id', 'nombre','plat_img']
+
+class EmpresaSerializer (serializers.ModelSerializer):
+    
+    class Meta:
+        model = Empresas
+        
+        fields = ['id', 'nombre','empr_img']
 
 class CertificationSerializer(serializers.ModelSerializer): 
     
@@ -92,8 +111,15 @@ class CertificationSerializer(serializers.ModelSerializer):
         
         tema_instance = instance.tema_certificacion
         data['tema_certificacion'] = TopicsSerializer(tema_instance).data if tema_instance else None
+
         plataforma_instance = instance.plataforma_certificacion
         data['plataforma_certificacion'] = PlataformaSerializer(plataforma_instance).data if plataforma_instance else None
+
+        universidad_instance = instance.universidad_certificacion
+        data['universidad_certificacion'] = UniverisitiesSerializer(universidad_instance).data if universidad_instance else None
+
+        empresa_instance = instance.empresa_certificacion
+        data['empresa_certificacion'] = EmpresaSerializer(empresa_instance).data if empresa_instance else None
 
         # Procesamiento de módulos
         if isinstance(data['modulos_certificacion'], str):
@@ -170,7 +196,7 @@ class CertificationSerializer(serializers.ModelSerializer):
                 data['video_certificacion'] = None
 
         # Modificar la representación final de los datos
-        data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
+        #data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
         #data['plataforma_certificacion_id'] = instance.plataforma_certificacion_id
        
         data['fecha_creado'] = instance.fecha_creado
@@ -206,6 +232,8 @@ class CertificationSearchSerializer(serializers.ModelSerializer):
         data['tema_certificacion'] = TopicsSerializer(tema_instance).data if tema_instance else None
         plataforma_instance = instance.plataforma_certificacion
         data['plataforma_certificacion'] = PlataformaSerializer(plataforma_instance).data if plataforma_instance else None
+        universidad_instance = instance.universidad_certificacion
+        data['universidad_certificacion'] = UniverisitiesSerializer(universidad_instance).data if universidad_instance else None
 
         # Procesamiento de módulos
         if isinstance(data['modulos_certificacion'], str):
@@ -282,7 +310,7 @@ class CertificationSearchSerializer(serializers.ModelSerializer):
                 data['video_certificacion'] = None
 
         # Modificar la representación final de los datos
-        data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
+        #data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
         #data['plataforma_certificacion_id'] = instance.plataforma_certificacion_id
        
         data['fecha_creado'] = instance.fecha_creado
