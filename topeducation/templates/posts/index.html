@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %} Blogs {% endblock %}
+{% block header %} Blogs {% endblock %}
+
+{% block botons %}
+<p class="text-white">Total de blogs: {{ posts|length }}</p>
+<a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'createPost' %}">Crear blog</a> {% endblock %}
+
+{% block content %} 
+<div class="relative flex flex-col w-full h-full text-neutral-100 bg-neutral-800 shadow-md rounded-lg bg-clip-border">
+  <script>
+    $(document).ready(function(){
+      $('#example').DataTable();
+    })
+  </script>
+   
+    <table class="w-full text-left table-auto max-w-max text-neutral-200" id="example">
+      <thead>
+        <tr class="text-neutral-300 border-b border-neutral-500 bg-neutral-500">
+          <th class="p-4">
+            <p class="text-sm leading-none">#</p>
+          </th>
+          <th class="p-4">
+            <p class="text-sm leading-none">Titulo</p>
+          </th>
+          <th class="p-4">
+            <p class="text-sm leading-none">Categoria</p>
+          </th>
+          <th class="p-4">
+            <p class="text-sm leading-none">Autor</p>
+          </th>
+          <th class="p-4">
+            <p class="text-sm leading-none">Fecha</p>
+          </th>
+          <th class="p-4">
+            <p>Opciones</p>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for post in posts %}
+        <tr class="hover:bg-neutral-500">
+          <td class="p-2">
+            <p class="text-sm font-bold">
+              {{ post.id }}
+            </p>
+          </td>
+          <td class="p-2">
+            <p class="text-sm font-bold">
+              {{ post.nombre_blog }}
+            </p>
+          </td>
+          <td class="p-2">
+            <p class="text-sm font-bold">
+              {{ post.categoria_blog.nombre_categoria_blog }}
+            </p>
+          </td>
+          <td class="p-2">
+            <p class="text-sm font-bold">
+              {{ post.autor_blog.nombre_autor }}
+            </p>
+          </td>
+          <td class="p-2">
+            <p class="text-sm font-bold">
+             {{ post.fecha_redaccion_blog }}
+            </p>
+          </td>
+          <td class="p-2">
+            <div class="flex gap-2">
+              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'updatePost' post.id %}"><i class="fa-regular fa-pen-to-square"></i></a>
+              <a class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'deletePost' post.id %}"><i class="fa-regular fa-trash-can"></i></a>
+            </div>
+            </td>
+        </tr>
+        {% endfor %}
+        
+      </tbody>
+    </table>
+  </div>
+  
+{% endblock %}

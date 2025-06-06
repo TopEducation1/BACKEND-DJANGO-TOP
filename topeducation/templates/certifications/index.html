@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %} Certificaciones {% endblock %}
+{% block header %} Certificaciones {% endblock %}
+
+{% block botons %}
+<p class="text-white">Total de certificaciones: {{ certifications|length }}</p>
+<a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'upload' %}">Cargar certificaciones</a>
+<a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'createCertification' %}">Crear nueva</a> {% endblock %}
+
+{% block content %} 
+<div class="relative flex flex-col w-full h-full text-neutral-100 bg-neutral-800 shadow-md rounded-lg bg-clip-border">
+  <script>
+    $(document).ready(function(){
+      $('#example').DataTable();
+    })
+  </script>
+    <table class="w-full text-left table-auto max-w-max text-neutral-200" id="example">
+      <thead>
+        <tr class="text-neutral-300 border-b border-neutral-500 bg-neutral-500">
+            <th class="p-4">
+                <p class="text-sm leading-none">
+                  #
+                </p>
+              </th>
+          <th class="p-4">
+            <p class="text-sm leading-none">
+              Titulo
+            </p>
+          </th>
+          <th class="p-4">
+            <p class="text-sm leading-none">
+              Duración
+            </p>
+          </th>
+          <th class="p-4">
+            <p class="text-sm leading-none">
+              Nivel
+            </p>
+          </th>
+          <th class="p-4">
+            <p class="text-sm leading-none">
+              Idioma
+            </p>
+          </th>
+          <th class="p-4">
+            <p class="text-sm leading-none">
+              Plataforma
+            </p>
+          </th>
+          <th class="p-4">
+            <p class="text-sm leading-none ">
+              Fecha
+            </p>
+          </th>
+          <th class="p-4">
+            <p>Opciones</p>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for certification in certifications %}
+        <tr class="hover:bg-neutral-500">
+            <td class="p-2">
+                <p class="text-sm font-bold">
+                 {{ certification.id }}
+                </p>
+            </td>
+          <td class="p-2">
+            <p class="text-sm font-bold">
+             {{ certification.nombre }}
+            </p>
+          </td>
+          <td class="p-2">
+            <p class="text-sm">
+                {{ certification.tiempo_certificacion }}
+            </p>
+          </td>
+          <td class="p-2">
+            <p class="text-sm">
+                {{ certification.nivel_certificacion }}
+            </p>
+          </td>
+          <td class="p-2">
+            <p class="text-sm">
+                {{ certification.lenguaje_certificacion }}
+            </p>
+          </td>
+          <td class="p-2">
+            <p class="text-sm">
+                {{ certification.plataforma_certificacion.nombre }}
+            </p>
+          </td>
+          <td class="p-2">
+            <p class="text-sm">
+                {{ certification.fecha_creado }}
+            </p>
+          </td>
+          <td class="p-2">
+            <div class="flex gap-2">
+              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'updateCertification' certification.id %}"><i class="fa-regular fa-pen-to-square"></i></a>
+              <a class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'deleteCertification' certification.id %}"><i class="fa-regular fa-trash-can"></i></a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+        
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

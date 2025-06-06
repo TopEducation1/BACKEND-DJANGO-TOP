@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block title %} Cargar certificaciones {% endblock %}
+{% block header %} Cargar certificaciones {% endblock %}
+
+{% block botons %}
+<a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'createCertification' %}">Crear nueva</a> {% endblock %}
+
+{% block content %} 
+<form enctype="multipart/form-data" class="text-white" method="POST">
+    {% csrf_token %}
+    
+    <div class="space-y-5">
+        <div class="border-b border-gray-300 pb-5">
+            <div class="mt-3 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-1">
+                <div class="border-b border-gray-300 pb-5">
+                    <h2 class="text-base/7 font-semibold text-gray-100">Origen de certificaciones</h2>
+                    <p class="mt-1 text-sm/6 text-gray-100">Especifique la plataforma a la que pertenecen las certificaciones.</p>
+                    <div class="sm:col-span-3">
+                        <label for="plataforma" class="block text-sm/6 font-medium text-gray-100">Plataforma</label>
+                        <div class="mt-2 grid grid-cols-4 gap-x-3">
+                            <select id="plataforma" required name="plataforma" autocomplete="plataforma-name" class="col-start-1 row-start-1 w-full appearance-none rounded-md bg-white py-1.5 pr-8 pl-3 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:-outline-offset-2 focus:outline-blue-600 sm:text-sm/6">
+                                <option value="">Seleccione la plataforma...</option>
+                                <option value="1">EdX</option>
+                                <option value="2">Coursera</option>
+                                <option value="3">MasterClass</option>                
+                            </select>
+                            
+
+                            <a class="bg-teal-900 hover:bg-teal-800 text-white font-bold py-2 px-4 rounded-full" href="{% url 'descargar_excel' 'EDX-FORMATO-CARGAR-CERTIFICACIONES.xlsx' %}" download>Descargar formato EdX</a>
+                            <a class="bg-blue-700 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-full" href="{% url 'descargar_excel' 'COURSERA-FORMATO-CARGAR-CERTIFICACIONES.xlsx' %}" download>Descargar formato Coursera</a>
+                            <a class="bg-red-800 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'descargar_excel' 'MASTERCLASS-FORMATO-CARGAR-CERTIFICACIONES.xlsx' %}" download>Descargar formato MasterClass</a>
+                            <svg class="pointer-events-none col-start-1 row-start-1 mr-2 size-5 self-center justify-self-end text-gray-500 sm:size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" data-slot="icon">
+                            <path fill-rule="evenodd" d="M4.22 6.22a.75.75 0 0 1 1.06 0L8 8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-3.25 3.25a.75.75 0 0 1-1.06 0L4.22 7.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-span-full">
+                    <label for="cover-photo" class="block text-sm/6 font-medium text-gray-100">Archivo excel</label>
+                    <p class="mt-1 text-sm/6 text-gray-100">Cargue aquí el archivo que contiene las certificaciones.</p>
+                    <div class="mt-2 flex justify-center rounded-lg border border-dashed border-gray-100/25 px-6 py-10">
+                        <div class="text-center flex flex-col items-center ">
+                            <svg xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" width="160" height="100" viewBox="0,0,256,256">
+                                <g fill="#ffffff" fill-rule="nonzero" stroke="none" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" stroke-dasharray="" stroke-dashoffset="0" font-family="none" font-weight="none" font-size="none" text-anchor="none" style="mix-blend-mode: normal"><g transform="scale(5.12,5.12)"><path d="M28.8125,0.03125l-28,5.3125c-0.47266,0.08984 -0.8125,0.51953 -0.8125,1v37.3125c0,0.48047 0.33984,0.91016 0.8125,1l28,5.3125c0.0625,0.01172 0.125,0.03125 0.1875,0.03125c0.23047,0 0.44531,-0.07031 0.625,-0.21875c0.23047,-0.19141 0.375,-0.48437 0.375,-0.78125v-48c0,-0.29687 -0.14453,-0.58984 -0.375,-0.78125c-0.23047,-0.19141 -0.51953,-0.24219 -0.8125,-0.1875zM32,6v7h2v2h-2v5h2v2h-2v5h2v2h-2v6h2v2h-2v7h15c1.10156,0 2,-0.89844 2,-2v-34c0,-1.10156 -0.89844,-2 -2,-2zM36,13h8v2h-8zM6.6875,15.6875h5.125l2.6875,5.59375c0.21094,0.44141 0.39844,0.98438 0.5625,1.59375h0.03125c0.10547,-0.36328 0.30859,-0.93359 0.59375,-1.65625l2.96875,-5.53125h4.6875l-5.59375,9.25l5.75,9.4375h-4.96875l-3.25,-6.09375c-0.12109,-0.22656 -0.24609,-0.64453 -0.375,-1.25h-0.03125c-0.0625,0.28516 -0.21094,0.73047 -0.4375,1.3125l-3.25,6.03125h-5l5.96875,-9.34375zM36,20h8v2h-8zM36,27h8v2h-8zM36,35h8v2h-8z"></path></g></g>
+                            </svg>
+                            <span id="nombre-archivo" class="font-medium text-center"></span>
+                            <div class="mt-4 flex text-sm/6 text-gray-100">
+                                <label for="file-upload" class="relative cursor-pointer px-10 rounded-md bg-white font-semibold text-blue-600 focus-within:ring-2 focus-within:ring-blue-600 focus-within:ring-offset-2 focus-within:outline-hidden hover:text-blue-500">
+                                    <span>Subir archivo</span>
+                                    <input id="file-upload" required name="file-upload" type="file" class="sr-only">
+                                </label>
+                            </div>
+                            <p class="text-xs/5 text-gray-100">EXCEL, CSV superior a 10MB</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+  
+    <div class="mt-6 flex items-center justify-end gap-x-6">
+      <button type="button" class="text-sm/6 rounded-md px-3 py-2 bg-white font-semibold text-gray-800">Cancel</button>
+      <button type="submit" class="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-blue-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">Guardar</button>
+    </div>
+  </form>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const fileInput = document.getElementById("file-upload");
+      const mensajeArchivo = document.getElementById("archivo-cargado");
+      const nombreArchivo = document.getElementById("nombre-archivo");
+  
+      fileInput.addEventListener("change", function () {
+        if (fileInput.files.length > 0) {
+          const fileName = fileInput.files[0].name;
+          nombreArchivo.textContent = fileName;
+          mensajeArchivo.classList.remove("hidden");
+        } else {
+          mensajeArchivo.classList.add("hidden");
+          nombreArchivo.textContent = "";
+        }
+      });
+    });
+  </script>
+  
+  
+{% endblock %}

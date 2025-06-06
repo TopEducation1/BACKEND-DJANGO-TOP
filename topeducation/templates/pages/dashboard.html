@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %} Dasboard {% endblock %}
+{% block header %} Escritorio {% endblock %}
+
+{% block content %}
+<div class="w-12/12">
+    <div class="flex flex-row">
+        <div class="bg-no-repeat bg-neutral-950 border border-neutral-500 rounded-xl w-7/12 mr-2 p-6" style="background-image: url(https://previews.dropbox.com/p/thumb/AAvyFru8elv-S19NMGkQcztLLpDd6Y6VVVMqKhwISfNEpqV59iR5sJaPD4VTrz8ExV7WU9ryYPIUW8Gk2JmEm03OLBE2zAeQ3i7sjFx80O-7skVlsmlm0qRT0n7z9t07jU_E9KafA9l4rz68MsaZPazbDKBdcvEEEQPPc3TmZDsIhes1U-Z0YsH0uc2RSqEb0b83A1GNRo86e-8TbEoNqyX0gxBG-14Tawn0sZWLo5Iv96X-x10kVauME-Mc9HGS5G4h_26P2oHhiZ3SEgj6jW0KlEnsh2H_yTego0grbhdcN1Yjd_rLpyHUt5XhXHJwoqyJ_ylwvZD9-dRLgi_fM_7j/p.png?fv_content=true&size_mode=5); background-position: 90% center;">
+          <p class="text-5xl text-white">Bienvenido a <br><strong>Top.Education</strong></p>
+          <span class="bg-neutral-700 text-xl text-white inline-block rounded-full mt-8 px-8 py-2"><strong id="reloj"></strong></span>
+        </div>
+
+        <div class="bg-no-repeat bg-blue-950 border border-blue-800 rounded-xl w-5/12 ml-2 p-6">
+            <div class="flex flex-row -mx-3">
+                <div class="flex-none w-2/3 max-w-full px-3">
+                    <div>
+                        <p class="mb-0 font-sans font-semibold leading-normal text-3xl text-white">Total de certificaciones</p>
+                        <h5 class="mb-0 font-bold text-9xl text-white">
+                        {{ certifications|length }} 
+                        </h5>
+                    </div>
+                </div>
+                <div class="px-3 text-right basis-1/3">
+                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
+                        <i class="fa-solid fa-notes-medical text-3xl text-white"></i>
+                    </div><br><br><br><br><br>
+                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full mt-10" href="{% url 'certifications' %}">Ver todo</a>
+                </div>
+            </div>
+        </div>
+      </div>
+      <div class="flex flex-row h-35 gap-2 mt-6">
+        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 w-3/12 border border-neutral-500">
+            <div class="flex flex-row -mx-3">
+                <div class="flex-none w-2/3 max-w-full px-3">
+                    <div>
+                        <p class="mb-0 font-sans font-semibold text-2xl text-white leading-[1em]">Certificaciones EdX</p>
+                        <h5 class="mb-0 font-bold text-5xl text-white">
+                        {{ edx |length }} 
+                        </h5>
+                    </div>
+                </div>
+                <div class="px-3 text-right basis-1/3">
+                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-emerald-950 to-teal-950">
+                        <i class="fa-solid fa-notes-medical text-3xl text-white"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 w-3/12 border border-neutral-500">
+          <div class="flex flex-row -mx-3">
+                <div class="flex-none w-2/3 max-w-full px-3">
+                    <div>
+                        <p class="mb-0 font-sans font-semibold text-2xl text-white leading-[1em]">Certificaciones Coursera</p>
+                        <h5 class="mb-0 font-bold text-5xl text-white">
+                        {{ coursera |length }}
+                        </h5>
+                    </div>
+                </div>
+                <div class="px-3 text-right basis-1/3">
+                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-blue-900">
+                        <i class="fa-solid fa-notes-medical text-3xl text-white"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 w-3/12 border border-neutral-500">
+            <div class="flex flex-row -mx-3">
+                <div class="flex-none w-2/3 max-w-full px-3">
+                    <div>
+                        <p class="mb-0 font-sans font-semibold text-2xl text-white leading-[1em]">Certificaciones MasterClass</p>
+                        <h5 class="mb-0 font-bold text-5xl text-white">
+                        {{ masterclass|length }}
+                        </h5>
+                    </div>
+                </div>
+                <div class="px-3 text-right basis-1/3">
+                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-rose-700 to-rose-950">
+                        <i class="fa-solid fa-notes-medical text-3xl text-white"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 w-3/12 border border-neutral-500">
+            <div class="flex flex-row -mx-3">
+                <div class="flex-none w-2/3 max-w-full px-3">
+                    <div>
+                        <p class="mb-0 font-sans font-semibold leading-normal text-xl text-white">Total de blogs</p>
+                        <h5 class="mb-0 font-bold text-7xl text-white">
+                        {{ posts|length }}
+                        </h5>
+                    </div>
+                </div>
+                <div class="px-3 text-right basis-1/3">
+                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
+                        <i class="fa-regular fa-pen-to-square text-3xl text-white"></i>
+                    </div><br><br>
+                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'posts' %}">Ver todo</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <canvas class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 w-6/12 mt-5 border border-neutral-500" id="myChart"></canvas>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+  const ctx = document.getElementById('myChart');
+
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['EdX', 'Coursera', 'Masterclass'],
+      color: '#FFFFFF',
+      datasets: [{
+        label: '# Total de certificaciones por plataforma',
+        data: [{{ edx |length }}, {{ coursera |length }}, {{ masterclass|length }}],
+        borderWidth: 1,
+        color: '#FFFFFF'
+      }]
+    },
+    options: {
+      scales: {
+        y: {
+          beginAtZero: true
+        }
+      },
+        plugins: {
+            legend: {
+                labels: {
+                    // This more specific font property overrides the global property
+                    font: {
+                        size: 14                        
+                    },
+                    color: '#FFFFFF'
+                }
+            },
+            title: {
+                display: true,
+                text: 'TOTAL DE CERTIFICACIONES REGISTRADAS',
+                color: '#FFFFFF',
+                font: {
+                    size: 24                        
+                }
+            }
+        }
+    }
+  });
+</script>
+    <script>
+        function actualizarReloj() {
+            const ahora = new Date();
+            const hora = ahora.toLocaleTimeString('es-CO', { hour12: false });
+            document.getElementById('reloj').textContent = hora;
+        }
+        setInterval(actualizarReloj, 1000);
+        actualizarReloj(); // Mostrar inmediatamente
+    </script>
+
+{% endblock %}
