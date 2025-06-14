@@ -54,11 +54,14 @@ class SkillsSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
 class UniverisitiesSerializer(serializers.ModelSerializer):
-    
+    region_nombre = serializers.SerializerMethodField()
+
     class Meta:
         model = Universidades
-        
-        fields = ['id', 'nombre','region_universidad_id','univ_img']   
+        fields = ['id', 'nombre', 'region_universidad_id', 'univ_img','univ_ico','univ_fla','univ_est', 'region_nombre']
+
+    def get_region_nombre(self, obj):
+        return obj.region_universidad.nombre if obj.region_universidad else "No"
 
 
 class TopicsSerializer (serializers.ModelSerializer):
@@ -66,21 +69,21 @@ class TopicsSerializer (serializers.ModelSerializer):
     class Meta:
         model = Temas
         
-        fields = ['id', 'nombre','tem_col','tem_img']
+        fields = ['id', 'nombre','tem_type','tem_col','tem_img']
 
 class PlataformaSerializer (serializers.ModelSerializer):
     
     class Meta:
         model = Plataformas
         
-        fields = ['id', 'nombre','plat_img']
+        fields = ['id', 'nombre','plat_img','plat_ico']
 
 class EmpresaSerializer (serializers.ModelSerializer):
     
     class Meta:
         model = Empresas
         
-        fields = ['id', 'nombre','empr_img']
+        fields = ['id', 'nombre','empr_img','empr_ico','empr_est']
 
 class CertificationSerializer(serializers.ModelSerializer): 
     

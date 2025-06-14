@@ -25,7 +25,7 @@ class Temas (models.Model):
         
 
 class Regiones (models.Model):
-    nombre = models.CharField(max_length=500)
+    nombre = models.CharField(max_length=100)
     
     def __str__(self):
         return str(self.id) +" - "+ self.nombre
@@ -36,12 +36,11 @@ class Regiones (models.Model):
         
 class Universidades (models.Model):
     nombre = models.CharField(max_length=500)
-    region_universidad = models.ForeignKey(
-        Regiones, 
-        on_delete=models.SET_NULL,
-        null = True,
-    )
+    region_universidad = models.ForeignKey(Regiones, on_delete=models.SET_NULL, null=True, related_name='universidades')
     univ_img = models.CharField(max_length=200)
+    univ_fla = models.CharField(max_length=200)
+    univ_ico = models.CharField(max_length=100)
+    univ_est = models.CharField(max_length=50)
     
     def __str__(self):
         return str(self.id) +" - "+ self.nombre
@@ -53,6 +52,8 @@ class Universidades (models.Model):
 class Empresas (models.Model):
     nombre = models.CharField(max_length=500)
     empr_img = models.CharField(max_length=200)
+    empr_ico = models.CharField(max_length=100)
+    empr_est = models.CharField(max_length=50)
 
     def __str__(self):
         return str(self.id) +" - "+ self.nombre
@@ -64,6 +65,7 @@ class Empresas (models.Model):
 class Plataformas (models.Model):
     nombre = models.CharField(max_length=500)
     plat_img = models.CharField(max_length=200)
+    plat_ico = models.CharField(max_length=100)
     
     def __str__(self):
         return self.nombre
@@ -137,7 +139,7 @@ class CategoriaBlog(models.Model):
 class Blog(models.Model):
     nombre_blog = models.CharField(max_length=255,verbose_name='Título')
     slug = models.SlugField(max_length=500, default="default-slug",verbose_name='Slug')
-    fecha_redaccion_blog = models.DateField(default='2025-01-01',verbose_name='Fecha')
+    fecha_redaccion_blog = models.DateField(auto_now_add=True,verbose_name='Fecha')
     miniatura_blog = models.CharField(max_length=255,null=True,verbose_name='Imagen')
     palabra_clave_blog = models.CharField(max_length=255,verbose_name='Palabra clave')
     metadescripcion_blog = models.TextField(null=True,verbose_name='Metadescripción')
