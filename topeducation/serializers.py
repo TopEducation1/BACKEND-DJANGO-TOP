@@ -8,33 +8,24 @@ from django.db.models import F
 # CONVIERTE LOS MODELOS EN JSON PARA CONSUMIRLOS DESDE EL FRONT
 
 class BlogSerializer(serializers.ModelSerializer):
-    
     class Meta:
         model = Blog 
         fields = '__all__'
-        
-    def to_representation(self, instance):
-        
-        representation = super().to_representation(instance)
-        
-        categoria_instance = instance.categoria_blog
-        representation['categoria_blog'] = CategoriesSerializer(categoria_instance).data if categoria_instance else None
 
-        try:
-            
-            auto = Autor.objects.get(id = instance.autor_blog_id)
-            categoria = CategoriaBlog.objects.get(id = instance.categoria_blog_id)
-            representation['categoria_blog_id'] = categoria.nombre_categoria_blog
-            representation['autor_blog_id'] = auto.nombre_autor
-            representation['autor_img'] = auto.auto_img
-            autor_instance = instance.autor_blog
-            representation['autor_blog'] = AuthorsSerializer(autor_instance).data if autor_instance else None
-            
-        except CategoriaBlog.DoesNotExist:
-            representation['categoria_blog_id'] = None
-            representation['autor_blog_id'] = None
-        
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+
+        # Serializar relaciones completas
+        representation['categoria_blog'] = CategoriesSerializer(instance.categoria_blog).data if instance.categoria_blog else None
+        representation['autor_blog'] = AuthorsSerializer(instance.autor_blog).data if instance.autor_blog else None
+
+        # Campos adicionales explícitos (evitando sobrescribir IDs)
+        representation['categoria_blog_nombre'] = instance.categoria_blog.nombre_categoria_blog if instance.categoria_blog else None
+        representation['autor_blog_nombre'] = instance.autor_blog.nombre_autor if instance.autor_blog else None
+        representation['autor_img'] = instance.autor_blog.auto_img.url if instance.autor_blog and instance.autor_blog.auto_img else None
+
         return representation
+
             
 class AuthorsSerializer(serializers.ModelSerializer):
     class Meta:

@@ -298,20 +298,28 @@ class CustomPagination(PageNumberPagination):
 
 
 #Api config to get the blogs
+
 class BlogList(APIView):
-    
     pagination_class = CustomPagination
-    
-    #GET METHOD REQUESTED BY THE FRONT
-    
+
     def get(self, request):
-        
-        blogs_queryset = Blog.objects.all()
+        search_query = request.query_params.get('search', '')  # obtiene ?search=texto
+
+        # Preload relaciones para evitar consultas N+1 (si usas autor/categoria)
+        blogs_queryset = Blog.objects.select_related('autor_blog', 'categoria_blog').all()
+
+        # Filtro parcial por nombre del blog (no exacto)
+        if search_query:
+            blogs_queryset = blogs_queryset.filter(
+                Q(nombre_blog__icontains=search_query)
+            )
+
         paginator = self.pagination_class()
         paginated_queryset = paginator.paginate_queryset(blogs_queryset, request)
-        serializer = BlogSerializer(paginated_queryset, many = True)
-        
+        serializer = BlogSerializer(paginated_queryset, many=True)
+
         return paginator.get_paginated_response(serializer.data)
+
 
 # EndPoint to get the certifications
 class CertificationList(APIView):
