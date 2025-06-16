@@ -118,7 +118,8 @@ class Certificaciones(models.Model):
 
 class Autor(models.Model):
     nombre_autor = models.CharField(max_length=255)
-    auto_img = models.CharField(max_length=150)
+    auto_img = models.CharField(max_length=500, blank=True, null=True)
+
     def __str__(self):
         return self.nombre_autor
 

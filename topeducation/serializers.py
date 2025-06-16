@@ -14,18 +14,31 @@ class BlogSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
+        
+        categoria_instance = instance.categoria_blog
+        representation['categoria_blog'] = CategoriesSerializer(categoria_instance).data if categoria_instance else None
 
-        # Serializar relaciones completas
-        representation['categoria_blog'] = CategoriesSerializer(instance.categoria_blog).data if instance.categoria_blog else None
-        representation['autor_blog'] = AuthorsSerializer(instance.autor_blog).data if instance.autor_blog else None
+        try:
+            autor_instance = instance.autor_blog
+            categoria = instance.categoria_blog
 
-        # Campos adicionales explícitos (evitando sobrescribir IDs)
-        representation['categoria_blog_nombre'] = instance.categoria_blog.nombre_categoria_blog if instance.categoria_blog else None
-        representation['autor_blog_nombre'] = instance.autor_blog.nombre_autor if instance.autor_blog else None
-        representation['autor_img'] = instance.autor_blog.auto_img.url if instance.autor_blog and instance.autor_blog.auto_img else None
+            representation['categoria_blog_id'] = categoria.nombre_categoria_blog if categoria else None
+            representation['autor_blog_id'] = autor_instance.nombre_autor if autor_instance else None
+
+            # CORREGIDO: ya no usamos .url
+            representation['autor_img'] = autor_instance.auto_img if autor_instance and autor_instance.auto_img else None
+
+            representation['autor_blog'] = AuthorsSerializer(autor_instance).data if autor_instance else None
+
+        except Exception as e:
+            print(f"Error serializing blog: {e}")
+            representation['categoria_blog_id'] = None
+            representation['autor_blog_id'] = None
+            representation['autor_img'] = None
 
         return representation
 
+ 
             
 class AuthorsSerializer(serializers.ModelSerializer):
     class Meta:

@@ -303,12 +303,9 @@ class BlogList(APIView):
     pagination_class = CustomPagination
 
     def get(self, request):
-        search_query = request.query_params.get('search', '')  # obtiene ?search=texto
-
-        # Preload relaciones para evitar consultas N+1 (si usas autor/categoria)
+        search_query = request.query_params.get('search', '')
         blogs_queryset = Blog.objects.select_related('autor_blog', 'categoria_blog').all()
 
-        # Filtro parcial por nombre del blog (no exacto)
         if search_query:
             blogs_queryset = blogs_queryset.filter(
                 Q(nombre_blog__icontains=search_query)
@@ -319,6 +316,7 @@ class BlogList(APIView):
         serializer = BlogSerializer(paginated_queryset, many=True)
 
         return paginator.get_paginated_response(serializer.data)
+
 
 
 # EndPoint to get the certifications
