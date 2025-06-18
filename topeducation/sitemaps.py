@@ -1,20 +1,28 @@
-# certificaciones/sitemaps.py
 from django.contrib.sitemaps import Sitemap
 from .models import Certificaciones
 from .models import Blog
 
-class CertificacionSitemap(Sitemap):
-    changefreq = "weekly"
-    priority = 0.8
 
+class CertificacionSitemap(Sitemap):
     def items(self):
-        return Certificaciones.objects.all()
+        return Certificaciones.objects.select_related(
+            "plataforma_certificacion"
+        ).order_by("id")  # también resuelve el warning de paginación
+
+    def location(self, obj):
+         # Diccionario como switch
+        plataforma_slug = {
+            1: "edx",
+            2: "coursera",
+            3: "masterclass"
+        }
+
+        plataform = plataforma_slug.get(obj.plataforma_certificacion_id, "otro")
+        return f"/certificaciones/{plataform}/{obj.slug}/"
 
     def lastmod(self, obj):
         return obj.fecha_creado
 
-    def location(self, obj):
-        return f"/certificacion/{obj.plataforma_certificacion.nombre.lower()}/{obj.slug}"
 
 class BlogSitemap(Sitemap):
     changefreq = "weekly"
