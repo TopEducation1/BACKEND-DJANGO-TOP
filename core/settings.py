@@ -15,7 +15,7 @@ SECRET_KEY = str(os.getenv('SECRET_KEY'))
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True 
 
-ALLOWED_HOSTS = ['backend-django-top-production.up.railway.app', '127.0.0.1', 'localhost']
+ALLOWED_HOSTS = ['backend-django-top-production.up.railway.app', '127.0.0.1', 'localhost','app.top.education']
 
 # Configuración de seguridad HTTPS
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
