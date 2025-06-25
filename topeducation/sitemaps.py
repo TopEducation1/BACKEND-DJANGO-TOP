@@ -42,3 +42,9 @@ class BlogSitemap(Sitemap):
     
     def location(self, obj):
         return f"/recursos/{obj.slug}"
+    
+    def get_urls(self, page=1, site=None, protocol="https"):
+        # Crear objeto falso de "site" con el dominio deseado
+        class FakeSite:
+            domain = "top.education"
+        return super().get_urls(page=page, site=FakeSite(), protocol=protocol)
