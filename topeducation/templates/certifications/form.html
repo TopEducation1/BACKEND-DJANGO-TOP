@@ -32,4 +32,17 @@
         <a class="bg-neutral-500 hover:bg-neutral-400 text-neutral-950 font-bold py-2 px-4 rounded-lg mb-10 mt-5" href="{% url 'posts' %}">Cancelar</a>
     </div>
 </form>
+<script type="text/javascript">
+    ClassicEditor
+    .create(document.querySelector('#editor'))
+    .catch(error => {
+        console.error(error);
+    });
+    ClassicEditor
+    .create(document.querySelector('#editor_2'))
+    .catch(error => {
+        console.error(error);
+    });
+        
+</script>
 

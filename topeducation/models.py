@@ -92,12 +92,12 @@ class Certificaciones(models.Model):
     testimonios_certificacion = models.TextField(default="NONE")
     universidad_certificacion = models.ForeignKey(Universidades, on_delete=models.SET_NULL, null=True, blank=True)
     empresa_certificacion = models.ForeignKey(Empresas, on_delete=models.SET_NULL, null=True, blank=True)
-    plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.SET_NULL,null = True)
+    plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.CASCADE, null=True, blank=True)
     fecha_creado_cert = models.DateField(auto_now_add=True, null=False)
     fecha_creado = models.DateField(auto_now_add=True, null=False)
     url_certificacion_original = models.CharField(max_length=300, default="Null")
     video_certificacion = models.CharField(default='Null', null = True, max_length=1000)
-    imagen_final = models.ImageField(upload_to='assets/universities/banners/masterclass/',blank=True, null=True)
+    imagen_final = models.CharField(default='Null', null = True, max_length=255)
     
     def save(self, *args, **kwargs):
         if not self.slug or self.slug.startswith("slice"):
