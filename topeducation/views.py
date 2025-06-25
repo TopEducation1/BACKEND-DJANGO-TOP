@@ -110,7 +110,7 @@ def deletePost(request,post_id):
     return redirect('posts') 
 
 def certifications(request):
-    certifications = Certificaciones.objects.all()
+    certifications = Certificaciones.objects.select_related('plataforma_certificacion', 'tema_certificacion').all()
     return render(request,'certifications/index.html',{'certifications':certifications})
 
 def createCertification(request):
