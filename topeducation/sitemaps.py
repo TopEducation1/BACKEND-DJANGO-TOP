@@ -22,6 +22,12 @@ class CertificacionSitemap(Sitemap):
 
     def lastmod(self, obj):
         return obj.fecha_creado
+    
+    def get_urls(self, page=1, site=None, protocol="https"):
+        # Crear objeto falso de "site" con el dominio deseado
+        class FakeSite:
+            domain = "top.education"
+        return super().get_urls(page=page, site=FakeSite(), protocol=protocol)
 
 
 class BlogSitemap(Sitemap):
