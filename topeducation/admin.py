@@ -10,5 +10,7 @@ admin.site.register(Temas)
 admin.site.register(Certificaciones)
 admin.site.register(Empresas)
 admin.site.register(Regiones)
+admin.site.register(Original)
+admin.site.register(OriginalCertification)
 
 

@@ -12,6 +12,7 @@ from .models import *
 from .models import Certificaciones
 from .serializers import *
 from rest_framework.views import APIView
+from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework import status
 from django.views.decorators.csrf import csrf_exempt
@@ -556,15 +557,14 @@ class filter_by_tags(APIView):
             page = params.pop('page', ['1'])[0]
             page_size = params.pop('page_size', ['12'])[0]
 
-            queryset = Certificaciones.objects.all()
+            queryset = Certificaciones.objects.all().order_by('id')
 
-            # Mapeo de campos relacionados por nombre
             field_mapping = {
                 'plataforma': 'plataforma_certificacion__nombre__iexact',
                 'empresas': 'empresa_certificacion__nombre__iexact',
                 'universidades': 'universidad_certificacion__nombre__iexact',
                 'temas': 'tema_certificacion__nombre__iexact',
-                'habilidades': 'tema_certificacion__nombre__iexact',  # misma tabla para ambos
+                'habilidades': 'tema_certificacion__nombre__iexact',
             }
 
             for key, value_list in params.lists():
@@ -572,9 +572,26 @@ class filter_by_tags(APIView):
                     field_name = field_mapping[key]
                     q_objects = Q()
                     for value in value_list:
-                        for val in value.split(','):
-                            q_objects |= Q(**{field_name: val.strip()})
-                    queryset = queryset.filter(q_objects)
+                        print(f"DEBUG: key={key}, raw value={value} (type={type(value)})")
+                        if value is None:
+                            print("DEBUG: value is None, skipping")
+                            continue
+                        if not isinstance(value, str):
+                            print("DEBUG: value is not string, skipping")
+                            continue
+                        # Aquí ocurre el split y strip
+                        split_values = value.split(',') if value else []
+                        for val in split_values:
+                            print(f"DEBUG: val before strip: {val} (type={type(val)})")
+                            if val is None:
+                                print("DEBUG: val is None, skipping")
+                                continue
+                            cleaned_val = val.strip()
+                            print(f"DEBUG: cleaned_val: '{cleaned_val}'")
+                            if cleaned_val:
+                                q_objects |= Q(**{field_name: cleaned_val})
+                    if q_objects:
+                        queryset = queryset.filter(q_objects)
 
             paginator = self.pagination_class()
             paginated_queryset = paginator.paginate_queryset(queryset, request)
@@ -647,3 +664,20 @@ class LatestCertificationsView(APIView):
         certifications = Certificaciones.objects.all().order_by('-fecha_creado')[:32]
         serializer = CertificationSerializer(certifications, many=True)
         return Response(serializer.data)
+
+
+
+
+class OriginalDetailView(APIView):
+    def get(self, request, slug):
+        try:
+            original = Original.objects.get(slug=slug)
+        except Original.DoesNotExist:
+            return Response({"detail": "No encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = OriginalSerializer(
+            original,
+            context={'request': request}   # <–– aquí el context
+        )
+        return Response(serializer.data)
+

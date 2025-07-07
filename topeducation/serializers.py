@@ -1,4 +1,5 @@
 # certifications/serializers.py
+from django.conf import settings
 from datetime import datetime
 from rest_framework import serializers
 from .models import *
@@ -89,126 +90,121 @@ class EmpresaSerializer (serializers.ModelSerializer):
         
         fields = ['id', 'nombre','empr_img','empr_ico','empr_est']
 
-class CertificationSerializer(serializers.ModelSerializer): 
-    
-    
+
+class CertificationSerializer(serializers.ModelSerializer):
+
     class Meta:
         model = Certificaciones
-        
-        fields = '__all__'  
-        
+        fields = '__all__'
+
     def get_fecha_certificacion(self, instance):
         fecha = instance.fecha_creado
         if isinstance(fecha, datetime):
             return fecha.date()
         return fecha
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        content = data['contenido_certificacion']
-        
-        contenido_mod = data['contenido_certificacion']
-        cantidad_modulos = contenido_mod.split('\n')[0]
-        contenido_certificacion = contenido_mod.split('\n')[1:]
-        
+
+        # Procesamiento de contenido_certificacion
+        contenido_mod = data.get('contenido_certificacion') or ''
+        contenido_mod = contenido_mod if isinstance(contenido_mod, str) else ''
+        cantidad_modulos = contenido_mod.split('\n')[0] if '\n' in contenido_mod else contenido_mod
+        contenido_certificacion = contenido_mod.split('\n')[1:] if '\n' in contenido_mod else []
+
         data['contenido_certificacion'] = {
-            
             "cantidad_modulos": cantidad_modulos,
-            "contenido_certificacion" : contenido_certificacion
-            }
-        
-        tema_instance = instance.tema_certificacion
-        data['tema_certificacion'] = TopicsSerializer(tema_instance).data if tema_instance else None
+            "contenido_certificacion": contenido_certificacion
+        }
 
-        plataforma_instance = instance.plataforma_certificacion
-        data['plataforma_certificacion'] = PlataformaSerializer(plataforma_instance).data if plataforma_instance else None
-
-        universidad_instance = instance.universidad_certificacion
-        data['universidad_certificacion'] = UniverisitiesSerializer(universidad_instance).data if universidad_instance else None
-
-        empresa_instance = instance.empresa_certificacion
-        data['empresa_certificacion'] = EmpresaSerializer(empresa_instance).data if empresa_instance else None
+        # Relaciones
+        data['tema_certificacion'] = TopicsSerializer(instance.tema_certificacion).data if instance.tema_certificacion else None
+        data['plataforma_certificacion'] = PlataformaSerializer(instance.plataforma_certificacion).data if instance.plataforma_certificacion else None
+        data['universidad_certificacion'] = UniverisitiesSerializer(instance.universidad_certificacion).data if instance.universidad_certificacion else None
+        data['empresa_certificacion'] = EmpresaSerializer(instance.empresa_certificacion).data if instance.empresa_certificacion else None
 
         # Procesamiento de módulos
-        if isinstance(data['modulos_certificacion'], str):
-            
-            modulos_raw = data['modulos_certificacion'].split('\n')
+        modulos_raw_str = data.get('modulos_certificacion', '')
+        if isinstance(modulos_raw_str, str) and modulos_raw_str.strip():
+            modulos_raw = modulos_raw_str.split('\n')
             modulos_procesados = []
             current_module = None
-            
+
             for linea in modulos_raw:
+                if linea is None:
+                    continue
                 linea = linea.strip()
                 if not linea:
                     continue
-                
+
                 if 'Módulo' in linea:
                     if current_module:
                         modulos_procesados.append(current_module)
-                        
+
                     titulo_y_duracion = linea.split(' | Duración:')
                     if len(titulo_y_duracion) > 1:
-                        titulo = titulo_y_duracion[0].split(':')[1].strip()
+                        titulo = titulo_y_duracion[0].split(':')[1].strip() if ':' in titulo_y_duracion[0] else ''
                         duracion = titulo_y_duracion[1].strip()
                     else:
-                       titulo = ''
-                       duracion = ''
-                        
+                        titulo = ''
+                        duracion = ''
+
                     current_module = {
-                        'titulo': modulos_raw[0],
-                        'duracion': modulos_raw[1],
+                        'titulo': titulo,
+                        'duracion': duracion,
                         'incluye': [],
                         'contenido': []
                     }
+
                 elif current_module:
                     if 'Incluye' in linea:
                         continue
-                    elif linea.startswith(('1 ', '2 ', '3 ', '4 ', '5 ', '6 ', '7 ', '8 ', '9 ')):
+                    elif linea[:2].strip().isdigit():
                         current_module['incluye'].append(linea)
                     else:
                         current_module['contenido'].append(linea)
-                        
+
             if current_module:
                 modulos_procesados.append(current_module)
-                
+
             data['modulos_certificacion'] = modulos_procesados
-            #print(modulos_procesados)
-        # Procesamiento de las habilidades
-        if isinstance(data['habilidades_certificacion'], str):
+
+        # Procesamiento de habilidades
+        habilidades_raw = data.get('habilidades_certificacion', '')
+        if isinstance(habilidades_raw, str):
             data['habilidades_certificacion'] = [
                 {
-                    "id": index +1,
+                    "id": index + 1,
                     "nombre": habilidad.strip()
                 }
-                for index, habilidad in enumerate(data['habilidades_certificacion'].split('-'))
+                for index, habilidad in enumerate(habilidades_raw.split('-'))
+                if habilidad and habilidad.strip()
             ]
-            
-        # Procesamiento de aprendizajes 
-        if isinstance(data['aprendizaje_certificacion'], str):
+
+        # Procesamiento de aprendizajes
+        aprendizajes_raw = data.get('aprendizaje_certificacion', '')
+        if isinstance(aprendizajes_raw, str):
             data['aprendizaje_certificacion'] = [
                 {
-                    "id": index+1,
+                    "id": index + 1,
                     "nombre": aprendizaje.strip()
                 }
-                for index, aprendizaje in enumerate(data['aprendizaje_certificacion'].split('\n'))
-                if aprendizaje.strip()
+                for index, aprendizaje in enumerate(aprendizajes_raw.split('\n'))
+                if aprendizaje and aprendizaje.strip()
             ]
-            
-        # Procesamiento del video
-        if isinstance(data.get('video_certificacion'), str):
-            video_url = data['video_certificacion'].strip()
-            if video_url:
-                data['video_certificacion'] = {
-                    "url": video_url
-                }
-            else:
-                data['video_certificacion'] = None
 
-        # Modificar la representación final de los datos
-        #data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
-        #data['plataforma_certificacion_id'] = instance.plataforma_certificacion_id
-       
-        data['fecha_creado'] = instance.fecha_creado
+        # Procesamiento del video
+        video_url_raw = data.get('video_certificacion')
+        video_url = video_url_raw.strip() if isinstance(video_url_raw, str) else ''
+        data['video_certificacion'] = {"url": video_url} if video_url else None
+
+        # Agregar fecha
+        data['fecha_creado_cert'] = instance.fecha_creado_cert
+        data['cert_top'] = instance.cert_top
 
         return data
+
+
 
 
 class CertificationSearchSerializer(serializers.ModelSerializer):
@@ -222,104 +218,212 @@ class CertificationSearchSerializer(serializers.ModelSerializer):
             return fecha.date()
         return fecha
     def to_representation(self, instance):
-        data = super().to_representation(instance)
-        content = data['contenido_certificacion']
-        
-        contenido_mod = data['contenido_certificacion']
-        cantidad_modulos = contenido_mod.split('\n')[0]
-        contenido_certificacion = contenido_mod.split('\n')[1:]
-        
-        data['contenido_certificacion'] = {
+        try:
+            data = super().to_representation(instance)
+            content = data['contenido_certificacion']
             
-            "cantidad_modulos": cantidad_modulos,
-            "contenido_certificacion" : contenido_certificacion
-            }
-        
-        tema_instance = instance.tema_certificacion
-        data['tema_certificacion'] = TopicsSerializer(tema_instance).data if tema_instance else None
-        plataforma_instance = instance.plataforma_certificacion
-        data['plataforma_certificacion'] = PlataformaSerializer(plataforma_instance).data if plataforma_instance else None
-        universidad_instance = instance.universidad_certificacion
-        data['universidad_certificacion'] = UniverisitiesSerializer(universidad_instance).data if universidad_instance else None
-
-        # Procesamiento de módulos
-        if isinstance(data['modulos_certificacion'], str):
+            contenido_mod = data['contenido_certificacion']
+            cantidad_modulos = contenido_mod.split('\n')[0]
+            contenido_certificacion = contenido_mod.split('\n')[1:]
             
-            modulos_raw = data['modulos_certificacion'].split('\n')
-            modulos_procesados = []
-            current_module = None
-            
-            for linea in modulos_raw:
-                linea = linea.strip()
-                if not linea:
-                    continue
+            data['contenido_certificacion'] = {
                 
-                if 'Módulo' in linea:
-                    if current_module:
-                        modulos_procesados.append(current_module)
-                        
-                    titulo_y_duracion = linea.split(' | Duración:')
-                    if len(titulo_y_duracion) > 1:
-                        titulo = titulo_y_duracion[0].split(':')[1].strip()
-                        duracion = titulo_y_duracion[1].strip()
-                    else:
-                       titulo = ''
-                       duracion = ''
-                        
-                    current_module = {
-                        'titulo': modulos_raw[0],
-                        'duracion': modulos_raw[1],
-                        'incluye': [],
-                        'contenido': []
-                    }
-                elif current_module:
-                    if 'Incluye' in linea:
+                "cantidad_modulos": cantidad_modulos,
+                "contenido_certificacion" : contenido_certificacion
+                }
+            
+            tema_instance = instance.tema_certificacion
+            data['tema_certificacion'] = TopicsSerializer(tema_instance).data if tema_instance else None
+            plataforma_instance = instance.plataforma_certificacion
+            data['plataforma_certificacion'] = PlataformaSerializer(plataforma_instance).data if plataforma_instance else None
+            universidad_instance = instance.universidad_certificacion
+            data['universidad_certificacion'] = UniverisitiesSerializer(universidad_instance).data if universidad_instance else None
+            data['empresa_certificacion'] = EmpresaSerializer(instance.empresa_certificacion).data if instance.empresa_certificacion else None
+            # Procesamiento de módulos
+            if isinstance(data['modulos_certificacion'], str):
+                
+                modulos_raw = data.get('modulos_certificacion')
+                if isinstance(modulos_raw, str):
+                    modulos_raw = modulos_raw.strip().split('\n')
+                else:
+                    modulos_raw = []
+
+                modulos_procesados = []
+                current_module = None
+                
+                for linea in modulos_raw:
+                    linea = linea.strip()
+                    if not linea:
                         continue
-                    elif linea.startswith(('1 ', '2 ', '3 ', '4 ', '5 ', '6 ', '7 ', '8 ', '9 ')):
-                        current_module['incluye'].append(linea)
-                    else:
-                        current_module['contenido'].append(linea)
-                        
-            if current_module:
-                modulos_procesados.append(current_module)
-                
-            data['modulos_certificacion'] = modulos_procesados
-            #print(modulos_procesados)
-        # Procesamiento de las habilidades
-        if isinstance(data['habilidades_certificacion'], str):
-            data['habilidades_certificacion'] = [
-                {
-                    "id": index +1,
-                    "nombre": habilidad.strip()
-                }
-                for index, habilidad in enumerate(data['habilidades_certificacion'].split('-'))
-            ]
-            
-        # Procesamiento de aprendizajes 
-        if isinstance(data['aprendizaje_certificacion'], str):
-            data['aprendizaje_certificacion'] = [
-                {
-                    "id": index+1,
-                    "nombre": aprendizaje.strip()
-                }
-                for index, aprendizaje in enumerate(data['aprendizaje_certificacion'].split('\n'))
-                if aprendizaje.strip()
-            ]
-            
-        # Procesamiento del video
-        if isinstance(data.get('video_certificacion'), str):
-            video_url = data['video_certificacion'].strip()
-            if video_url:
-                data['video_certificacion'] = {
-                    "url": video_url
-                }
+                    
+                    if 'Módulo' in linea:
+                        if current_module:
+                            modulos_procesados.append(current_module)
+                            
+                        titulo_y_duracion = linea.split(' | Duración:')
+                        if len(titulo_y_duracion) > 1:
+                            titulo = titulo_y_duracion[0].split(':')[1].strip()
+                            duracion = titulo_y_duracion[1].strip()
+                        else:
+                            titulo = ''
+                            duracion = ''
+                            
+                        current_module = {
+                            'titulo': modulos_raw[0],
+                            'duracion': modulos_raw[1],
+                            'incluye': [],
+                            'contenido': []
+                        }
+                    elif current_module:
+                        if 'Incluye' in linea:
+                            continue
+                        elif linea.startswith(('1 ', '2 ', '3 ', '4 ', '5 ', '6 ', '7 ', '8 ', '9 ')):
+                            current_module['incluye'].append(linea)
+                        else:
+                            current_module['contenido'].append(linea)
+                            
+                if current_module:
+                    modulos_procesados.append(current_module)
+                    
+                data['modulos_certificacion'] = modulos_procesados
+                #print(modulos_procesados)
+            # Procesamiento de las habilidades
+            habilidades_raw = data.get('habilidades_certificacion')
+            if isinstance(habilidades_raw, str):
+                data['habilidades_certificacion'] = [
+                    {"id": i+1, "nombre": h.strip()} for i, h in enumerate(habilidades_raw.split('-')) if h.strip()
+                ]
             else:
-                data['video_certificacion'] = None
+                data['habilidades_certificacion'] = []
 
-        # Modificar la representación final de los datos
-        #data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
-        #data['plataforma_certificacion_id'] = instance.plataforma_certificacion_id
-       
-        data['fecha_creado'] = instance.fecha_creado
+                
+            # Procesamiento de aprendizajes 
+            aprendizajes_raw = data.get('aprendizaje_certificacion')
+            if isinstance(aprendizajes_raw, str):
+                data['aprendizaje_certificacion'] = [
+                    {"id": i+1, "nombre": a.strip()} for i, a in enumerate(aprendizajes_raw.split('\n')) if a.strip()
+                ]
+            else:
+                data['aprendizaje_certificacion'] = []
 
-        return data
+                
+            # Procesamiento del video
+            if isinstance(data.get('video_certificacion'), str):
+                video_url = data['video_certificacion'].strip()
+                if video_url:
+                    data['video_certificacion'] = {
+                        "url": video_url
+                    }
+                else:
+                    data['video_certificacion'] = None
+
+            # Modificar la representación final de los datos
+            #data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
+            #data['plataforma_certificacion_id'] = instance.plataforma_certificacion_id
+        
+            data['fecha_creado_cert'] = instance.fecha_creado_cert
+            return data
+        except Exception as e:
+            print("Error al procesar certificación:", instance.id)
+            print("Contenido:", data)
+            raise e
+        
+
+
+class OriginalCertificationSerializer(serializers.ModelSerializer):
+    certification_title     = serializers.CharField(source='certification.nombre', read_only=True)
+    certification_slug      = serializers.CharField(source='certification.slug', read_only=True)
+    source_type             = serializers.SerializerMethodField()
+    source_object           = serializers.SerializerMethodField()
+    certification_image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OriginalCertification
+        fields = [
+            'title',
+            'hist',
+            'certification_title',
+            'certification_slug',
+            'source_type',
+            'source_object',
+            'certification_image_url',
+        ]
+
+    def _build_url(self, value, request, use_media=False):
+
+        if not value:
+            return None
+
+        # Caso string puro
+        if isinstance(value, str):
+            return value if not use_media else (
+                value if value.startswith('http')
+                else request.build_absolute_uri(settings.MEDIA_URL + value.lstrip('/'))
+            )
+
+        # Caso FileField/ImageField
+        if hasattr(value, 'url'):
+            # Si no queremos MEDIA_URL, devolvemos solo .url (que ya incluye MEDIA_URL)
+            return value.url if not use_media else request.build_absolute_uri(value.url)
+
+        return None
+
+    def get_source_type(self, obj):
+        cert = obj.certification
+        if getattr(cert, 'universidad_certificacion', None):
+            return 'universidad'
+        if getattr(cert, 'empresa_certificacion', None):
+            return 'empresa'
+        return 'certificación'
+
+    def get_source_object(self, obj):
+        cert = obj.certification
+        request = self.context.get('request')
+
+        uni = getattr(cert, 'universidad_certificacion', None)
+        if uni:
+            return UniverisitiesSerializer(uni, context={'request': request}).data
+
+        emp = getattr(cert, 'empresa_certificacion', None)
+        if emp:
+            return EmpresaSerializer(emp, context={'request': request}).data
+
+        return {}
+
+    def get_certification_image_url(self, obj):
+        cert = obj.certification
+        request = self.context.get('request')
+
+        # 1) Universidad
+        uni = getattr(cert, 'universidad_certificacion', None)
+        if uni:
+            return self._build_url(uni.univ_img, request)
+
+        # 2) Empresa
+        emp = getattr(cert, 'empresa_certificacion', None)
+        if emp:
+            return self._build_url(emp.empr_img, request)
+
+        # 3) Fallback: imagen_final en certificación SIN usar MEDIA_URL
+        if hasattr(cert, 'imagen_final'):
+            # Aquí indicamos use_media=False para devolver el valor "tal cual"
+            return self._build_url(cert.imagen_final, request, use_media=False)
+
+        return None
+
+
+
+class OriginalSerializer(serializers.ModelSerializer):
+    certifications = OriginalCertificationSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Original
+        fields = [
+            'id',
+            'name',
+            'slug',
+            'image',
+            'biog',
+            'certifications',
+        ]
+

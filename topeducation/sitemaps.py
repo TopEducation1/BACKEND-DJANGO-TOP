@@ -21,7 +21,7 @@ class CertificacionSitemap(Sitemap):
         return f"/certificaciones/{plataform}/{obj.slug}/"
 
     def lastmod(self, obj):
-        return obj.fecha_creado
+        return obj.fecha_creado_cert
     
     def get_urls(self, page=1, site=None, protocol="https"):
         # Crear objeto falso de "site" con el dominio deseado

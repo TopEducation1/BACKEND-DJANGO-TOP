@@ -51,7 +51,10 @@ urlpatterns = [
     path('api/topics/', TopicsList.as_view(), name='topics-list'),
     path('api/platforms/', PlatformsList.as_view(), name='platforms-list'),
     path('api/companies/', CompaniesList.as_view(), name='companies-list'),
+    path('originals/<slug:slug>/', OriginalDetailView.as_view(), name='original-detail'),
     path('api/latest-certifications/', LatestCertificationsView.as_view(), name='latest_certifications'),
     path('sitemap.xml', sitemap, {'sitemaps': sitemaps_dict}, name='sitemap'),
 
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
