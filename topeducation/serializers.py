@@ -98,7 +98,7 @@ class CertificationSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def get_fecha_certificacion(self, instance):
-        fecha = instance.fecha_creado
+        fecha = instance.fecha_creado_cert
         if isinstance(fecha, datetime):
             return fecha.date()
         return fecha
@@ -213,7 +213,7 @@ class CertificationSearchSerializer(serializers.ModelSerializer):
         model = Certificaciones
         fields = '__all__'   
     def get_fecha_certificacion(self, instance):
-        fecha = instance.fecha_creado
+        fecha = instance.fecha_creado_cert
         if isinstance(fecha, datetime):
             return fecha.date()
         return fecha

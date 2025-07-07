@@ -661,9 +661,15 @@ class filter_by_search(APIView):
 
 class LatestCertificationsView(APIView):
     def get(self, request):
-        certifications = Certificaciones.objects.all().order_by('-fecha_creado')[:32]
-        serializer = CertificationSerializer(certifications, many=True)
-        return Response(serializer.data)
+        try:
+            certifications = Certificaciones.objects.all().order_by('-fecha_creado_cert')[:32]
+            serializer = CertificationSerializer(certifications, many=True)
+            return Response(serializer.data)
+        except Exception as e:
+            import traceback
+            print("🔥 Error en LatestCertificationsView:", e)
+            traceback.print_exc()
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 
