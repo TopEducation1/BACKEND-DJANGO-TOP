@@ -143,7 +143,7 @@ class Blog(models.Model):
     nombre_blog = models.CharField(max_length=255,verbose_name='Título')
     slug = models.SlugField(max_length=500, default="default-slug",verbose_name='Slug')
     fecha_redaccion_blog = models.DateField(auto_now_add=True,verbose_name='Fecha')
-    miniatura_blog = models.CharField(max_length=255,null=True,verbose_name='Imagen')
+    miniatura_blog = models.ImageField(upload_to='blogs/banners/', null=True, blank=True,verbose_name='Imagen')
     palabra_clave_blog = models.CharField(max_length=255,verbose_name='Palabra clave')
     metadescripcion_blog = models.TextField(null=True,verbose_name='Metadescripción')
     objetivo_blog = models.TextField(null=True,verbose_name='Objetivo')

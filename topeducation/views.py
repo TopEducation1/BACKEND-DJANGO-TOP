@@ -314,7 +314,8 @@ class BlogList(APIView):
 
         paginator = self.pagination_class()
         paginated_queryset = paginator.paginate_queryset(blogs_queryset, request)
-        serializer = BlogSerializer(paginated_queryset, many=True)
+        serializer = BlogSerializer(paginated_queryset, many=True, context={'request': request})
+
 
         return paginator.get_paginated_response(serializer.data)
 

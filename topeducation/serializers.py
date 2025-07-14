@@ -15,7 +15,16 @@ class BlogSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
-        
+
+        request = self.context.get('request')  # importante para URL absoluta
+
+        # Imagen del blog
+        if instance.miniatura_blog and request:
+            representation['miniatura_blog'] = request.build_absolute_uri(instance.miniatura_blog.url)
+        else:
+            representation['miniatura_blog'] = "Test"
+
+        # Serializar categoría
         categoria_instance = instance.categoria_blog
         representation['categoria_blog'] = CategoriesSerializer(categoria_instance).data if categoria_instance else None
 
@@ -26,8 +35,11 @@ class BlogSerializer(serializers.ModelSerializer):
             representation['categoria_blog_id'] = categoria.nombre_categoria_blog if categoria else None
             representation['autor_blog_id'] = autor_instance.nombre_autor if autor_instance else None
 
-            # CORREGIDO: ya no usamos .url
-            representation['autor_img'] = autor_instance.auto_img if autor_instance and autor_instance.auto_img else None
+            # Si el autor tiene imagen, hazla absoluta también
+            if autor_instance and autor_instance.auto_img and request:
+                representation['autor_img'] = request.build_absolute_uri(autor_instance.auto_img.url)
+            else:
+                representation['autor_img'] = None
 
             representation['autor_blog'] = AuthorsSerializer(autor_instance).data if autor_instance else None
 
@@ -38,6 +50,7 @@ class BlogSerializer(serializers.ModelSerializer):
             representation['autor_img'] = None
 
         return representation
+
 
  
             
@@ -336,6 +349,7 @@ class OriginalCertificationSerializer(serializers.ModelSerializer):
     source_type             = serializers.SerializerMethodField()
     source_object           = serializers.SerializerMethodField()
     certification_image_url = serializers.SerializerMethodField()
+    certification_detail    = serializers.SerializerMethodField()  # ← Nuevo campo
 
     class Meta:
         model = OriginalCertification
@@ -347,25 +361,19 @@ class OriginalCertificationSerializer(serializers.ModelSerializer):
             'source_type',
             'source_object',
             'certification_image_url',
+            'certification_detail',  # ← lo agregamos a los campos
         ]
 
     def _build_url(self, value, request, use_media=False):
-
         if not value:
             return None
-
-        # Caso string puro
         if isinstance(value, str):
             return value if not use_media else (
                 value if value.startswith('http')
                 else request.build_absolute_uri(settings.MEDIA_URL + value.lstrip('/'))
             )
-
-        # Caso FileField/ImageField
         if hasattr(value, 'url'):
-            # Si no queremos MEDIA_URL, devolvemos solo .url (que ya incluye MEDIA_URL)
             return value.url if not use_media else request.build_absolute_uri(value.url)
-
         return None
 
     def get_source_type(self, obj):
@@ -394,22 +402,22 @@ class OriginalCertificationSerializer(serializers.ModelSerializer):
         cert = obj.certification
         request = self.context.get('request')
 
-        # 1) Universidad
         uni = getattr(cert, 'universidad_certificacion', None)
         if uni:
             return self._build_url(uni.univ_img, request)
 
-        # 2) Empresa
         emp = getattr(cert, 'empresa_certificacion', None)
         if emp:
             return self._build_url(emp.empr_img, request)
 
-        # 3) Fallback: imagen_final en certificación SIN usar MEDIA_URL
         if hasattr(cert, 'imagen_final'):
-            # Aquí indicamos use_media=False para devolver el valor "tal cual"
             return self._build_url(cert.imagen_final, request, use_media=False)
 
         return None
+
+    def get_certification_detail(self, obj):
+        request = self.context.get('request')
+        return CertificationSerializer(obj.certification, context={'request': request}).data
 
 
 
