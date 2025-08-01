@@ -29,6 +29,7 @@ from django.contrib.auth.forms import UserCreationForm, AuthenticationForm
 from django.contrib.auth import login, logout, authenticate
 from django.http import FileResponse, Http404
 from django.conf import settings
+from django.urls import reverse
 import os
 from collections import defaultdict
 from django.db.models import Count
@@ -98,7 +99,8 @@ def updatePost(request,post_id):
             post = get_object_or_404(Blog, pk=post_id)
             form = BlogsForm(request.POST or None,request.FILES or None, instance=post)
             form.save()
-            messages.success(request,f"Blog actualizado correctamente")
+            link = reverse("updatePost", args=[post.id])
+            messages.success(request, f'Blog <a class="font-bold" href="{link}">{post.nombre_blog}</a> actualizado correctamente.')
             return redirect('posts')
         except Exception as e:
             messages.warning(request,f"{str(e)}")
