@@ -126,7 +126,6 @@ DATABASES = {
         'PASSWORD': str(os.getenv('MYSQLPASSWORD')),
         'HOST': str(os.getenv('DATABASE_HOST')),
         'PORT': str(os.getenv('MYSQLPORT'))
-        
     }
 }
 
