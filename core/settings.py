@@ -121,11 +121,11 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': str(os.getenv('MYSQL_DATABASE')),
-        'USER': str(os.getenv('MYSQLUSER')),
-        'PASSWORD': str(os.getenv('MYSQLPASSWORD')),
-        'HOST': str(os.getenv('DATABASE_HOST')),
-        'PORT': str(os.getenv('MYSQLPORT'))
+        'NAME': 'railway',
+        'USER': 'root',
+        'PASSWORD': 'root',
+        'HOST': 'localhost',
+        'PORT': ''
     }
 }
 
