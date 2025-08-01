@@ -1,11 +1,10 @@
 {% extends "base.html" %}
 
-{% block title %} Certificaciones {% endblock %}
-{% block header %} Certificaciones {% endblock %}
+{% block title %} Universidades {% endblock %}
+{% block header %} Universidades {% endblock %}
 
 {% block botons %}
-<p class="text-white">Total de certificaciones: {{ certifications|length }}</p>
-<a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'upload' %}">Cargar certificaciones</a>
+<p class="text-white">Total de universidades: {{ universities|length }}</p>
 <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'createCertification' %}">Crear nueva</a> {% endblock %}
 
 {% block content %} 
@@ -25,32 +24,32 @@
               </th>
           <th class="p-4">
             <p class="text-sm leading-none">
-              Titulo
+              Nombre
             </p>
           </th>
           <th class="p-4">
             <p class="text-sm leading-none">
-              Duración
+              Región
             </p>
           </th>
           <th class="p-4">
             <p class="text-sm leading-none">
-              Nivel
+              Imagen
             </p>
           </th>
           <th class="p-4">
             <p class="text-sm leading-none">
-              Idioma
+              Icono
             </p>
           </th>
           <th class="p-4">
             <p class="text-sm leading-none">
-              Plataforma
+              Estado
             </p>
           </th>
           <th class="p-4">
             <p class="text-sm leading-none ">
-              Fecha
+              Top
             </p>
           </th>
           <th class="p-4">
@@ -59,52 +58,47 @@
         </tr>
       </thead>
       <tbody>
-        {% for certification in certifications %}
+        {% for university in universities %}
         <tr class="hover:bg-neutral-500">
             <td class="p-2">
                 <p class="text-sm font-bold">
-                 {{ certification.id }}
+                 {{ university.id }}
                 </p>
             </td>
           <td class="p-2">
             <p class="text-sm font-bold">
-             {{ certification.nombre }}
+             {{ university.nombre }}
             </p>
           </td>
           <td class="p-2">
             <p class="text-sm">
-                {{ certification.tiempo_certificacion }}
+                {{ university.region }}
             </p>
           </td>
           <td class="p-2">
             <p class="text-sm">
-                {{ certification.nivel_certificacion }}
+                {{ university.univ_img }}
             </p>
           </td>
           <td class="p-2">
             <p class="text-sm">
-                {{ certification.lenguaje_certificacion }}
+                {{ university.univ_ico }}
             </p>
           </td>
           <td class="p-2">
             <p class="text-sm">
-            {% if certification.plataforma_certificacion %}
-              {{ certification.plataforma_certificacion.nombre }}
-            {% else %}
-              Sin plataforma
-            {% endif %}
+              {{ university.univ_est }}
             </p>
           </td>
           <td class="p-2">
             <p class="text-sm">
-                {{ certification.fecha_creado_cert }}
+                {{ university.univ_top }}
             </p>
           </td>
           <td class="p-2">
             <div class="flex gap-2">
-              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="https://top.education/certificacion/{% if certification.plataforma_certificacion %}{{ certification.plataforma_certificacion.nombre|lower }}{% else %}{% endif %}/{{ certification.slug }}" target="_blank" title="Ver en página"><i class="fa-regular fa-eye"></i></a>
-              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'updateCertification' certification.id %}" title="Editar"><i class="fa-regular fa-pen-to-square"></i></a>
-              <button onclick="openDeleteModal({{ certification.id }})" class="bg-red-500 hover:bg-red-700 text-white cursor-pointer font-bold py-2 px-4 rounded-full" title="Eliminar" > <i class="fa-regular fa-trash-can"></i> </button>
+              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'updateUniversity' university.id %}" title="Editar"><i class="fa-regular fa-pen-to-square"></i></a>
+              <button onclick="openDeleteModal({{ university.id }})" class="bg-red-500 hover:bg-red-700 text-white cursor-pointer font-bold py-2 px-4 rounded-full" title="Eliminar" > <i class="fa-regular fa-trash-can"></i> </button>
             </div>
           </td>
         </tr>

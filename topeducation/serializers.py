@@ -4,7 +4,8 @@ from datetime import datetime
 from rest_framework import serializers
 from .models import *
 from django.db.models import F
-
+from django.utils.html import escape
+import re
 
 # CONVIERTE LOS MODELOS EN JSON PARA CONSUMIRLOS DESDE EL FRONT
 
@@ -16,13 +17,15 @@ class BlogSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         representation = super().to_representation(instance)
 
-        request = self.context.get('request')  # importante para URL absoluta
+        request = self.context.get('request', None)
 
-        # Imagen del blog
+        # Convertir miniatura a URL absoluta
         if instance.miniatura_blog and request:
             representation['miniatura_blog'] = request.build_absolute_uri(instance.miniatura_blog.url)
-        else:
-            representation['miniatura_blog'] = "Test"
+
+        # Convertir las rutas de imagen dentro del contenido
+        if instance.contenido and request:
+            representation['contenido'] = self._absolutize_images(instance.contenido, request)
 
         # Serializar categoría
         categoria_instance = instance.categoria_blog
@@ -35,11 +38,7 @@ class BlogSerializer(serializers.ModelSerializer):
             representation['categoria_blog_id'] = categoria.nombre_categoria_blog if categoria else None
             representation['autor_blog_id'] = autor_instance.nombre_autor if autor_instance else None
 
-            # Si el autor tiene imagen, hazla absoluta también
-            if autor_instance and autor_instance.auto_img and request:
-                representation['autor_img'] = request.build_absolute_uri(autor_instance.auto_img.url)
-            else:
-                representation['autor_img'] = None
+            representation['autor_img'] = autor_instance.auto_img if autor_instance and autor_instance.auto_img else None
 
             representation['autor_blog'] = AuthorsSerializer(autor_instance).data if autor_instance else None
 
@@ -51,8 +50,15 @@ class BlogSerializer(serializers.ModelSerializer):
 
         return representation
 
+    def _absolutize_images(self, html, request):
+        if not request:
+            return html
+        return re.sub(
+            r'src="(/media/[^"]+)"',
+            lambda m: f'src="{request.build_absolute_uri(m.group(1))}"',
+            html
+        )
 
- 
             
 class AuthorsSerializer(serializers.ModelSerializer):
     class Meta:
@@ -73,10 +79,11 @@ class SkillsSerializer(serializers.ModelSerializer):
         
 class UniverisitiesSerializer(serializers.ModelSerializer):
     region_nombre = serializers.SerializerMethodField()
+    total_certificaciones = serializers.IntegerField(read_only=True)  # ← nuevo campo
 
     class Meta:
         model = Universidades
-        fields = ['id', 'nombre', 'region_universidad_id', 'univ_img','univ_ico','univ_fla','univ_est', 'region_nombre']
+        fields = ['id', 'nombre', 'region_universidad_id', 'univ_img','univ_ico','univ_fla','univ_est','univ_top', 'region_nombre', 'total_certificaciones']
 
     def get_region_nombre(self, obj):
         return obj.region_universidad.nombre if obj.region_universidad else "No"
@@ -97,15 +104,17 @@ class PlataformaSerializer (serializers.ModelSerializer):
         fields = ['id', 'nombre','plat_img','plat_ico']
 
 class EmpresaSerializer (serializers.ModelSerializer):
-    
+    total_certificaciones = serializers.IntegerField(read_only=True)
+    #total_certificaciones = serializers.IntegerField()
+
     class Meta:
         model = Empresas
         
-        fields = ['id', 'nombre','empr_img','empr_ico','empr_est']
+        fields = ['id', 'nombre','empr_img','empr_ico','empr_est','empr_top','total_certificaciones']
 
 
 class CertificationSerializer(serializers.ModelSerializer):
-
+    
     class Meta:
         model = Certificaciones
         fields = '__all__'
@@ -356,6 +365,7 @@ class OriginalCertificationSerializer(serializers.ModelSerializer):
         fields = [
             'title',
             'hist',
+            'image',
             'certification_title',
             'certification_slug',
             'source_type',

@@ -44,7 +44,7 @@
     .ck h4{
         font-weight: bold !important;
     }
-    .cont-form input, .cont-form select,.cont-form textarea{
+    .cont-form input[type=text],.cont-form input[type=date], .cont-form select,.cont-form textarea{
         width: 100%;
         padding: 5px 10px;
         border-radius: 10px;
@@ -74,7 +74,7 @@
                     <a href="{% url 'dashboard' %}" class="rounded-md {% if request.path == '/dashboard/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-white" aria-current="page">Escritorio</a>
                     <a href="{% url 'certifications' %}" class="rounded-md {% if request.path == '/certifications/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Certificaciones</a>
                     <a href="{% url 'posts' %}" class="rounded-md {% if request.path == '/posts/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Blogs</a>
-                    <a href="#" class="rounded-md px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Categorias</a>
+                    <a href="{% url 'categories' %}" class="rounded-md {% if request.path == '/category/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Categorias</a>
                 </div>
                 </div>
             </div>

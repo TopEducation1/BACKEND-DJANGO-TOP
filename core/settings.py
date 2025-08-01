@@ -40,6 +40,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'topeducation',
     'corsheaders',
+    'ckeditor',
+    'ckeditor_uploader',
 ]
 
 MIDDLEWARE = [
@@ -124,6 +126,7 @@ DATABASES = {
         'PASSWORD': str(os.getenv('MYSQLPASSWORD')),
         'HOST': str(os.getenv('DATABASE_HOST')),
         'PORT': str(os.getenv('MYSQLPORT'))
+        
     }
 }
 
@@ -166,7 +169,9 @@ STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+CKEDITOR_UPLOAD_PATH = "uploads/"
 
 
 # Default primary key field type

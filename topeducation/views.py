@@ -3,9 +3,7 @@ import pandas as pd
 import re
 from django.shortcuts import render, redirect
 from django.contrib import messages
-from .forms import UploadFileForm
-from .forms import CertificationsForm
-from .forms import BlogsForm
+from .forms import *
 from django.db import transaction
 from rest_framework import viewsets
 from .models import *
@@ -33,6 +31,7 @@ from django.http import FileResponse, Http404
 from django.conf import settings
 import os
 from collections import defaultdict
+from django.db.models import Count
 
 
 def inicio(request):
@@ -283,6 +282,51 @@ def get_certifications(request):
     certifications = Certificaciones.objects.values('slug')
     return JsonResponse(list(certifications), safe=False)
 
+def categories(request):
+    universities = Universidades.objects.all()
+    companies = Empresas.objects.all()
+    topics = Temas.objects.all()
+    cat_blog = CategoriaBlog.objects.all()
+    
+    return render(request,'category/index.html',{'universities':universities,'companies':companies,'topics':topics,'cat_blog':cat_blog})
+
+def universities(request):
+    universities = Universidades.objects.all()
+    return render(request,'category/universities/index.html',{'universities':universities})
+
+
+def updateUniversity(request,university_id):
+    if request.method == 'GET':
+        university = get_object_or_404(Universidades,pk=university_id)
+        form = UniversitiesForm(request.POST or None,request.FILES or None,instance=university)
+        return render(request, 'category/universities/update.html',{'university':university,
+            'form':form
+        })
+    else:
+        university = get_object_or_404(Universidades, pk=university_id)
+        form = UniversitiesForm(request.POST or None,request.FILES or None, instance=university)
+        form.save()
+        messages.success(request, f'Universidad actualizada correctamente!')
+        return redirect('universities')
+
+def companies(request):
+    companies = Empresas.objects.all()
+    return render(request,'category/companies/index.html',{'companies':companies})
+
+def updateCompany(request,company_id):
+    if request.method == 'GET':
+        company = get_object_or_404(Empresas,pk=company_id)
+        form = CompaniesForm(request.POST or None,request.FILES or None,instance=company)
+        return render(request, 'category/companies/update.html',{'company':company,
+            'form':form
+        })
+    else:
+        company = get_object_or_404(Empresas, pk=company_id)
+        form = CompaniesForm(request.POST or None,request.FILES or None, instance=company)
+        form.save()
+        messages.success(request, f'Empresa actualizada correctamente!')
+        return redirect('companies')
+
 class CustomPagination(PageNumberPagination):
     page_size = 12
     page_size_query_param = 'page_size'
@@ -305,6 +349,8 @@ class BlogList(APIView):
 
     def get(self, request):
         search_query = request.query_params.get('search', '')
+        categoria_nombre = request.query_params.get('categoria_blog', '')
+
         blogs_queryset = Blog.objects.select_related('autor_blog', 'categoria_blog').all()
 
         if search_query:
@@ -312,13 +358,18 @@ class BlogList(APIView):
                 Q(nombre_blog__icontains=search_query)
             )
 
+        if categoria_nombre:
+            try:
+                categoria = CategoriaBlog.objects.get(nombre_categoria_blog__iexact=categoria_nombre)
+                blogs_queryset = blogs_queryset.filter(categoria_blog=categoria)
+            except CategoriaBlog.DoesNotExist:
+                blogs_queryset = Blog.objects.none()
+
         paginator = self.pagination_class()
         paginated_queryset = paginator.paginate_queryset(blogs_queryset, request)
         serializer = BlogSerializer(paginated_queryset, many=True, context={'request': request})
 
-
         return paginator.get_paginated_response(serializer.data)
-
 
 
 # EndPoint to get the certifications
@@ -339,9 +390,7 @@ class CertificationList(APIView):
         paginated_queryset = paginator.paginate_queryset(certifications_queryset, request)
         serializer = CertificationSerializer(paginated_queryset, many = True)
 
-        return paginator.get_paginated_response(serializer.data)
-
-  
+        return paginator.get_paginated_response(serializer.data) 
     
     
 #This view is to send the Masterclass certifications to display a masterclasss slider in frontend    
@@ -409,8 +458,12 @@ class UniversitiesList (APIView):
     
     def get(self, request):
         
+        universities = Universidades.objects.annotate(
+            total_certificaciones=Count('certificaciones')
+        )
         #Queryset of the Universities
-        universities = Universidades.objects.all()
+        
+        #universities = Universidades.objects.all()
         universities_serializer = UniverisitiesSerializer(universities, many= True)
         
         return Response(universities_serializer.data)
@@ -440,8 +493,12 @@ class CompaniesList (APIView):
     
     def get(self, request):
         
+        companies = Empresas.objects.annotate(
+            total_certificaciones=Count('certificaciones')
+        )
+        
         #Queryset of the Companies
-        companies =  Empresas.objects.all()
+        #companies =  Empresas.objects.all()
         companies_serializer = EmpresaSerializer(companies, many = True)
         
         return Response(companies_serializer.data)  
@@ -475,7 +532,8 @@ class BlogDetailView(APIView):
                 
             blog = Blog.objects.get(slug = slug)
             
-            serializer = BlogSerializer(blog)
+            serializer = BlogSerializer(blog, context={'request': request})
+
             data = serializer.data
             
             return Response(data)

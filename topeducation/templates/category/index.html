@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %} Categorias {% endblock %}
+{% block header %} Categorias {% endblock %}
+
+
+
+{% block content %} 
+    <div class="grid grid-cols-2 gap-4 h-50mt-6">
+        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
+            <div class="flex flex-row -mx-3">
+                <div class="flex-none w-2/3 max-w-full px-3">
+                    <div>
+                        <p class="mb-0 font-sans font-semibold text-[3rem] text-white leading-[1em]">Universidades</p>
+                        <h5 class="mb-0 font-bold text-[4rem] text-white">
+                        {{ universities |length }} 
+                        </h5>
+                    </div>
+                </div>
+                <div class="px-3 text-right basis-1/3">
+                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
+                        <i class="fa-solid fa-graduation-cap text-3xl text-white"></i>
+                    </div><br><br>
+                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'universities' %}">Ver todo</a>
+                </div>
+            </div>
+        </div>
+        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
+          <div class="flex flex-row -mx-3">
+                <div class="flex-none w-2/3 max-w-full px-3">
+                    <div>
+                        <p class="mb-0 font-sans font-semibold text-[3rem] text-white leading-[1em]">Empresas</p>
+                        <h5 class="mb-0 font-bold text-[4rem] text-white">
+                        {{ companies |length }}
+                        </h5>
+                    </div>
+                </div>
+                <div class="px-3 text-right basis-1/3">
+                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
+                        <i class="fa-solid fa-briefcase text-3xl text-white"></i>
+                    </div><br><br>
+                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'companies' %}">Ver todo</a>
+                </div>
+            </div>
+        </div>
+        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
+            <div class="flex flex-row -mx-3">
+                <div class="flex-none w-2/3 max-w-full px-3">
+                    <div>
+                        <p class="mb-0 font-sans font-semibold text-[3rem] text-white leading-[1em]">Temas / Habilidades</p>
+                        <h5 class="mb-0 font-bold text-[4rem] text-white">
+                        {{ topics|length }}
+                        </h5>
+                    </div>
+                </div>
+                <div class="px-3 text-right basis-1/3">
+                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
+                        <i class="fa-solid fa-layer-group text-3xl text-white"></i>
+                    </div><br><br>
+                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'posts' %}">Ver todo</a>
+                </div>
+            </div>
+        </div>
+        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
+            <div class="flex flex-row -mx-3">
+                <div class="flex-none w-2/3 max-w-full px-3">
+                    <div>
+                        <p class="mb-0 font-sans font-semibold leading-normal text-[3rem] text-white">Categorias blog</p>
+                        <h5 class="mb-0 font-bold text-7xl text-white">
+                        {{ cat_blog|length }}
+                        </h5>
+                    </div>
+                </div>
+                <div class="px-3 text-right basis-1/3">
+                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
+                        <i class="fa-solid fa-signs-post text-3xl text-white"></i>
+                    </div><br><br>
+                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'posts' %}">Ver todo</a>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}

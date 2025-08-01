@@ -31,6 +31,12 @@ urlpatterns = [
     path('posts/',login_required(views.posts,login_url='/signin/'), name='posts'),
     path('posts/<int:post_id>/update/',login_required(views.updatePost,login_url='/signin/'), name='updatePost'),
     path('posts/<int:post_id>/delete/',login_required(views.deletePost,login_url='/signin/'), name='deletePost'),
+    
+    path('category/',login_required(views.categories,login_url='/signin/'), name='categories'),
+    path('category/universities/',login_required(views.universities,login_url='/signin/'), name='universities'),
+    path('category/universities/<int:university_id>/update/',login_required(views.updateUniversity,login_url='/signin/'), name='updateUniversity'),
+    path('category/companies/',login_required(views.companies,login_url='/signin/'), name='companies'),
+    path('category/companies/<int:company_id>/update/',login_required(views.updateCompany,login_url='/signin/'), name='updateCompany'),
     path('certificaciones/', CertificationList.as_view(), name='certifications_list'),
     path('skills/', SkillsList.as_view(), name='skills_list'),
     path('universities/', UniversitiesList.as_view(), name='universities_list'),
@@ -54,6 +60,7 @@ urlpatterns = [
     path('originals/<slug:slug>/', OriginalDetailView.as_view(), name='original-detail'),
     path('api/latest-certifications/', LatestCertificationsView.as_view(), name='latest_certifications'),
     path('sitemap.xml', sitemap, {'sitemaps': sitemaps_dict}, name='sitemap'),
+    path("ckeditor/", include("ckeditor_uploader.urls")),
 
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 if settings.DEBUG:

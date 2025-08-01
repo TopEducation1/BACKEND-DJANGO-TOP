@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils.text import slugify
 from django.utils import timezone
+from ckeditor_uploader.fields import RichTextUploadingField
 
 
 class Habilidades (models.Model):
@@ -43,6 +44,7 @@ class Universidades (models.Model):
     univ_fla = models.CharField(max_length=200,null=True)
     univ_ico = models.CharField(max_length=100,null=True)
     univ_est = models.CharField(max_length=50,null=True)
+    univ_top = models.CharField(max_length=5,null=True)
     
     def __str__(self):
         return str(self.id) +" - "+ self.nombre
@@ -56,6 +58,7 @@ class Empresas (models.Model):
     empr_img = models.CharField(max_length=200,null=True)
     empr_ico = models.CharField(max_length=100,null=True)
     empr_est = models.CharField(max_length=50,null=True)
+    empr_top = models.CharField(max_length=5,null=True)
 
     def __str__(self):
         return str(self.id) +" - "+ self.nombre
@@ -89,9 +92,10 @@ class Certificaciones(models.Model):
     aprendizaje_certificacion = models.TextField(default="NONE")
     habilidades_certificacion = models.TextField(default="NONE")
     experiencia_certificacion = models.TextField(default="NONE")
+    testimonios_certificacion = models.TextField(default="NONE")
     contenido_certificacion = models.TextField(blank=True,verbose_name='Contenido',default="NONE")
     modulos_certificacion = models.TextField(default="NONE")
-    testimonios_certificacion = models.TextField(default="NONE")
+    
     universidad_certificacion = models.ForeignKey(Universidades, on_delete=models.SET_NULL, null=True, blank=True)
     empresa_certificacion = models.ForeignKey(Empresas, on_delete=models.SET_NULL, null=True, blank=True)
     plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.CASCADE, null=True, blank=True)
@@ -148,9 +152,10 @@ class Blog(models.Model):
     metadescripcion_blog = models.TextField(null=True,verbose_name='Metadescripción')
     objetivo_blog = models.TextField(null=True,verbose_name='Objetivo')
     contenido = models.TextField(blank=True,verbose_name='Contenido')
+    contenido = RichTextUploadingField(verbose_name='Contenido', blank=True)
     autor_blog = models.ForeignKey(Autor, on_delete=models.CASCADE, db_column='autor_blog_id',verbose_name='Autor')
     categoria_blog = models.ForeignKey(CategoriaBlog, on_delete=models.CASCADE, db_column='categoria_blog_id',verbose_name='Categoria')
-    url_img_cta = models.CharField(max_length=255,null=True,verbose_name='Imagen de cita')
+    url_img_cta = models.ImageField(upload_to='blogs/cita/', null=True, blank=True,verbose_name='Imagen cita')
     
     def save(self, *args, **kwargs):
         if not self.slug or self.slug.startswith("slice") or self.slug == 'default-slug':  
@@ -188,6 +193,7 @@ class OriginalCertification(models.Model):
     certification = models.ForeignKey('Certificaciones', on_delete=models.CASCADE)
     title = models.CharField(max_length=255)
     hist = models.TextField()
+    image = models.ImageField(upload_to='originals/autores/history/', null=True, blank=True)
 
     class Meta:
         unique_together = ('original', 'certification')

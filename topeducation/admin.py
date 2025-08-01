@@ -12,5 +12,7 @@ admin.site.register(Empresas)
 admin.site.register(Regiones)
 admin.site.register(Original)
 admin.site.register(OriginalCertification)
+admin.site.register(CategoriaBlog)
+
 
 
