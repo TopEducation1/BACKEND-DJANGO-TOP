@@ -5,11 +5,11 @@
     <!-- Primera columna: ocupa 1/3 -->
     <div class="col-span-3 grid grid-cols-2 gap-4">
       {% for field in form %}
-        {% if field.name == "nombre" or field.name == "empr_img" or field.name == "empr_ico" %}
+        {% if field.name == "nombre" or field.name == "tem_img" or field.name == "empr_ico" %}
           <div class="{% if field.name == 'contenido_certificacion' or field.name == 'modulos_certificacion' %}col-span-full{% endif %}">
             <label class="text-white font-bold" for="{{ field.id_for_label }}">{{ field.label }}</label>
 
-            {% if field.name == "empr_img" or field.name == "empr_ico"  %}
+            {% if field.name == "tem_img"  %}
               {% if field.value %}
                 <img class="bg-white rounded-lg mb-2" src="https://top.education/{{ field.value }}" width="180" />
               {% endif %}
@@ -34,7 +34,7 @@
     <div class="col-span-1 grid grid-cols-1 gap-4">
         <div>
       {% for field in form %}
-        {% if field.name != "nombre" and field.name != "empr_img" and field.name != "empr_ico" %}
+        {% if field.name != "nombre" and field.name != "tem_img" and field.name != "empr_ico" %}
 
           <div class="col-span-1">
             <label class="text-white font-bold" for="{{ field.id_for_label }}">{{ field.label }}</label>
@@ -44,11 +44,22 @@
                 <img class="bg-white rounded-lg mb-2" src="https://top.education/{{ field.value }}" width="180" />
               {% endif %}
               <input class="w-full border-1 border-white rounded-lg px-4 py-1" type="text" name="{{ field.name }}" id="{{ field.id_for_label }}" value="{{ field.value }}">
-            
-            {% elif field.name == "empr_est" %}
+              {% elif field.name == "tem_col" %}
+              <select name="{{ field.name }}" id="{{ field.id_for_label }}">
+                <option value="tag-rojo" {% if field.value == "tag-rojo" %} selected {% endif %}>Rojo</option>
+                <option value="tag-verde" {% if field.value == "tag-verde" %} selected {% endif %}>Verde</option>
+                <option value="tag-azul" {% if field.value == "tag-azul" %} selected {% endif %}>Azul</option>
+              </select>
+              {% elif field.name == "tem_est" %}
               <select name="{{ field.name }}" id="{{ field.id_for_label }}">
                 <option value="enabled" {% if field.value == "enabled" %} selected {% endif %}>enabled</option>
                 <option value="disabled" {% if field.value == "disabled" %} selected {% endif %}>disabled</option>
+              </select>
+            
+            {% elif field.name == "tem_type" %}
+              <select name="{{ field.name }}" id="{{ field.id_for_label }}">
+                <option value="Tema" {% if field.value == "Tema" %} selected {% endif %}>Tema</option>
+                <option value="Habilidad" {% if field.value == "Habilidad" %} selected {% endif %}>Habilidad</option>
               </select>
             
             {% else %}
@@ -67,7 +78,7 @@
 
   <div class="flex gap-3 w-full mt-8">
     <input class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg" value="Actualizar" type="submit" />
-    <a class="bg-neutral-500 hover:bg-neutral-400 text-neutral-950 font-bold py-2 px-4 rounded-lg" href="{% url 'companies' %}">Cancelar</a>
+    <a class="bg-neutral-500 hover:bg-neutral-400 text-neutral-950 font-bold py-2 px-4 rounded-lg" href="{% url 'topics' %}">Cancelar</a>
   </div>
 </form>
 

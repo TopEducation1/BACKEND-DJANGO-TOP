@@ -59,13 +59,12 @@
                 </div>
                 {% endif %}
             {% endfor %}
+            <div class="flex flex-wrap justify-end gap-3 w-full py-5 sticky top-1 bg-neutral-800">
+          <p class="w-full text-white">Verifique que la información esta completa antes de guardar los cambios.</p>
+          <a class="bg-neutral-500 hover:bg-neutral-400 text-neutral-950 font-bold py-2 px-4 rounded-lg" href="{% url 'posts' %}">Cancelar</a>
+          <input class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg" value="Guardar" type="submit" />
         </div>
-    </div>
-
-    <!-- Botones -->
-    <div class="flex gap-3 mt-6">
-        <input class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg" value="Actualizar" type="submit"/>
-        <a class="bg-neutral-500 hover:bg-neutral-400 text-neutral-950 font-bold py-2 px-4 rounded-lg" href="{% url 'posts' %}">Cancelar</a>
+        </div>
     </div>
 </form>
 
@@ -99,16 +98,16 @@
     });
       
     function previewImage(event, fieldName) {
-    const input = event.target;
-    const imgPreview = document.getElementById('preview-' + fieldName);
+        const input = event.target;
+        const imgPreview = document.getElementById('preview-' + fieldName);
 
-    if (input.files && input.files[0]) {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            imgPreview.src = e.target.result;
-            imgPreview.classList.remove('hidden'); // por si estaba oculta
+        if (input.files && input.files[0]) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                imgPreview.src = e.target.result;
+                imgPreview.classList.remove('hidden'); // por si estaba oculta
+            }
+            reader.readAsDataURL(input.files[0]);
         }
-        reader.readAsDataURL(input.files[0]);
     }
-}
 </script>

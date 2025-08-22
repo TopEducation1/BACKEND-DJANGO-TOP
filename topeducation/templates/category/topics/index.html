@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
-{% block title %} Universidades {% endblock %}
-{% block header %} Universidades {% endblock %}
+{% block title %} Temas / Habilidades {% endblock %}
+{% block header %} Temas / Habilidades {% endblock %}
 
 {% block botons %}
-<p class="text-white">Total de universidades: {{ universities|length }}</p>
-<a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'createUniversity' %}">Crear nueva</a> {% endblock %}
+<p class="text-white">Total de Temas y Habilidades: {{ topics|length }}</p>
+<a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'createTopic' %}">Crear nueva</a> {% endblock %}
 
 {% block content %} 
 <div class="relative flex flex-col w-full h-full text-neutral-100 bg-neutral-800 shadow-md rounded-lg bg-clip-border">
@@ -29,12 +29,7 @@
           </th>
           <th class="p-4">
             <p class="text-sm leading-none">
-              Región
-            </p>
-          </th>
-          <th class="p-4">
-            <p class="text-sm leading-none">
-              Imagen
+              Tipo
             </p>
           </th>
           <th class="p-4">
@@ -44,12 +39,12 @@
           </th>
           <th class="p-4">
             <p class="text-sm leading-none">
-              Estado
+              Color
             </p>
           </th>
           <th class="p-4">
-            <p class="text-sm leading-none ">
-              Top
+            <p class="text-sm leading-none">
+              Estado
             </p>
           </th>
           <th class="p-4">
@@ -58,47 +53,42 @@
         </tr>
       </thead>
       <tbody>
-        {% for university in universities %}
+        {% for topic in topics %}
         <tr class="hover:bg-neutral-500">
             <td class="p-2">
                 <p class="text-sm font-bold">
-                 {{ university.id }}
+                 {{ topic.id }}
                 </p>
             </td>
           <td class="p-2">
             <p class="text-sm font-bold">
-             {{ university.nombre }}
+             {{ topic.nombre }}
+            </p>
+          </td>          
+          <td class="p-2">
+            <p class="text-sm">
+                {{ topic.tem_type }}
             </p>
           </td>
           <td class="p-2">
             <p class="text-sm">
-                {{ university.region }}
+              {{ topic.tem_img }}
             </p>
           </td>
           <td class="p-2">
             <p class="text-sm">
-                {{ university.univ_img }}
+                {{ topic.tem_col }}
             </p>
           </td>
           <td class="p-2">
             <p class="text-sm">
-                {{ university.univ_ico }}
-            </p>
-          </td>
-          <td class="p-2">
-            <p class="text-sm">
-              {{ university.univ_est }}
-            </p>
-          </td>
-          <td class="p-2">
-            <p class="text-sm">
-                {{ university.univ_top }}
+                {{ topic.tem_est }}
             </p>
           </td>
           <td class="p-2">
             <div class="flex gap-2">
-              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'updateUniversity' university.id %}" title="Editar"><i class="fa-regular fa-pen-to-square"></i></a>
-              <button onclick="openDeleteModal({{ university.id }})" class="bg-red-500 hover:bg-red-700 text-white cursor-pointer font-bold py-2 px-4 rounded-full" title="Eliminar" > <i class="fa-regular fa-trash-can"></i> </button>
+              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'updateTopic' topic.id %}" title="Editar"><i class="fa-regular fa-pen-to-square"></i></a>
+              <button onclick="openDeleteModal({{ topic.id }})" class="bg-red-500 hover:bg-red-700 text-white cursor-pointer font-bold py-2 px-4 rounded-full" title="Eliminar" > <i class="fa-regular fa-trash-can"></i> </button>
             </div>
           </td>
         </tr>

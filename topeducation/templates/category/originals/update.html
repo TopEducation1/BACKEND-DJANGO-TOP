@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+
+{% block title %} Originals {% endblock %}
+{% block header %} Originals: <p class="text-[20px] font-normal">{{ form.nombre.value }}</p> {% endblock %}
+
+{% block content %}
+{% include 'category/originals/form.html' %}
+{% endblock %}

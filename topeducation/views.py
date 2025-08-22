@@ -30,9 +30,11 @@ from django.contrib.auth import login, logout, authenticate
 from django.http import FileResponse, Http404
 from django.conf import settings
 from django.urls import reverse
+from django.forms import modelformset_factory
 import os
 from collections import defaultdict
 from django.db.models import Count
+from django.db.models import Prefetch
 
 
 def inicio(request):
@@ -289,8 +291,10 @@ def categories(request):
     companies = Empresas.objects.all()
     topics = Temas.objects.all()
     cat_blog = CategoriaBlog.objects.all()
+    originals = Original.objects.all()
+    rankings = Ranking.objects.all()
     
-    return render(request,'category/index.html',{'universities':universities,'companies':companies,'topics':topics,'cat_blog':cat_blog})
+    return render(request,'category/index.html',{'universities':universities,'companies':companies,'topics':topics,'cat_blog':cat_blog,'originals':originals,'rankings':rankings})
 
 def universities(request):
     universities = Universidades.objects.all()
@@ -308,8 +312,24 @@ def updateUniversity(request,university_id):
         university = get_object_or_404(Universidades, pk=university_id)
         form = UniversitiesForm(request.POST or None,request.FILES or None, instance=university)
         form.save()
-        messages.success(request, f'Universidad actualizada correctamente!')
+        link = reverse("updateUniversity", args=[university.id])
+        messages.success(request, f'Universidad: <a class="font-bold" href="{link}">{university.nombre}</a> actualizada correctamente')
         return redirect('universities')
+
+def createUniversity(request):
+    if request.method == 'GET':
+        return render(request, 'category/universities/create.html',{
+            'form':UniversitiesForm
+        })
+    else:
+        try:
+            form = UniversitiesForm(request.POST)
+            new_post = form.save(commit=False)
+            created  = new_post.save()
+            messages.success(request, f'Universidad: Guardada correctamente')
+            return redirect('universities')
+        except Exception as e:
+            messages.warning(request,f"{str(e)}")
 
 def companies(request):
     companies = Empresas.objects.all()
@@ -328,6 +348,200 @@ def updateCompany(request,company_id):
         form.save()
         messages.success(request, f'Empresa actualizada correctamente!')
         return redirect('companies')
+
+def createCompany(request):
+    if request.method == 'GET':
+        return render(request, 'category/companies/create.html',{
+            'form':CompaniesForm
+        })
+    else:
+        try:
+            form = CompaniesForm(request.POST)
+            new_post = form.save(commit=False)
+            created  = new_post.save()
+            messages.success(request, f'Empresa: Guardada correctamente')
+            return redirect('companies')
+        except Exception as e:
+            messages.warning(request,f"{str(e)}")
+
+def topics(request):
+    topics = Temas.objects.all()
+    return render(request,'category/topics/index.html',{'topics':topics})
+
+def updateTopic(request,topic_id):
+    if request.method == 'GET':
+        topic = get_object_or_404(Temas,pk=topic_id)
+        form = TopicsForm(request.POST or None,request.FILES or None,instance=topic)
+        return render(request, 'category/topics/update.html',{'topic':topic,
+            'form':form
+        })
+    else:
+        topic = get_object_or_404(Temas, pk=topic_id)
+        form = TopicsForm(request.POST or None,request.FILES or None, instance=topic)
+        form.save()
+        messages.success(request, f'Habilidad/Tema actualizada correctamente!')
+        return redirect('topics')
+
+def createTopic(request):
+    if request.method == 'GET':
+        return render(request, 'category/topics/create.html',{
+            'form':TopicsForm
+        })
+    else:
+        try:
+            form = TopicsForm(request.POST)
+            new_post = form.save(commit=False)
+            created  = new_post.save()
+            messages.success(request, f'Tema / Habilidad: Guardado correctamente')
+            return redirect('topics')
+        except Exception as e:
+            messages.warning(request,f"{str(e)}")
+
+def tags(request):
+    tags = CategoriaBlog.objects.all()
+    return render(request,'category/tags/index.html',{'tags':tags})
+
+
+def updateTag(request,tag_id):
+    if request.method == 'GET':
+        tag = get_object_or_404(CategoriaBlog,pk=tag_id)
+        form = TagsForm(request.POST or None,request.FILES or None,instance=tag)
+        return render(request, 'category/tags/update.html',{'tag':tag,
+            'form':form
+        })
+    else:
+        tag = get_object_or_404(CategoriaBlog, pk=tag_id)
+        form = TagsForm(request.POST or None,request.FILES or None, instance=tag)
+        form.save()
+        messages.success(request, f'Categoria de blog actualizada correctamente!')
+        return redirect('tags')
+
+def createTag(request):
+    if request.method == 'GET':
+        return render(request, 'category/tags/create.html',{
+            'form':TagsForm
+        })
+    else:
+        try:
+            form = TagsForm(request.POST)
+            new_post = form.save(commit=False)
+            created  = new_post.save()
+            messages.success(request, f'Categoria de blog: Creada correctamente')
+            return redirect('tags')
+        except Exception as e:
+            messages.warning(request,f"{str(e)}")
+
+def originals(request):
+    originals = Original.objects.all()
+    return render(request,'category/originals/index.html',{'originals':originals})
+
+def createOriginal(request):
+    if request.method == 'POST':
+        original_form = OriginalsForm(request.POST)
+        formset = OriginalCertFormSet(request.POST, prefix='certifications')
+
+        print("TOTAL FORMS:", request.POST.get('certifications-TOTAL_FORMS'))
+        print("formset errors:", formset.errors)
+        
+        if original_form.is_valid() and formset.is_valid():
+            original = original_form.save()
+            certifications = formset.save(commit=False)
+            for certification in certifications:
+                certification.original = original
+                certification.save()
+            messages.success(request, f'Original: Creado correctamente')
+            return redirect('updateOriginal', original_id=original.id)
+    else:
+        original_form = OriginalsForm()
+        formset = OriginalCertFormSet(prefix='certifications')
+
+    return render(request, 'category/originals/create.html', {
+        'original_form': original_form,
+        'formset': formset,
+    })
+
+def updateOriginal(request, original_id):
+    original = get_object_or_404(Original, id=original_id)
+
+    if request.method == 'POST':
+        original_form = OriginalsForm(request.POST,request.FILES, instance=original)
+        formset = OriginalCertFormSet(request.POST,request.FILES, instance=original, prefix='certifications')
+
+        if original_form.is_valid() and formset.is_valid():
+            original_form.save()
+            formset.save()  # aplica altas, bajas y modificaciones
+            link = reverse("updateOriginal", args=[original.id])
+            messages.success(request, f'Original: <a class="font-bold" href="{link}">{original.name}</a> Actualizado correctamente')
+            return redirect('originals')
+        else:
+            print("Errores en form:", original_form.errors)
+            print("Errores en formset:", formset.errors)
+    else:
+        original_form = OriginalsForm(instance=original)
+        formset = OriginalCertFormSet(instance=original, prefix='certifications')
+
+    return render(request, 'category/originals/update.html', {
+        'original_form': original_form,
+        'formset': formset,
+        'original': original,
+    })
+
+def rankings(request):
+    rankings = Ranking.objects.all()
+    return render(request,'category/rankings/index.html',{'rankings':rankings})
+
+def createRanking(request):
+    if request.method == 'POST':
+        ranking_form = RankingsForm(request.POST)
+        formset = RankingEntryFormSet(request.POST, prefix='entries')
+
+        print("TOTAL FORMS:", request.POST.get('entries-TOTAL_FORMS'))
+        print("formset errors:", formset.errors)
+        
+        if ranking_form.is_valid() and formset.is_valid():
+            ranking = ranking_form.save()
+            entries = formset.save(commit=False)
+            for entry in entries:
+                entry.ranking = ranking
+                entry.save()
+            messages.success(request, f'Ranking: Creado correctamente')
+            return redirect('updateRanking', ranking_id=ranking.id)
+    else:
+        ranking_form = RankingsForm()
+        formset = RankingEntryFormSet(prefix='entries')
+
+    return render(request, 'category/rankings/create.html', {
+        'ranking_form': ranking_form,
+        'formset': formset,
+    })
+
+def updateRanking(request, ranking_id):
+    ranking = get_object_or_404(Ranking, id=ranking_id)
+
+    if request.method == 'POST':
+        ranking_form = RankingsForm(request.POST,request.FILES, instance=ranking)
+        formset = RankingEntryFormSet(request.POST, instance=ranking, prefix='entries')
+
+        if ranking_form.is_valid() and formset.is_valid():
+            ranking_form.save()
+            formset.save()  # aplica altas, bajas y modificaciones
+            link = reverse("updateRanking", args=[ranking.id])
+            messages.success(request, f'Ranking: <a class="font-bold" href="{link}">{ranking.nombre}</a> Actualizado correctamente')
+            return redirect('rankings')
+        else:
+            print("Errores en form:", ranking_form.errors)
+            print("Errores en formset:", formset.errors)
+    else:
+        ranking_form = RankingsForm(instance=ranking)
+        formset = RankingEntryFormSet(instance=ranking, prefix='entries')
+
+    return render(request, 'category/rankings/update.html', {
+        'ranking_form': ranking_form,
+        'formset': formset,
+        'ranking': ranking,
+    })
+
+
 
 class CustomPagination(PageNumberPagination):
     page_size = 12
@@ -351,7 +565,7 @@ class BlogList(APIView):
 
     def get(self, request):
         search_query = request.query_params.get('search', '')
-        categoria_nombre = request.query_params.get('categoria_blog', '')
+        categorias_param = request.query_params.get('categoria_blog', '')
 
         blogs_queryset = Blog.objects.select_related('autor_blog', 'categoria_blog').all()
 
@@ -360,11 +574,18 @@ class BlogList(APIView):
                 Q(nombre_blog__icontains=search_query)
             )
 
-        if categoria_nombre:
-            try:
-                categoria = CategoriaBlog.objects.get(nombre_categoria_blog__iexact=categoria_nombre)
-                blogs_queryset = blogs_queryset.filter(categoria_blog=categoria)
-            except CategoriaBlog.DoesNotExist:
+        if categorias_param:
+            # Dividir por coma y limpiar espacios
+            categorias = [c.strip() for c in categorias_param.split(',') if c.strip()]
+            
+            # Obtener las categorías que existen en base a nombre
+            categorias_objs = CategoriaBlog.objects.filter(
+                nombre_categoria_blog__in=categorias
+            )
+
+            if categorias_objs.exists():
+                blogs_queryset = blogs_queryset.filter(categoria_blog__in=categorias_objs)
+            else:
                 blogs_queryset = Blog.objects.none()
 
         paginator = self.pagination_class()
@@ -505,6 +726,15 @@ class CompaniesList (APIView):
         
         return Response(companies_serializer.data)  
 
+class OriginalsList (APIView):
+    
+    def get(self, request):
+        
+        #Queryset of the Platforms
+        originals =  Original.objects.all().filter(esta="enabled")
+        originals_serializer = OriginalSerializer(originals, many = True, context={'request': request})
+        
+        return Response(originals_serializer.data) 
 
 class UniversitiesByRegion(APIView):
     def get(self, request):
@@ -670,55 +900,31 @@ class filter_by_tags(APIView):
 
 
 class filter_by_search(APIView):
-    # Esta función es para filtrar en los resultados por medio de la barra de búsqueda
     def post(self, request):
-        
-        query_string = request.data.get('data', "")
-        
-        print("DATOS RECIBIDOS: ", query_string)
-        
-        # Filtrar por tema
-        tema = Temas.objects.filter(nombre__icontains=query_string).first()
-        
-        #Filtrar por nombre
-        nombre = Certificaciones.objects.filter(nombre__icontains=query_string).first()
-        
-        # Filtrar por universidad
-        universidad = Universidades.objects.filter(nombre__icontains=query_string).first()
-        
-        # Filtrar por empresa
-        empresa = Empresas.objects.filter(nombre__icontains=query_string).first()
-        
-        # Inicializar lista de resultados
-        filtered_results = Certificaciones.objects.none()
-        
-        # Filtrar por tema
-        if tema:
-            tema_results = Certificaciones.objects.filter(tema_certificacion_id=tema.id)
-            filtered_results = filtered_results | tema_results
-        
-        # Filtrar por universidad
-        if universidad:
-            universidad_results = Certificaciones.objects.filter(universidad_certificacion_id=universidad.id)
-            filtered_results = filtered_results | universidad_results
-        
-        # Filtrar por empresa
-        if empresa:
-            empresa_results = Certificaciones.objects.filter(empresa_certificacion=empresa.id)
-            filtered_results = filtered_results | empresa_results
-        
-        if nombre:
-            nombre_results = Certificaciones.objects.filter(nombre__icontains = query_string)
-            filtered_results = filtered_results | nombre_results
-            
-        # Serializar resultados
-        serializer = CertificationSearchSerializer(filtered_results.distinct(), many=True)
-        
-        # Devolver la respuesta con los datos serializados
-        return Response(
-            serializer.data,
-            status=status.HTTP_200_OK
-        )
+        query_string = request.data.get('data', "").strip()
+        if not query_string or len(query_string) < 2:
+            return Response([], status=200)
+
+        try:
+            filtered_results = Certificaciones.objects.filter(
+                Q(nombre__icontains=query_string) |
+                Q(tema_certificacion__nombre__icontains=query_string) |
+                Q(universidad_certificacion__nombre__icontains=query_string) |
+                Q(empresa_certificacion__nombre__icontains=query_string)
+            ).distinct()
+
+            print("Resultados encontrados:", filtered_results.count())
+
+        except Exception as e:
+            print("Error en la consulta:", e)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Si el queryset está vacío, devolvemos una lista vacía sin serializar
+        if not filtered_results.exists():
+            return Response([], status=status.HTTP_200_OK)
+
+        serializer = CertificationSearchSerializer(filtered_results, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 class LatestCertificationsView(APIView):
     def get(self, request):
@@ -738,7 +944,13 @@ class LatestCertificationsView(APIView):
 class OriginalDetailView(APIView):
     def get(self, request, slug):
         try:
-            original = Original.objects.get(slug=slug)
+            original = Original.objects.filter(esta="enabled").prefetch_related(
+                Prefetch(
+                    'certifications',  # o 'certifications' si tienes related_name
+                    queryset=OriginalCertification.objects.all().order_by('posicion')
+                )
+            ).get(slug=slug)
+
         except Original.DoesNotExist:
             return Response({"detail": "No encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -748,3 +960,54 @@ class OriginalDetailView(APIView):
         )
         return Response(serializer.data)
 
+class RankingsList (APIView):
+    
+    def get(self, request):
+        
+        #Queryset of the Platforms
+        rankings =  Ranking.objects.all().filter(estado="enabled")
+        rankings_serializer = RankingSerializer(rankings, many = True, context={'request': request})
+        
+        return Response(rankings_serializer.data) 
+
+class RankingDetailView(APIView):
+    def get(self, request, slug):
+        try:
+            ranking = Ranking.objects.get(nombre__iexact=slug.replace('-', ' '))
+        except Ranking.DoesNotExist:
+            return Response({"detail": "No encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Obtenemos las entradas del ranking
+        entradas = ranking.entradas.select_related('universidad', 'empresa').all()
+
+        # Agregamos las certificaciones por tema para cada entrada
+        for entrada in entradas:
+            if entrada.universidad:
+                temas = entrada.universidad.certificaciones.values(
+                    'tema_certificacion__id',
+                    'tema_certificacion__nombre',
+                    'tema_certificacion__tem_type',
+                    'tema_certificacion__tem_img'
+                ).annotate(total_certificaciones=Count('id'))
+                entrada.temas_certificaciones = list(temas)
+            elif entrada.empresa:
+                temas = entrada.empresa.certificaciones.values(
+                    'tema_certificacion__id',
+                    'tema_certificacion__nombre',
+                    'tema_certificacion__tem_type',
+                    'tema_certificacion__tem_img'
+                ).annotate(total_certificaciones=Count('id'))
+                entrada.temas_certificaciones = list(temas)
+            else:
+                entrada.temas_certificaciones = []
+
+        serializer = RankingSerializer(
+            ranking,
+            context={'request': request}
+        )
+        # Adjuntamos manualmente los datos de temas_certificaciones
+        data = serializer.data
+        for idx, entrada in enumerate(entradas):
+            data['entradas'][idx]['temas_certificaciones'] = entrada.temas_certificaciones
+
+        return Response(data)

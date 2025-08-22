@@ -13,6 +13,8 @@ admin.site.register(Regiones)
 admin.site.register(Original)
 admin.site.register(OriginalCertification)
 admin.site.register(CategoriaBlog)
+admin.site.register(Ranking)
+admin.site.register(RankingEntry)
 
 
 

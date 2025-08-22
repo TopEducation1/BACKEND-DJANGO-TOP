@@ -5,12 +5,19 @@
     <!-- Primera columna: ocupa 1/3 -->
     <div class="col-span-3 grid grid-cols-2 gap-4">
       {% for field in form %}
-        {% if field.name == "nombre" or field.name == "slug" or field.name == "aprendizaje_certificacion" or field.name == "habilidades_certificacion" or field.name == "experiencia_certificacion" or field.name == "testimonios_certificacion" or field.name == "contenido_certificacion" or field.name == "modulos_certificacion" %}
+        {% if field.name == "nombre_categoria_blog"  %}
           <div class="{% if field.name == 'contenido_certificacion' or field.name == 'modulos_certificacion' %}col-span-full{% endif %}">
             <label class="text-white font-bold" for="{{ field.id_for_label }}">{{ field.label }}</label>
 
-            {% if field.name == "contenido_certificacion" or field.name == "modulos_certificacion" %}
-              <textarea class="w-full border-1 border-white rounded-lg px-4 py-1" name="{{ field.name }}" id="{{ field.id_for_label }}" rows="4">{{ field.value|safe }}</textarea>
+            {% if field.name == "empr_img" or field.name == "empr_ico"  %}
+              {% if field.value %}
+                <img class="bg-white rounded-lg mb-2" src="https://top.education/{{ field.value }}" width="180" />
+              {% endif %}
+              <input class="w-full border-1 border-white rounded-lg px-4 py-1" type="text" name="{{ field.name }}" id="{{ field.id_for_label }}" value="{{ field.value }}">
+            
+            {% elif field.name == "fecha_redaccion_blog" %}
+              <input class="w-full border-1 border-white rounded-lg px-4 py-1" type="date" name="{{ field.name }}" id="{{ field.id_for_label }}" value="{{ field.value|date:'Y-m-d' }}">
+            
             {% else %}
               {{ field }}
             {% endif %}
@@ -25,40 +32,49 @@
 
     <!-- Segunda columna: ocupa 2/3 -->
     <div class="col-span-1 grid grid-cols-1 gap-4">
-      <div> 
-        {% for field in form %}
-          {% if field.name != "nombre" and field.name != "slug" and field.name != "aprendizaje_certificacion" and field.name != "habilidades_certificacion" and field.name != "experiencia_certificacion" and field.name != "testimonios_certificacion" and field.name != "contenido_certificacion" and field.name != "modulos_certificacion" %}
+      <div class="flex gap-3 w-full mt-8">
+    <input class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg" value="Actualizar" type="submit" />
+    <a class="bg-neutral-500 hover:bg-neutral-400 text-neutral-950 font-bold py-2 px-4 rounded-lg" href="{% url 'topics' %}">Cancelar</a>
+  </div>
+        <div>
+      {% for field in form %}
+        {% if field.name != "nombre_categoria_blog" and field.name != "empr_img" and field.name != "empr_ico" %}
 
-            <div class="col-span-1">
-              <label class="text-white font-bold" for="{{ field.id_for_label }}">{{ field.label }}</label>
+          <div class="col-span-1">
+            <label class="text-white font-bold" for="{{ field.id_for_label }}">{{ field.label }}</label>
 
-              {% if field.name == "imagen_final" %}
-                {% if field.value %}
-                  <img class="bg-white rounded-lg mb-2" src="https://top.education/{{ field.value }}" width="180" />
-                {% endif %}
-                <input class="w-full border-1 border-white rounded-lg px-4 py-1" type="text" name="{{ field.name }}" id="{{ field.id_for_label }}" value="{{ field.value }}">
-              
-              {% elif field.name == "fecha_redaccion_blog" %}
-                <input class="w-full border-1 border-white rounded-lg px-4 py-1" type="date" name="{{ field.name }}" id="{{ field.id_for_label }}" value="{{ field.value|date:'Y-m-d' }}">
-              
-              {% else %}
-                {{ field }}
+            {% if field.name == "imagen_final" %}
+              {% if field.value %}
+                <img class="bg-white rounded-lg mb-2" src="https://top.education/{{ field.value }}" width="180" />
               {% endif %}
+              <input class="w-full border-1 border-white rounded-lg px-4 py-1" type="text" name="{{ field.name }}" id="{{ field.id_for_label }}" value="{{ field.value }}">
+            {% elif field.name == "tem_est" %}
+              <select name="{{ field.name }}" id="{{ field.id_for_label }}">
+                <option value="enabled" {% if field.value == "enabled" %} selected {% endif %}>enabled</option>
+                <option value="disabled" {% if field.value == "disabled" %} selected {% endif %}>disabled</option>
+              </select>
+            
+            {% elif field.name == "tem_type" %}
+              <select name="{{ field.name }}" id="{{ field.id_for_label }}">
+                <option value="Tema" {% if field.value == "Tema" %} selected {% endif %}>Tema</option>
+                <option value="Habilidad" {% if field.value == "Habilidad" %} selected {% endif %}>Habilidad</option>
+              </select>
+            
+            {% else %}
+              {{ field }}
+            {% endif %}
 
-              {% if field.errors %}
-                <div class="text-danger text-white">{{ field.errors }}</div>
-              {% endif %}
-            </div>
-          {% endif %}
-        {% endfor %}
-        <div class="flex flex-wrap justify-end gap-3 w-full py-5 sticky top-1 bg-neutral-800">
-          <p class="w-full text-white">Verifique que la información esta completa antes de guardar los cambios.</p>
-          <a class="bg-neutral-500 hover:bg-neutral-400 text-neutral-950 font-bold py-2 px-4 rounded-lg" href="{% url 'certifications' %}">Cancelar</a>
-          <input class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg" value="Guardar" type="submit" />
+            {% if field.errors %}
+              <div class="text-danger text-white">{{ field.errors }}</div>
+            {% endif %}
+          </div>
+        {% endif %}
+      {% endfor %}
         </div>
-      </div>
     </div>
   </div>
+
+  
 </form>
 
 

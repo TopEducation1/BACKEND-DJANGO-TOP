@@ -94,7 +94,7 @@ class TopicsSerializer (serializers.ModelSerializer):
     class Meta:
         model = Temas
         
-        fields = ['id', 'nombre','tem_type','tem_col','tem_img']
+        fields = ['id', 'nombre','tem_type','tem_col','tem_img','tem_est']
 
 class PlataformaSerializer (serializers.ModelSerializer):
     
@@ -244,15 +244,16 @@ class CertificationSearchSerializer(serializers.ModelSerializer):
             data = super().to_representation(instance)
             content = data['contenido_certificacion']
             
-            contenido_mod = data['contenido_certificacion']
-            cantidad_modulos = contenido_mod.split('\n')[0]
-            contenido_certificacion = contenido_mod.split('\n')[1:]
-            
+            contenido_mod = data.get('contenido_certificacion', '')
+            lineas = contenido_mod.split('\n') if isinstance(contenido_mod, str) else []
+            cantidad_modulos = lineas[0] if len(lineas) > 0 else ''
+            contenido_certificacion = lineas[1:] if len(lineas) > 1 else []
+
             data['contenido_certificacion'] = {
-                
                 "cantidad_modulos": cantidad_modulos,
-                "contenido_certificacion" : contenido_certificacion
-                }
+                "contenido_certificacion": contenido_certificacion
+            }
+
             
             tema_instance = instance.tema_certificacion
             data['tema_certificacion'] = TopicsSerializer(tema_instance).data if tema_instance else None
@@ -263,51 +264,44 @@ class CertificationSearchSerializer(serializers.ModelSerializer):
             data['empresa_certificacion'] = EmpresaSerializer(instance.empresa_certificacion).data if instance.empresa_certificacion else None
             # Procesamiento de módulos
             if isinstance(data['modulos_certificacion'], str):
-                
-                modulos_raw = data.get('modulos_certificacion')
-                if isinstance(modulos_raw, str):
-                    modulos_raw = modulos_raw.strip().split('\n')
-                else:
-                    modulos_raw = []
+                modulos_raw = data['modulos_certificacion'].strip().split('\n') if data['modulos_certificacion'].strip() else []
+            else:
+                modulos_raw = []
 
-                modulos_procesados = []
-                current_module = None
-                
-                for linea in modulos_raw:
-                    linea = linea.strip()
-                    if not linea:
+            modulos_procesados = []
+            current_module = None
+
+            for linea in modulos_raw:
+                linea = linea.strip()
+                if not linea:
+                    continue
+
+                if 'Módulo' in linea:
+                    if current_module:
+                        modulos_procesados.append(current_module)
+
+                    # Evitar error por índice inexistente
+                    titulo = modulos_raw[0] if len(modulos_raw) > 0 else ''
+                    duracion = modulos_raw[1] if len(modulos_raw) > 1 else ''
+
+                    current_module = {
+                        'titulo': titulo,
+                        'duracion': duracion,
+                        'incluye': [],
+                        'contenido': []
+                    }
+                elif current_module:
+                    if 'Incluye' in linea:
                         continue
-                    
-                    if 'Módulo' in linea:
-                        if current_module:
-                            modulos_procesados.append(current_module)
-                            
-                        titulo_y_duracion = linea.split(' | Duración:')
-                        if len(titulo_y_duracion) > 1:
-                            titulo = titulo_y_duracion[0].split(':')[1].strip()
-                            duracion = titulo_y_duracion[1].strip()
-                        else:
-                            titulo = ''
-                            duracion = ''
-                            
-                        current_module = {
-                            'titulo': modulos_raw[0],
-                            'duracion': modulos_raw[1],
-                            'incluye': [],
-                            'contenido': []
-                        }
-                    elif current_module:
-                        if 'Incluye' in linea:
-                            continue
-                        elif linea.startswith(('1 ', '2 ', '3 ', '4 ', '5 ', '6 ', '7 ', '8 ', '9 ')):
-                            current_module['incluye'].append(linea)
-                        else:
-                            current_module['contenido'].append(linea)
-                            
-                if current_module:
-                    modulos_procesados.append(current_module)
-                    
-                data['modulos_certificacion'] = modulos_procesados
+                    elif linea[:2].isdigit():  # Si empieza con número
+                        current_module['incluye'].append(linea)
+                    else:
+                        current_module['contenido'].append(linea)
+
+            if current_module:
+                modulos_procesados.append(current_module)
+
+            data['modulos_certificacion'] = modulos_procesados
                 #print(modulos_procesados)
             # Procesamiento de las habilidades
             habilidades_raw = data.get('habilidades_certificacion')
@@ -365,13 +359,14 @@ class OriginalCertificationSerializer(serializers.ModelSerializer):
         fields = [
             'title',
             'hist',
-            'image',
+            'fondo',
             'certification_title',
             'certification_slug',
             'source_type',
             'source_object',
             'certification_image_url',
             'certification_detail',  # ← lo agregamos a los campos
+            'posicion',
         ]
 
     def _build_url(self, value, request, use_media=False):
@@ -424,7 +419,7 @@ class OriginalCertificationSerializer(serializers.ModelSerializer):
             return self._build_url(cert.imagen_final, request, use_media=False)
 
         return None
-
+    
     def get_certification_detail(self, obj):
         request = self.context.get('request')
         return CertificationSerializer(obj.certification, context={'request': request}).data
@@ -432,16 +427,55 @@ class OriginalCertificationSerializer(serializers.ModelSerializer):
 
 
 class OriginalSerializer(serializers.ModelSerializer):
-    certifications = OriginalCertificationSerializer(many=True, read_only=True)
+    image = serializers.SerializerMethodField()
+    certifications = serializers.SerializerMethodField()
 
     class Meta:
         model = Original
-        fields = [
-            'id',
-            'name',
-            'slug',
-            'image',
-            'biog',
-            'certifications',
-        ]
+        fields = ['id','name','slug','extr','esta','image','biog','certifications']
 
+    def get_certifications(self, obj):
+        rel = getattr(obj, 'certifications', None)  # related_name si existe
+        qs = (rel.all() if rel is not None else obj.originalcertification_set.all()).order_by('posicion')
+        return OriginalCertificationSerializer(qs, many=True, context=self.context).data
+
+    def get_image(self, obj):
+        return self._abs_url(obj.image)
+
+    def _abs_url(self, value):
+        if not value:
+            return None
+        request = self.context.get('request')
+        url = value.url if hasattr(value, 'url') else str(value)
+
+        # Si ya es absoluta, devuélvela tal cual
+        if url.startswith('http://') or url.startswith('https://'):
+            return url
+
+        # Si es relativa (/media/...), construye absoluta cuando haya request
+        return request.build_absolute_uri(url) if request else url
+
+
+
+class RankingEntrySerializer(serializers.ModelSerializer):
+    universidad = UniverisitiesSerializer(read_only=True)
+    empresa = EmpresaSerializer(read_only=True)
+    total_certificaciones = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RankingEntry
+        fields = ['id', 'ranking','posicion', 'universidad', 'empresa','total_certificaciones']
+    
+    def get_total_certificaciones(self, obj):
+        if obj.universidad:
+            return obj.universidad.certificaciones.count()
+        elif obj.empresa:
+            return obj.empresa.certificaciones.count()
+        return 0
+
+class RankingSerializer(serializers.ModelSerializer):
+    entradas = RankingEntrySerializer(many=True)
+
+    class Meta:
+        model = Ranking
+        fields = ['id', 'nombre', 'descripcion','image', 'fecha', 'tipo', 'estado', 'entradas']
