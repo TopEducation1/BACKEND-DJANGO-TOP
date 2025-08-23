@@ -6,23 +6,16 @@ from .models import *
 
 class UniSelect2(ModelSelect2Widget):
     model = Universidades
-    search_fields = ['nombre__icontains']
-    # attrs útiles
-    attrs = {
-        'data-placeholder': 'Buscar universidad…',
-        'data-minimum-input-length': 1,
-        'style': 'width: 100%;',
-    }
+    search_fields = ['nombre__icontains']   # <--- el nombre del campo DEBE existir
+    def get_queryset(self):
+        # si filtras por estado, que existan registros así:
+        return Universidades.objects.filter(univ_est='enabled')
 
 class EmpSelect2(ModelSelect2Widget):
     model = Empresas
     search_fields = ['nombre__icontains']
-    attrs = {
-        'data-placeholder': 'Buscar empresa…',
-        'data-minimum-input-length': 1,
-        'style': 'width: 100%;',
-    }
-
+    def get_queryset(self):
+        return Empresas.objects.filter(empr_est='enabled')
     
 class UploadFileForm(forms.Form):
     file = forms.FileField()

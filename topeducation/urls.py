@@ -19,6 +19,7 @@ sitemaps_dict = {
 
 urlpatterns = [
     path('',login_required(views.dashboard,login_url='/signin/'), name='inicio'),
+    path("select2/", include("django_select2.urls")),
     path('dashboard/',login_required(views.dashboard,login_url='/signin/'), name='dashboard'),
     path('signin/',views.signin, name='signin'),
     path('logout/',views.signout, name='logout'),
@@ -78,7 +79,7 @@ urlpatterns = [
     path('api/latest-certifications/', LatestCertificationsView.as_view(), name='latest_certifications'),
     path('sitemap.xml', sitemap, {'sitemaps': sitemaps_dict}, name='sitemap'),
     path("ckeditor/", include("ckeditor_uploader.urls")),
-    path("select2/", include("django_select2.urls")),
+    
 
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 if settings.DEBUG:

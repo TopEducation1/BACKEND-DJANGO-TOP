@@ -98,55 +98,54 @@
 </form>
 
 <script>
-  // Re-init select2 de django-select2
+  // --- Re-init de django-select2 para elementos recién insertados ---
   function initSelect2ForContext(ctx) {
-    if (window.jQuery && jQuery.fn) {
+    // Si jQuery y el plugin están disponibles (lo normal con django-select2):
+    if (window.jQuery && jQuery.fn && (jQuery.fn.djangoSelect2 || jQuery.fn.select2)) {
+      // Inicializa widgets "ligeros"
       if (jQuery.fn.djangoSelect2) {
         jQuery(ctx).find('select.django-select2').djangoSelect2();
         jQuery(ctx).find('select.django-select2-heavy').djangoSelect2();
-      } else if (jQuery.fn.select2) {
+      } else {
+        // Fallback raro: si no está djangoSelect2, al menos intenta select2()
         jQuery(ctx).find('select.django-select2, select.django-select2-heavy').select2();
       }
     }
-    // Dispara el evento oficial por si la lib lo usa
-    try { (ctx || document).dispatchEvent(new Event('django.select2.init', { bubbles: true })); } catch(e) {}
+
+    // Además dispara el evento estándar de django-select2 por si acaso:
+    try {
+      const ev = new Event('django.select2.init', { bubbles: true });
+      (ctx || document).dispatchEvent(ev);
+      document.dispatchEvent(ev);
+    } catch(e) {
+      // IE11-like fallback (poco probable hoy)
+      var evt = document.createEvent('Event');
+      evt.initEvent('django.select2.init', true, true);
+      (ctx || document).dispatchEvent(evt);
+      document.dispatchEvent(evt);
+    }
   }
 
-  // Reemplaza __prefix__ en name/id/for y en data-ajax--url (¡clave!)
-  function replaceFormsetPrefix(node, index) {
-    node.querySelectorAll('input, select, textarea, label').forEach(el => {
-      if (el.name) el.name = el.name.replace('__prefix__', index);
-      if (el.id) el.id = el.id.replace('__prefix__', index);
-      if (el.htmlFor) el.htmlFor = el.htmlFor.replace('__prefix__', index);
+  // --- Mostrar/ocultar columnas según el "tipo" del ranking ---
+  function toggleSelects() {
+    const tipoRanking = document.getElementById('id_tipo');
+    const tipo = tipoRanking ? tipoRanking.value : '';
+    const universidadSelects = document.querySelectorAll('.universidad-select');
+    const empresaSelects = document.querySelectorAll('.empresa-select');
 
-      // Para selects de django-select2: actualizar atributos data-ajax--*
-      if (el.tagName === 'SELECT') {
-        // Limpia estado previo por si acaso
-        el.removeAttribute('data-select2-id');
-        el.classList.remove('select2-hidden-accessible');
-        // Reemplaza __prefix__ en cualquier data-attr relevante
-        for (const attr of el.getAttributeNames()) {
-          if (attr.startsWith('data-ajax') || attr.includes('field_id') || attr.includes('url')) {
-            const val = el.getAttribute(attr);
-            if (val && val.includes('__prefix__')) {
-              el.setAttribute(attr, val.replace(/__prefix__/g, index));
-            }
-          }
-        }
-        // Deja sin selección
-        el.selectedIndex = -1;
-      } else if (el.type === 'checkbox') {
-        el.checked = false;
-      } else if (el.type && el.type !== 'hidden') {
-        el.value = '';
-      }
-    });
-
-    // Vacía PK oculto para nuevas filas
-    const hiddenPk = node.querySelector(`input[name$="-${index}-id"]`);
-    if (hiddenPk) hiddenPk.value = "";
+    if (tipo === 'universidad') {
+      universidadSelects.forEach(td => td.style.display = 'table-cell');
+      empresaSelects.forEach(td => td.style.display = 'none');
+    } else if (tipo === 'empresa') {
+      universidadSelects.forEach(td => td.style.display = 'none');
+      empresaSelects.forEach(td => td.style.display = 'table-cell');
+    } else {
+      universidadSelects.forEach(td => td.style.display = 'table-cell');
+      empresaSelects.forEach(td => td.style.display = 'table-cell');
+    }
   }
 
+  // --- Agregar filas dinámicas del formset ---
   document.getElementById('add-row').addEventListener('click', function() {
     const table = document.getElementById('ranking-entries');
     const template = document.getElementById('empty-form-row-template');
@@ -154,26 +153,45 @@
     const totalFormsInput = document.querySelector('input[name$="-TOTAL_FORMS"]');
     const totalName = totalFormsInput.getAttribute('name'); // ej: entries-TOTAL_FORMS
     const prefix = totalName.replace(/-TOTAL_FORMS$/, '');
-    const index = parseInt(totalFormsInput.value, 10);
+    let totalForms = parseInt(totalFormsInput.value, 10);
 
+    // Clonar desde <template> (NO contiene select2 pre-inicializado)
     const newRow = template.content.firstElementChild.cloneNode(true);
 
-    // Reemplaza __prefix__ en TODOS los lugares (incl. data-ajax--url)
-    replaceFormsetPrefix(newRow, index);
+    // Reemplazar __prefix__ y limpiar valores
+    newRow.querySelectorAll('input, select, textarea, label').forEach(el => {
+      if (el.name) el.name = el.name.replace('__prefix__', totalForms);
+      if (el.id) el.id = el.id.replace('__prefix__', totalForms);
+      if (el.htmlFor) el.htmlFor = el.htmlFor.replace('__prefix__', totalForms);
 
-    // Inserta y sube el contador
+      if (el.tagName === 'SELECT') {
+        // Muy importante: dejarlo vacío para que django-select2 lo inicialice
+        el.selectedIndex = -1;
+        // Si por alguna razón hay atributos de select2 clonados, límpialos:
+        el.removeAttribute('data-select2-id');
+        el.removeAttribute('tabindex');
+        el.classList.remove('select2-hidden-accessible');
+      } else if (el.type === 'checkbox') {
+        el.checked = false;
+      } else if (el.type !== 'hidden') {
+        el.value = '';
+      }
+    });
+
+    // Vaciar el PK oculto en filas nuevas
+    const pkHidden = newRow.querySelector(`input[name="${prefix}-${totalForms}-id"]`);
+    if (pkHidden) pkHidden.value = "";
+
+    // Añadir la fila a la tabla y subir TOTAL_FORMS
     table.appendChild(newRow);
-    totalFormsInput.value = index + 1;
+    totalFormsInput.value = totalForms + 1;
 
-    // Re-inicializa solo en la fila nueva
+    // Re-inicializar select2 SOLO en esta fila nueva
     initSelect2ForContext(newRow);
-  });
 
-  document.addEventListener('DOMContentLoaded', function () {
-    initSelect2ForContext(document.body);
+    // Respetar visibilidad por tipo
+    toggleSelects();
   });
-
-  
 
   document.addEventListener('DOMContentLoaded', function () {
     // Inicial global (por si acaso)
