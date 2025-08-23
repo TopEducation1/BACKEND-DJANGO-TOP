@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'ckeditor',
     'ckeditor_uploader',
+    'django_select2',
 ]
 
 MIDDLEWARE = [
@@ -57,6 +58,7 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
+    'http://localhost:3001',
     'https://backend-django-top-production.up.railway.app',
     'https://frontend-react-top-production.up.railway.app',
     'https://top.education',

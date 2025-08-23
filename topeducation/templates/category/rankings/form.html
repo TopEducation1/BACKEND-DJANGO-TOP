@@ -1,171 +1,221 @@
+{% load static %}
+  {{ ranking_form.media }}
+  {{ formset.media }}
+
 <form enctype="multipart/form-data" method="POST">
   {% csrf_token %}
-  <div class="mt-3 grid grid-cols-2 gap-x-6 gap-y-4  cont-form text-white">
 
-    <!-- Primera columna: ocupa 1/3 -->
-    <div class="col-span-1 gap-4">
-      <div class="sticky top-10">
-        <h3 class="my-2 text-xl font-bold">Datos del Ranking</h3>
-        <div class="flex flex-wrap gap-2">
-          {% for field in ranking_form %}
-            {% if field.name == "image" %}
-              <div class="w-full">
-                {{ field.label_tag }}
-                {% if field.value %}
-                  <img id="preview-{{ field.name }}" class="rounded-lg mb-2 w-full" src="{{ field.value.url }}" />
-                {% else %}
-                    <img id="preview-{{ field.name }}" src="#" class="rounded-lg mb-2 hidden w-full" />
-                {% endif %}
-                <input 
-                  type="file" 
-                  name="{{ field.name }}" 
-                  id="{{ field.id_for_label }}" 
-                  class="w-full border border-white bg-white text-neutral-950 rounded-lg px-4 py-1" 
-                  onchange="previewImage(event, '{{ field.name }}')"
-                >
-              </div>
-            {% elif field.name == "tipo" or field.name == "estado" %}
-              <div class="w-[48%]">
-                {{ field.label_tag }}
-                {{ field }}
-              </div>
-            {% else %}
-              <div class="w-full">
-                {{ field.label_tag }}
-                {{ field }}
-              </div>
-            {% endif %}
-            {% for error in field.errors %}
-              <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">{{ error }}</div>
-            {% endfor %}
+  <div class="grid grid-cols-2 gap-6 cont-form text-white">
+    <!-- Columna izquierda: datos del ranking -->
+    <div>
+      <h3 class="my-2 text-xl font-bold">Datos del Ranking</h3>
+      <div class="flex flex-wrap gap-2">
+        {% for field in ranking_form %}
+          {% if field.name == "image" %}
+            <div class="w-full ">
+              {{ field.label_tag }}
+              {% if field.value %}
+                <img id="preview-{{ field.name }}" class="rounded-lg mb-2 w-full" src="{{ field.value.url }}" />
+              {% else %}
+                <img id="preview-{{ field.name }}" class="rounded-lg mb-2 hidden w-full" />
+              {% endif %}
+              {{ field }}
+            </div>
+          {% elif field.name == "tipo" or field.name == "estado" %}
+            <div class="w-[48%]">
+              {{ field.label_tag }} {{ field }}
+            </div>
+          {% else %}
+            <div class="w-full">
+              {{ field.label_tag }} {{ field }}
+            </div>
+          {% endif %}
+          {% for error in field.errors %}
+            <div class="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded mt-1">{{ error }}</div>
           {% endfor %}
-        </div>
-        <div class="flex flex-wrap gap-3 w-full mt-8">
-          <button class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg" type="submit">Guardar</button>
-          <a class="bg-neutral-500 hover:bg-neutral-400 text-neutral-950 font-bold py-2 px-4 rounded-lg" href="{% url 'rankings' %}">Cancelar</a>
-        </div>
+        {% endfor %}
+      </div>
+
+      <div class="flex gap-3 w-full mt-8">
+        <button class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded" type="submit">Guardar</button>
+        <a class="bg-neutral-400 hover:bg-neutral-300 text-neutral-900 font-semibold py-2 px-4 rounded" href="{% url 'rankings' %}">Cancelar</a>
       </div>
     </div>
 
-    <!-- Segunda columna: ocupa 2/3 -->
-    <div class="col-span-1 gap-4">
-        <h3 class="my-2 text-xl font-bold">Listado del Ranking</h3>
-        {{ formset.management_form }} 
-        
-        <table id="ranking-entries">
-            {% for subform in formset %}
-                <tr>
-                  {{ subform.id }} 
-                    <td class="universidad-select py-1 px-2"><span>{{ subform.universidad.label }}</span>{{ subform.universidad }}</td>
-                    <td class="empresa-select py-1 px-2"><span>{{ subform.empresa.label }}</span>{{ subform.empresa }}</td>
-                    <td class="py-1 px-2"><span>{{ subform.posicion.label }}</span>{{ subform.posicion }}</td>
-                    <td class="pt-5 px-2">
-                        {% if subform.instance.pk %}
-                        <span class="inline-flex items-center rounded-md gap-2 bg-red-400/10 px-2 py-1 block text-md font-medium text-red-400 inset-ring inset-ring-red-400/20">
-                            Eliminar:  {{ subform.DELETE }}</span>
-                        {% endif %}
-                    </td>
-                </tr>
-            {% endfor %}
-        </table>
-        <table style="display:none;">
-      <tr id="empty-form-row">
-        <td class="universidad-select p-2">
-          {{ formset.empty_form.universidad }}
-        </td>
-        <td class="empresa-select p-2">
-          {{ formset.empty_form.empresa }}
-        </td>
-        <td class="p-2">
-          {{ formset.empty_form.posicion }}
-        </td>
-        <td class="p-2">
-          <span class="inline-flex items-center rounded-md gap-2 bg-red-400/10 px-2 py-1 text-md font-medium text-red-400 inset-ring inset-ring-red-400/20">
-          Eliminar{{ formset.empty_form.DELETE }}</span>
-        </td>
-      </tr>
-    </table>
-    <button type="button" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 mt-5 rounded-lg" id="add-row">+ Agregar elemento</button>
-    
-  </div>
-    {% if field.errors %}
-      <div class="text-danger text-white">{{ field.errors }}</div>
-    {% endif %}
+    <!-- Columna derecha: listado del ranking -->
+    <div>
+      <h3 class="my-2 text-xl font-bold">Listado del Ranking</h3>
+
+      {# ¡Crítico! management form del formset #}
+      {{ formset.management_form }}
+
+      <table id="ranking-entries" class="w-full text-sm">
+        {% for subform in formset %}
+          <tr class="align-top">
+            {{ subform.id }}
+            <td class="universidad-select py-1 px-2">
+              <span class="block text-xs text-neutral-300">{{ subform.universidad.label }}</span>
+              {{ subform.universidad }}
+            </td>
+            <td class="empresa-select py-1 px-2">
+              <span class="block text-xs text-neutral-300">{{ subform.empresa.label }}</span>
+              {{ subform.empresa }}
+            </td>
+            <td class="py-1 px-2">
+              <span class="block text-xs text-neutral-300">{{ subform.posicion.label }}</span>
+              {{ subform.posicion }}
+            </td>
+            <td class="pt-6 px-2">
+              <label class="inline-flex items-center gap-2 bg-red-400/10 px-2 py-1 rounded text-red-400">
+                Eliminar {{ subform.DELETE }}
+              </label>
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+
+      {# --- CLAVE: usar <template> para que NO se inicialicen los select2 antes de clonar --- #}
+      <template id="empty-form-row-template">
+        <tr class="align-top">
+          <td class="universidad-select p-2">{{ formset.empty_form.universidad }}</td>
+          <td class="empresa-select p-2">{{ formset.empty_form.empresa }}</td>
+          <td class="p-2">{{ formset.empty_form.posicion }}</td>
+          <td class="p-2">
+            <label class="inline-flex items-center gap-2 bg-red-400/10 px-2 py-1 rounded text-red-400">
+              Eliminar {{ formset.empty_form.DELETE }}
+            </label>
+            {{ formset.empty_form.id }}
+          </td>
+        </tr>
+      </template>
+
+      <button type="button" id="add-row"
+        class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 mt-4 rounded">
+        + Agregar elemento
+      </button>
+    </div>
   </div>
 </form>
 
-
 <script>
-document.getElementById('add-row').addEventListener('click', function() {
-  const prefix = 'entries';
-  const table = document.getElementById('ranking-entries');
-  const totalFormsInput = document.querySelector(`input[name="${prefix}-TOTAL_FORMS"]`);
-  let totalForms = parseInt(totalFormsInput.value);
-
-  const emptyRow = document.getElementById('empty-form-row');
-  const newRow = emptyRow.cloneNode(true);
-  newRow.style.display = '';
-
-  newRow.querySelectorAll('input, select, textarea, label').forEach(el => {
-    if(el.name) el.name = el.name.replace('__prefix__', totalForms);
-    if(el.id) el.id = el.id.replace('__prefix__', totalForms);
-    if(el.htmlFor) el.htmlFor = el.htmlFor.replace('__prefix__', totalForms);
-
-    if(el.type !== 'hidden' && el.type !== 'checkbox') el.value = '';
-    if(el.type === 'checkbox') el.checked = false;
-  });
-
-  // Eliminar input hidden 'id' SOLO para filas nuevas
-  newRow.querySelectorAll('input[type=hidden]').forEach(input => {
-    if(input.name.includes('id')) input.remove();
-  });
-
-  table.appendChild(newRow);
-  totalFormsInput.value = totalForms + 1;
-});
-
-</script>
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    const tipoRanking = document.getElementById('id_tipo');
-
-    function toggleSelects() {
-        const tipo = tipoRanking.value;
-        const universidadSelects = document.querySelectorAll('.universidad-select select');
-        const empresaSelects = document.querySelectorAll('.empresa-select select');
-
-        if (tipo === 'universidad') {
-            universidadSelects.forEach(sel => sel.closest('td').style.display = 'block');
-            empresaSelects.forEach(sel => sel.closest('td').style.display = 'none');
-        } 
-        else if (tipo === 'empresa') {
-            universidadSelects.forEach(sel => sel.closest('td').style.display = 'none');
-            empresaSelects.forEach(sel => sel.closest('td').style.display = 'block');
-        } 
-        else {
-            universidadSelects.forEach(sel => sel.closest('td').style.display = 'block');
-            empresaSelects.forEach(sel => sel.closest('td').style.display = 'block');
-        }
+  // --- Re-init de django-select2 para elementos recién insertados ---
+  function initSelect2ForContext(ctx) {
+    // Si jQuery y el plugin están disponibles (lo normal con django-select2):
+    if (window.jQuery && jQuery.fn && (jQuery.fn.djangoSelect2 || jQuery.fn.select2)) {
+      // Inicializa widgets "ligeros"
+      if (jQuery.fn.djangoSelect2) {
+        jQuery(ctx).find('select.django-select2').djangoSelect2();
+        jQuery(ctx).find('select.django-select2-heavy').djangoSelect2();
+      } else {
+        // Fallback raro: si no está djangoSelect2, al menos intenta select2()
+        jQuery(ctx).find('select.django-select2, select.django-select2-heavy').select2();
+      }
     }
 
-    // Detectar cambios
-    tipoRanking.addEventListener('change', toggleSelects);
+    // Además dispara el evento estándar de django-select2 por si acaso:
+    try {
+      const ev = new Event('django.select2.init', { bubbles: true });
+      (ctx || document).dispatchEvent(ev);
+      document.dispatchEvent(ev);
+    } catch(e) {
+      // IE11-like fallback (poco probable hoy)
+      var evt = document.createEvent('Event');
+      evt.initEvent('django.select2.init', true, true);
+      (ctx || document).dispatchEvent(evt);
+      document.dispatchEvent(evt);
+    }
+  }
 
-    // Ejecutar al cargar
+  // --- Mostrar/ocultar columnas según el "tipo" del ranking ---
+  function toggleSelects() {
+    const tipoRanking = document.getElementById('id_tipo');
+    const tipo = tipoRanking ? tipoRanking.value : '';
+    const universidadSelects = document.querySelectorAll('.universidad-select');
+    const empresaSelects = document.querySelectorAll('.empresa-select');
+
+    if (tipo === 'universidad') {
+      universidadSelects.forEach(td => td.style.display = 'table-cell');
+      empresaSelects.forEach(td => td.style.display = 'none');
+    } else if (tipo === 'empresa') {
+      universidadSelects.forEach(td => td.style.display = 'none');
+      empresaSelects.forEach(td => td.style.display = 'table-cell');
+    } else {
+      universidadSelects.forEach(td => td.style.display = 'table-cell');
+      empresaSelects.forEach(td => td.style.display = 'table-cell');
+    }
+  }
+
+  // --- Agregar filas dinámicas del formset ---
+  document.getElementById('add-row').addEventListener('click', function() {
+    const table = document.getElementById('ranking-entries');
+    const template = document.getElementById('empty-form-row-template');
+
+    const totalFormsInput = document.querySelector('input[name$="-TOTAL_FORMS"]');
+    const totalName = totalFormsInput.getAttribute('name'); // ej: entries-TOTAL_FORMS
+    const prefix = totalName.replace(/-TOTAL_FORMS$/, '');
+    let totalForms = parseInt(totalFormsInput.value, 10);
+
+    // Clonar desde <template> (NO contiene select2 pre-inicializado)
+    const newRow = template.content.firstElementChild.cloneNode(true);
+
+    // Reemplazar __prefix__ y limpiar valores
+    newRow.querySelectorAll('input, select, textarea, label').forEach(el => {
+      if (el.name) el.name = el.name.replace('__prefix__', totalForms);
+      if (el.id) el.id = el.id.replace('__prefix__', totalForms);
+      if (el.htmlFor) el.htmlFor = el.htmlFor.replace('__prefix__', totalForms);
+
+      if (el.tagName === 'SELECT') {
+        // Muy importante: dejarlo vacío para que django-select2 lo inicialice
+        el.selectedIndex = -1;
+        // Si por alguna razón hay atributos de select2 clonados, límpialos:
+        el.removeAttribute('data-select2-id');
+        el.removeAttribute('tabindex');
+        el.classList.remove('select2-hidden-accessible');
+      } else if (el.type === 'checkbox') {
+        el.checked = false;
+      } else if (el.type !== 'hidden') {
+        el.value = '';
+      }
+    });
+
+    // Vaciar el PK oculto en filas nuevas
+    const pkHidden = newRow.querySelector(`input[name="${prefix}-${totalForms}-id"]`);
+    if (pkHidden) pkHidden.value = "";
+
+    // Añadir la fila a la tabla y subir TOTAL_FORMS
+    table.appendChild(newRow);
+    totalFormsInput.value = totalForms + 1;
+
+    // Re-inicializar select2 SOLO en esta fila nueva
+    initSelect2ForContext(newRow);
+
+    // Respetar visibilidad por tipo
     toggleSelects();
-});
-function previewImage(event, fieldName) {
+  });
+
+  document.addEventListener('DOMContentLoaded', function () {
+    // Inicial global (por si acaso)
+    initSelect2ForContext(document.body);
+
+    const tipoRanking = document.getElementById('id_tipo');
+    if (tipoRanking) tipoRanking.addEventListener('change', toggleSelects);
+    toggleSelects();
+  });
+
+  // --- Preview de imagen ---
+  function previewImage(event, fieldName) {
     const input = event.target;
     const imgPreview = document.getElementById('preview-' + fieldName);
-
     if (input.files && input.files[0]) {
       const reader = new FileReader();
       reader.onload = function(e) {
         imgPreview.src = e.target.result;
-        imgPreview.classList.remove('hidden'); // por si estaba oculta
+        imgPreview.classList.remove('hidden');
       }
       reader.readAsDataURL(input.files[0]);
     }
   }
 </script>
 
+  </body>
+</html>

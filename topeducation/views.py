@@ -517,30 +517,34 @@ def createRanking(request):
 
 def updateRanking(request, ranking_id):
     ranking = get_object_or_404(Ranking, id=ranking_id)
+    prefix = 'entries'
 
     if request.method == 'POST':
-        ranking_form = RankingsForm(request.POST,request.FILES, instance=ranking)
-        formset = RankingEntryFormSet(request.POST, instance=ranking, prefix='entries')
+        ranking_form = RankingsForm(request.POST, request.FILES, instance=ranking)
+        formset = RankingEntryFormSet(request.POST, request.FILES, instance=ranking, prefix=prefix)
 
         if ranking_form.is_valid() and formset.is_valid():
-            ranking_form.save()
-            formset.save()  # aplica altas, bajas y modificaciones
+            with transaction.atomic():
+                ranking = ranking_form.save()
+                formset.save()  # aplica altas, bajas y modificaciones
             link = reverse("updateRanking", args=[ranking.id])
-            messages.success(request, f'Ranking: <a class="font-bold" href="{link}">{ranking.nombre}</a> Actualizado correctamente')
+            messages.success(request, f'Ranking: <a class="font-bold underline" href="{link}">{ranking.nombre}</a> actualizado correctamente')
             return redirect('rankings')
         else:
-            print("Errores en form:", ranking_form.errors)
-            print("Errores en formset:", formset.errors)
+            # Debug opcional
+            print("Errores ranking_form:", ranking_form.errors)
+            print("Errores formset (forms):", [f.errors for f in formset.forms])
+            print("Errores formset (no form):", formset.non_form_errors())
     else:
         ranking_form = RankingsForm(instance=ranking)
-        formset = RankingEntryFormSet(instance=ranking, prefix='entries')
+        formset = RankingEntryFormSet(instance=ranking, prefix=prefix)
 
     return render(request, 'category/rankings/update.html', {
         'ranking_form': ranking_form,
         'formset': formset,
         'ranking': ranking,
+        'prefix': prefix,
     })
-
 
 
 class CustomPagination(PageNumberPagination):

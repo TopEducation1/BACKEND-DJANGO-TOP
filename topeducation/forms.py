@@ -1,9 +1,27 @@
 from django import forms
-from django.forms import inlineformset_factory
-from django.forms.models import BaseInlineFormSet
+from django.forms.models import BaseInlineFormSet, inlineformset_factory
+from django_select2.forms import ModelSelect2Widget
 from django.core.exceptions import ValidationError
 from .models import *
 
+class UniSelect2(ModelSelect2Widget):
+    model = Universidades
+    search_fields = ['nombre__icontains']
+    # attrs útiles
+    attrs = {
+        'data-placeholder': 'Buscar universidad…',
+        'data-minimum-input-length': 1,
+        'style': 'width: 100%;',
+    }
+
+class EmpSelect2(ModelSelect2Widget):
+    model = Empresas
+    search_fields = ['nombre__icontains']
+    attrs = {
+        'data-placeholder': 'Buscar empresa…',
+        'data-minimum-input-length': 1,
+        'style': 'width: 100%;',
+    }
 
 class UploadFileForm(forms.Form):
     file = forms.FileField()
@@ -50,32 +68,56 @@ class RankingsForm(forms.ModelForm):
     class Meta:
         model = Ranking
         fields = '__all__'
+        widgets = {
+            'image': forms.ClearableFileInput(attrs={
+                'class': 'w-full border border-white bg-white text-neutral-950 rounded-lg px-4 py-1',
+                'onchange': 'previewImage(event, this.id)'
+            }),
+        }    
 
 class RankingEntryForm(forms.ModelForm):
     class Meta:
         model = RankingEntry
-        fields = '__all__'
+        # ¡No incluyas la FK al padre!
+        exclude = ('ranking',)
+        # Opcional: widgets si necesitas
+        widgets = {
+            'universidad': UniSelect2,
+            'empresa': EmpSelect2,
+            'posicion': forms.NumberInput(attrs={'min': 1}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        uni = cleaned.get('universidad')
+        emp = cleaned.get('empresa')
+        if not uni and not emp:
+            raise forms.ValidationError('Debes seleccionar una universidad o una empresa.')
+        return cleaned
 
 class BaseRankingEntryFormSet(BaseInlineFormSet):
     def clean(self):
         super().clean()
-        posiciones = []
+        seen = set()
         for form in self.forms:
-            if form.cleaned_data and not form.cleaned_data.get('DELETE', False):
-                pos = form.cleaned_data.get('posicion')
-                if pos in posiciones:
-                    raise ValidationError('No puede haber posiciones repetidas en un mismo ranking.')
-                posiciones.append(pos)
+            if form.cleaned_data.get('DELETE') or form.errors or not form.cleaned_data:
+                continue
+            pos = form.cleaned_data.get('posicion')
+            if pos is None:
+                continue
+            if pos in seen:
+                form.add_error('posicion', 'Esta posición ya está usada en este ranking.')
+            else:
+                seen.add(pos)
 
 RankingEntryFormSet = inlineformset_factory(
     Ranking,
     RankingEntry,
     form=RankingEntryForm,
-    formset=BaseRankingEntryFormSet,  # usa tu formset personalizado
-    extra=1,
+    formset=BaseRankingEntryFormSet,
+    extra=0,
     can_delete=True,
 )
-
 
 class OriginalsForm(forms.ModelForm):
     class Meta:
