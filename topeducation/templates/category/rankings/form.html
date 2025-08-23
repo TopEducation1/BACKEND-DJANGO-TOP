@@ -98,66 +98,35 @@
 </form>
 
 <script>
-  // Inicializa SOLO con django-select2 (nunca .select2())
+  // --- Re-init de django-select2 para elementos recién insertados ---
   function initSelect2ForContext(ctx) {
-    if (!window.jQuery || !jQuery.fn || !jQuery.fn.djangoSelect2) {
-      // si los assets aún no cargaron, reintenta un momento después
-      setTimeout(() => initSelect2ForContext(ctx), 50);
-      return;
+    // Si jQuery y el plugin están disponibles (lo normal con django-select2):
+    if (window.jQuery && jQuery.fn && (jQuery.fn.djangoSelect2 || jQuery.fn.select2)) {
+      // Inicializa widgets "ligeros"
+      if (jQuery.fn.djangoSelect2) {
+        jQuery(ctx).find('select.django-select2').djangoSelect2();
+        jQuery(ctx).find('select.django-select2-heavy').djangoSelect2();
+      } else {
+        // Fallback raro: si no está djangoSelect2, al menos intenta select2()
+        jQuery(ctx).find('select.django-select2, select.django-select2-heavy').select2();
+      }
     }
-    jQuery(ctx).find('select.django-select2, select.django-select2-heavy').each(function () {
-      const $el = jQuery(this);
-      if ($el.data('select2')) {
-        // por si hubiera una instancia previa (raro al usar <template>)
-        $el.djangoSelect2('destroy');
-      }
-      $el.djangoSelect2(); // ← esto agrega ?field_id=... automáticamente
-    });
 
-    // evento estándar por si algún script lo usa
-    try { (ctx || document).dispatchEvent(new Event('django.select2.init', { bubbles: true })); } catch (e) {}
-  }
-
-  // Parchea atributos del formset y de select2 (field_id / ajax url)
-  function patchFieldAttrs(el, index) {
-    if (el.name) el.name = el.name.replace(/__prefix__/g, index);
-    if (el.id) el.id = el.id.replace(/__prefix__/g, index);
-    if (el.htmlFor) el.htmlFor = el.htmlFor.replace(/__prefix__/g, index);
-
-    if (el.tagName === 'SELECT') {
-      // limpiar rastros del clon
-      el.removeAttribute('data-select2-id');
-      el.removeAttribute('tabindex');
-      el.classList.remove('select2-hidden-accessible');
-      el.selectedIndex = -1;
-
-      // CLAVE: data-field_id debe coincidir con el name actual
-      el.setAttribute('data-field_id', el.name);
-
-      // Si el widget dejó data-ajax--url con field_id en la query, lo sincronizamos.
-      // (No es estrictamente necesario; djangoSelect2 usará data-field_id, pero esto evita incongruencias)
-      const urlAttr = el.getAttribute('data-ajax--url') || el.getAttribute('data-url');
-      if (urlAttr) {
-        const abs = urlAttr.startsWith('http') ? urlAttr : (window.location.origin + urlAttr);
-        let u;
-        try { u = new URL(abs); } catch (e) { u = null; }
-        if (u) {
-          const fid = u.searchParams.get('field_id');
-          if (fid) {
-            u.searchParams.set('field_id', el.name);
-            const relative = u.pathname + '?' + u.searchParams.toString();
-            el.setAttribute('data-ajax--url', relative);
-          }
-        }
-      }
-    } else if (el.type === 'checkbox') {
-      el.checked = false;
-    } else if (el.type && el.type !== 'hidden') {
-      el.value = '';
+    // Además dispara el evento estándar de django-select2 por si acaso:
+    try {
+      const ev = new Event('django.select2.init', { bubbles: true });
+      (ctx || document).dispatchEvent(ev);
+      document.dispatchEvent(ev);
+    } catch(e) {
+      // IE11-like fallback (poco probable hoy)
+      var evt = document.createEvent('Event');
+      evt.initEvent('django.select2.init', true, true);
+      (ctx || document).dispatchEvent(evt);
+      document.dispatchEvent(evt);
     }
   }
 
-  // Mostrar/ocultar columnas según el "tipo" del ranking
+  // --- Mostrar/ocultar columnas según el "tipo" del ranking ---
   function toggleSelects() {
     const tipoRanking = document.getElementById('id_tipo');
     const tipo = tipoRanking ? tipoRanking.value : '';
@@ -176,29 +145,48 @@
     }
   }
 
-  // Agregar filas dinámicas del formset
-  document.getElementById('add-row').addEventListener('click', function () {
+  // --- Agregar filas dinámicas del formset ---
+  document.getElementById('add-row').addEventListener('click', function() {
     const table = document.getElementById('ranking-entries');
     const template = document.getElementById('empty-form-row-template');
 
     const totalFormsInput = document.querySelector('input[name$="-TOTAL_FORMS"]');
-    const index = parseInt(totalFormsInput.value, 10);
+    const totalName = totalFormsInput.getAttribute('name'); // ej: entries-TOTAL_FORMS
+    const prefix = totalName.replace(/-TOTAL_FORMS$/, '');
+    let totalForms = parseInt(totalFormsInput.value, 10);
 
-    // clonar desde <template> (evita que ya venga inicializado)
+    // Clonar desde <template> (NO contiene select2 pre-inicializado)
     const newRow = template.content.firstElementChild.cloneNode(true);
 
-    // Reemplazar __prefix__ y parchear select2 attrs
-    newRow.querySelectorAll('input, select, textarea, label').forEach(el => patchFieldAttrs(el, index));
+    // Reemplazar __prefix__ y limpiar valores
+    newRow.querySelectorAll('input, select, textarea, label').forEach(el => {
+      if (el.name) el.name = el.name.replace('__prefix__', totalForms);
+      if (el.id) el.id = el.id.replace('__prefix__', totalForms);
+      if (el.htmlFor) el.htmlFor = el.htmlFor.replace('__prefix__', totalForms);
 
-    // Vaciar PK oculto
-    const hiddenPk = newRow.querySelector(`input[name$="-${index}-id"]`);
-    if (hiddenPk) hiddenPk.value = "";
+      if (el.tagName === 'SELECT') {
+        // Muy importante: dejarlo vacío para que django-select2 lo inicialice
+        el.selectedIndex = -1;
+        // Si por alguna razón hay atributos de select2 clonados, límpialos:
+        el.removeAttribute('data-select2-id');
+        el.removeAttribute('tabindex');
+        el.classList.remove('select2-hidden-accessible');
+      } else if (el.type === 'checkbox') {
+        el.checked = false;
+      } else if (el.type !== 'hidden') {
+        el.value = '';
+      }
+    });
 
-    // Insertar y subir el contador
+    // Vaciar el PK oculto en filas nuevas
+    const pkHidden = newRow.querySelector(`input[name="${prefix}-${totalForms}-id"]`);
+    if (pkHidden) pkHidden.value = "";
+
+    // Añadir la fila a la tabla y subir TOTAL_FORMS
     table.appendChild(newRow);
-    totalFormsInput.value = index + 1;
+    totalFormsInput.value = totalForms + 1;
 
-    // Inicializar django-select2 SOLO en esta fila nueva
+    // Re-inicializar select2 SOLO en esta fila nueva
     initSelect2ForContext(newRow);
 
     // Respetar visibilidad por tipo
@@ -206,19 +194,21 @@
   });
 
   document.addEventListener('DOMContentLoaded', function () {
-    initSelect2ForContext(document.body);  // inicial de todos los selects renderizados
+    // Inicial global (por si acaso)
+    initSelect2ForContext(document.body);
+
     const tipoRanking = document.getElementById('id_tipo');
     if (tipoRanking) tipoRanking.addEventListener('change', toggleSelects);
     toggleSelects();
   });
 
-  // Preview de imagen
+  // --- Preview de imagen ---
   function previewImage(event, fieldName) {
     const input = event.target;
     const imgPreview = document.getElementById('preview-' + fieldName);
     if (input.files && input.files[0]) {
       const reader = new FileReader();
-      reader.onload = function (e) {
+      reader.onload = function(e) {
         imgPreview.src = e.target.result;
         imgPreview.classList.remove('hidden');
       }
@@ -226,4 +216,3 @@
     }
   }
 </script>
-
