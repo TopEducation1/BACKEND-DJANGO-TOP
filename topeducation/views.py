@@ -546,7 +546,6 @@ def updateRanking(request, ranking_id):
         'prefix': prefix,
     })
 
-
 class CustomPagination(PageNumberPagination):
     page_size = 12
     page_size_query_param = 'page_size'

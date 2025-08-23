@@ -23,6 +23,7 @@ class EmpSelect2(ModelSelect2Widget):
         'style': 'width: 100%;',
     }
 
+    
 class UploadFileForm(forms.Form):
     file = forms.FileField()
 
