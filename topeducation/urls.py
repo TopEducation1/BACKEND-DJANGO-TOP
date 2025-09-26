@@ -79,6 +79,8 @@ urlpatterns = [
     path('api/latest-certifications/', LatestCertificationsView.as_view(), name='latest_certifications'),
     path('sitemap.xml', sitemap, {'sitemaps': sitemaps_dict}, name='sitemap'),
     path("ckeditor/", include("ckeditor_uploader.urls")),
+    path("inspector/catalog/", views.catalog_inspector, name="catalog_inspector"),
+    path("api/proxy", views.proxy_json, name="proxy_json"),
     
 
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

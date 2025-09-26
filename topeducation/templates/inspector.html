@@ -1,0 +1,304 @@
+{% load static %}
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Cursos (inspector robusto)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bd:#e5e7eb; --muted:#6b7280; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;color:#111;}
+    .grid{display:grid;grid-template-columns:320px 1fr;gap:24px}
+    .card{border:1px solid var(--bd);border-radius:12px;padding:16px;background:#fff}
+    h1{font-size:20px;margin:0 0 16px}
+    h2{font-size:16px;margin:0 0 12px}
+    code,pre{background:#f9fafb;padding:8px;border-radius:8px;display:block;overflow:auto}
+    .muted{color:var(--muted)}
+    .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3}
+    .controls{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    .controls>*{min-width:180px}
+    input,select{border:1px solid var(--bd);border-radius:8px;padding:6px 8px}
+    button{padding:6px 10px;border:1px solid var(--bd);background:#fff;border-radius:8px;cursor:pointer}
+    button[disabled]{opacity:.5;cursor:default}
+    .sticky-top{position:sticky;top:0;background:#fff;padding-bottom:8px;z-index:3}
+    table{width:100%;border-collapse:collapse}
+    th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #eef2f7;vertical-align:top}
+    th{position:sticky;top:0;background:#fff;z-index:2}
+    .img-cell img{max-width:140px;max-height:90px;border-radius:8px;border:1px solid #f1f5f9;object-fit:cover}
+    .skills-list{margin:0;padding-left:18px}
+    .skills-list li{margin:2px 0}
+    .pagination{display:flex;gap:8px;align-items:center;margin-top:12px}
+  </style>
+</head>
+<body>
+  <h1>Inspector de Cursos <span class="badge">auto-detección</span></h1>
+  <p class="muted">Endpoint externo: <code id="endpoint-label">{{ external }}</code></p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Opciones</h2>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <label>
+          URL externa:
+          <input id="endpoint-input" type="text" value="{{ external }}" />
+        </label>
+        <div>
+          <button id="reload">Recargar</button>
+          <button id="copy-url">Copiar URL con ?endpoint=…</button>
+        </div>
+      </div>
+      <hr style="margin:16px 0;">
+      <h2>Muestra (primer curso mapeado)</h2>
+      <pre id="example">{}</pre>
+      <p class="muted" style="margin-top:8px;">Campos mostrados: <code>id</code>, <code>nombre</code>, <code>imagen</code>, <code>skills.name</code></p>
+      <details style="margin-top:8px;">
+        <summary>Depuración</summary>
+        <pre id="debug-log" style="max-height:200px"></pre>
+      </details>
+    </div>
+
+    <div class="card">
+      <div class="sticky-top">
+        <h2>Listado</h2>
+        <div class="controls">
+          <input id="global-search" type="text" placeholder="Búsqueda global…" />
+          <label>ID <input id="f-id" type="text" placeholder="Ej: 123" /></label>
+          <label>Nombre <input id="f-nombre" type="text" placeholder="Contiene…" /></label>
+          <label>Skills <input id="f-skills" type="text" placeholder="Contiene…" /></label>
+          <select id="page-size" title="Tamaño de página">
+            <option value="10">10 por página</option>
+            <option value="25" selected>25 por página</option>
+            <option value="50">50 por página</option>
+            <option value="100">100 por página</option>
+          </select>
+          <span id="count" class="muted"></span>
+        </div>
+      </div>
+
+      <div style="overflow:auto; max-height:70vh;">
+        <table id="data-table">
+          <thead>
+            <tr>
+              <th style="width:100px;">ID</th>
+              <th>Nombre</th>
+              <th style="width:160px;">Imagen</th>
+              <th>Skills</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="pagination">
+        <button id="prev">Anterior</button>
+        <span id="page-info" class="muted"></span>
+        <button id="next">Siguiente</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const externalInput = document.getElementById('endpoint-input');
+  const endpointLabel = document.getElementById('endpoint-label');
+  const reloadBtn = document.getElementById('reload');
+  const copyBtn = document.getElementById('copy-url');
+
+  const examplePre = document.getElementById('example');
+  const debugLog = document.getElementById('debug-log');
+  const tbody = document.getElementById('tbody');
+
+  const globalSearch = document.getElementById('global-search');
+  const fId = document.getElementById('f-id');
+  const fNombre = document.getElementById('f-nombre');
+  const fSkills = document.getElementById('f-skills');
+
+  const pageSizeSel = document.getElementById('page-size');
+  const countLabel = document.getElementById('count');
+  const prevBtn = document.getElementById('prev');
+  const nextBtn = document.getElementById('next');
+  const pageInfo = document.getElementById('page-info');
+
+  let RAW = [];
+  let PAGE = 1;
+  let PAGE_SIZE = parseInt(pageSizeSel.value, 10) || 25;
+
+  const toStr = (v) => v == null ? "" : String(v);
+  const norm = (s) => toStr(s).toLowerCase();
+  const escapeHtml = (s) => toStr(s)
+    .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+    .replaceAll('"','&quot;').replaceAll("'","&#039;");
+  const log = (...args) => { debugLog.textContent += args.map(a => typeof a==='string'?a:JSON.stringify(a,null,2)).join(' ') + "\n"; };
+
+  const buildProxyUrl = (externalUrl) => {
+    const u = new URL(window.location.origin + '/api/proxy');
+    u.searchParams.set('url', externalUrl);
+    return u.toString();
+  };
+
+  // Busca recursivamente un arreglo que parezca "lista de cursos"
+  function findCoursesArray(node){
+    const NAME_KEYS = ['nombre','name','title'];
+    const hasNameLike = (obj) => NAME_KEYS.some(k => typeof obj?.[k] === 'string');
+    const hasSkills = (obj) => Array.isArray(obj?.skills) || typeof obj?.skills === 'object';
+
+    const candidates = [];
+
+    function walk(n, path='root'){
+      if (Array.isArray(n)) {
+        // ¿es un array de objetos "curso"?
+        if (n.length && typeof n[0] === 'object' && (hasNameLike(n[0]) || hasSkills(n[0]))) {
+          candidates.push({path, value:n});
+        }
+        // igual recorre elementos
+        n.forEach((v,i)=>walk(v, path+'['+i+']'));
+      } else if (n && typeof n === 'object') {
+        for (const [k,v] of Object.entries(n)) walk(v, path+'.'+k);
+      }
+    }
+    walk(node);
+    // prioridad: arrays más grandes con objetos que tengan skills
+    candidates.sort((a,b)=>{
+      const aScore = (Array.isArray(a.value)?a.value.length:0) + (hasSkills(a.value?.[0])?1000:0);
+      const bScore = (Array.isArray(b.value)?b.value.length:0) + (hasSkills(b.value?.[0])?1000:0);
+      return bScore - aScore;
+    });
+    return candidates[0]?.value || [];
+  }
+
+  // Mapea un item curso a {id, nombre, imagen, skills}
+  function mapCourse(item){
+    const id = item?.id ?? item?.courseId ?? item?.slug ?? '';
+    const nombre = item?.nombre ?? item?.name ?? item?.title ?? '';
+    const imagen = item?.imagen_final ?? item?.image_final ?? item?.image ?? item?.imageFinal ?? item?.thumbnail ?? '';
+    const skills = item?.skills ?? null;
+    return { id, nombre, imagen, skills };
+  }
+
+  // Extrae solo los "name" dentro de skills (array de objetos {id,name,isActive})
+  function extractSkillNames(skills){
+    if (!skills) return [];
+    if (Array.isArray(skills)) {
+      return skills.map(s => s && typeof s==='object' ? s.name : null).filter(Boolean).map(String);
+    }
+    // si viene como objeto, por si acaso (poco probable en tu caso)
+    const names = [];
+    const walk = (n)=>{
+      if (!n) return;
+      if (Array.isArray(n)) return n.forEach(walk);
+      if (typeof n === 'object') {
+        if (typeof n.name === 'string') names.push(n.name);
+        Object.values(n).forEach(walk);
+      }
+    };
+    walk(skills);
+    return Array.from(new Set(names));
+  }
+
+  function renderSkills(skills){
+    const names = extractSkillNames(skills);
+    if (!names.length) return '';
+    return `<ul class="skills-list">${names.map(n=>`<li>${escapeHtml(n)}</li>`).join('')}</ul>`;
+  }
+
+  function applyFilters(rows){
+    const q = norm(globalSearch.value);
+    const idQ = norm(fId.value);
+    const nomQ = norm(fNombre.value);
+    const sklQ = norm(fSkills.value);
+
+    return rows.filter(r => {
+      const id = toStr(r.id);
+      const nombre = toStr(r.nombre);
+      const img = toStr(r.imagen);
+      const skillsStr = extractSkillNames(r.skills).join(' | ');
+
+      if (q && ![id,nombre,img,skillsStr].some(x=>norm(x).includes(q))) return false;
+      if (idQ && !norm(id).includes(idQ)) return false;
+      if (nomQ && !norm(nombre).includes(nomQ)) return false;
+      if (sklQ && !norm(skillsStr).includes(sklQ)) return false;
+      return true;
+    });
+  }
+
+  function paginate(rows){ const start=(PAGE-1)*PAGE_SIZE; return rows.slice(start, start+PAGE_SIZE); }
+
+  function renderTable(){
+    const filtered = applyFilters(RAW);
+    countLabel.textContent = `${filtered.length} registros (de ${RAW.length})`;
+    const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    PAGE = Math.min(PAGE, pageCount);
+
+    const pageRows = paginate(filtered);
+    tbody.innerHTML = pageRows.map(r=>{
+      const imgHtml = r.imagen ? `<div class="img-cell"><img src="${escapeHtml(r.imagen)}" alt="${escapeHtml(r.nombre||'img')}" loading="lazy"></div>` : '';
+      return `<tr>
+        <td>${escapeHtml(toStr(r.id))}</td>
+        <td>${escapeHtml(toStr(r.nombre))}</td>
+        <td>${imgHtml}</td>
+        <td>${renderSkills(r.skills)}</td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="4" class="muted">Sin resultados.</td></tr>`;
+
+    prevBtn.disabled = PAGE<=1;
+    nextBtn.disabled = PAGE>=pageCount;
+    pageInfo.textContent = `Página ${PAGE} / ${pageCount}`;
+  }
+
+  async function load(){
+    debugLog.textContent = '';
+    const external = externalInput.value.trim();
+    endpointLabel.textContent = external || '—';
+    tbody.innerHTML = '';
+    examplePre.textContent = 'Cargando…';
+    try {
+      const res = await fetch(buildProxyUrl(external), { headers: { 'Accept': 'application/json' } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      // 1) intenta rutas comunes
+      let arr = [];
+      if (Array.isArray(data?.data?.coursParsed)) arr = data.data.coursParsed;
+      else if (Array.isArray(data?.coursParsed)) arr = data.coursParsed;
+      else {
+        // 2) búsqueda recursiva como fallback
+        arr = findCoursesArray(data);
+      }
+
+      log('Ruta detectada, tamaño:', Array.isArray(arr) ? arr.length : 0);
+
+      RAW = (Array.isArray(arr) ? arr : []).map(mapCourse);
+
+      examplePre.textContent = RAW[0] ? JSON.stringify(RAW[0], null, 2) : '{}';
+      PAGE=1; PAGE_SIZE=parseInt(pageSizeSel.value,10)||25;
+      renderTable();
+
+      if (!RAW.length) {
+        log('Aviso:', 'No se detectó una lista de cursos. Muestra el JSON raíz para revisar:');
+        log(data);
+      }
+    } catch(err) {
+      examplePre.textContent = 'Error: '+err.message;
+      log('Error en fetch:', String(err));
+      RAW=[]; renderTable();
+    }
+  }
+
+  reloadBtn.addEventListener('click', load);
+  copyBtn.addEventListener('click', () => {
+    const u = new URL(window.location.href);
+    u.searchParams.set('endpoint', externalInput.value.trim());
+    navigator.clipboard.writeText(u.toString());
+    copyBtn.textContent = 'Copiado ✔';
+    setTimeout(()=>copyBtn.textContent = 'Copiar URL con ?endpoint=…',1200);
+  });
+  [globalSearch,fId,fNombre,fSkills].forEach(el=>el.addEventListener('input', ()=>{PAGE=1;renderTable();}));
+  pageSizeSel.addEventListener('change', ()=>{PAGE_SIZE=parseInt(pageSizeSel.value,10)||25;PAGE=1;renderTable();});
+  prevBtn.addEventListener('click', ()=>{if(PAGE>1){PAGE--;renderTable();}});
+  nextBtn.addEventListener('click', ()=>{PAGE++;renderTable();});
+
+  load();
+})();
+</script>
+</body>
+</html>

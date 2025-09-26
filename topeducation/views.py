@@ -36,6 +36,11 @@ from collections import defaultdict
 from django.db.models import Count
 from django.db.models import Prefetch
 
+from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden
+from django.views.decorators.http import require_GET
+import requests
+from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
+
 
 def inicio(request):
     return HttpResponse("<h1>Bienvenido a Top.Education</h1>")
@@ -545,6 +550,83 @@ def updateRanking(request, ranking_id):
         'ranking': ranking,
         'prefix': prefix,
     })
+
+
+
+def catalog_inspector(request):
+    """
+    Vista para inspeccionar recursos del nuevo API.
+    Permite elegir el recurso (certifications, topics, etc.) y probar parámetros.
+    """
+    base_url = "https://rgudwgvtgk.execute-api.us-east-1.amazonaws.com/raul/course-information"
+    # recurso por defecto
+    default_resource = request.GET.get("resource", "certifications")
+
+    return render(
+        request,
+        "catalog_inspector.html",
+        {
+            "base_url": base_url,
+            "resource": default_resource,
+            "resources": [
+                "certifications",
+                "topics",
+                "companies",
+                "universities",
+                "platforms",
+                "regions",
+            ],
+        },
+    )
+
+@require_GET
+def proxy_json(request):
+    """
+    Proxy seguro (GET) con whitelist por host.
+    Acepta ?url=https://... y reencadena el resto de params (?q, ?page, etc.)
+    """
+    raw_url = request.GET.get("url", "").strip()
+    if not raw_url:
+        return HttpResponseBadRequest("Missing 'url' param.")
+
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in ("http", "https"):
+        return HttpResponseBadRequest("Invalid scheme. Only http/https allowed.")
+
+    host = parsed.netloc
+    if host not in getattr(settings, "PROXY_WHITELIST", set()):
+        return HttpResponseForbidden("Upstream host not allowed.")
+
+    # Combinar query original + params del cliente (excepto 'url')
+    upstream_qs = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    for k in request.GET.keys():
+        if k == "url":
+            continue
+        vals = request.GET.getlist(k)
+        upstream_qs[k] = vals if len(vals) > 1 else vals[0]
+
+    final_query = urlencode(upstream_qs, doseq=True)
+    final_url = urlunparse(parsed._replace(query=final_query))
+
+    headers = {"Accept": "application/json"}
+    headers.update(getattr(settings, "PROXY_HEADERS", {}).get(host, {}))
+
+    try:
+        resp = requests.get(final_url, headers=headers, timeout=getattr(settings, "PROXY_TIMEOUT", 15))
+    except requests.RequestException as e:
+        return JsonResponse({"error": "upstream_unreachable", "detail": str(e)}, status=502)
+
+    if resp.status_code >= 400:
+        return JsonResponse({"error": "upstream_error", "status": resp.status_code, "url": final_url}, status=502)
+
+    try:
+        data = resp.json()
+    except ValueError:
+        return JsonResponse({"error": "invalid_json_from_upstream"}, status=502)
+
+    return JsonResponse(data, safe=not isinstance(data, list))
+
+
 
 class CustomPagination(PageNumberPagination):
     page_size = 12

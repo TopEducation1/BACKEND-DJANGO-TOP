@@ -19,6 +19,9 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.min.js" integrity="sha512-L0Shl7nXXzIlBSUUPpxrokqq4ojqgZFQczTYlGjzONGTDAcLremjwaWv5A+EDLnxhQzY5xUZPWLOLqYRkY0Cbw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <style>
+    .select2-container{
+        width: 100% !important;
+    }
     select, ::picker(select){
         appearance: base-select;
     }
@@ -75,6 +78,7 @@
                     <a href="{% url 'certifications' %}" class="rounded-md {% if request.path == '/certifications/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Certificaciones</a>
                     <a href="{% url 'posts' %}" class="rounded-md {% if request.path == '/posts/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Blogs</a>
                     <a href="{% url 'categories' %}" class="rounded-md {% if request.path == '/category/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Categorias</a>
+                    <a href="{% url 'catalog_inspector' %}" class="rounded-md {% if request.path == '/inspector/catalog/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Inspector</a>
                 </div>
                 </div>
             </div>

@@ -27,6 +27,16 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 
 SECURE_SSL_REDIRECT = False
 
+# Whitelist del proxy: agrega el host exacto de tu URL externa
+PROXY_WHITELIST = {
+    "rgudwgvtgk.execute-api.us-east-1.amazonaws.com",
+}
+
+# (opcional) headers por host si algún día los necesitas
+PROXY_HEADERS = {}
+
+# (opcional) timeout
+PROXY_TIMEOUT = 15
 
 
 INSTALLED_APPS = [

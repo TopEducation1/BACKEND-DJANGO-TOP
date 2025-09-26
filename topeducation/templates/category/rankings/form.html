@@ -53,19 +53,19 @@
         {% for subform in formset %}
           <tr class="align-top">
             {{ subform.id }}
-            <td class="universidad-select py-1 px-2">
+            <td class="universidad-select w-[80%] py-1 px-2">
               <span class="block text-xs text-neutral-300">{{ subform.universidad.label }}</span>
               {{ subform.universidad }}
             </td>
-            <td class="empresa-select py-1 px-2">
+            <td class="empresa-select w-[80%] py-1 px-2">
               <span class="block text-xs text-neutral-300">{{ subform.empresa.label }}</span>
               {{ subform.empresa }}
             </td>
-            <td class="py-1 px-2">
+            <td class="py-1 w-[10%] px-2">
               <span class="block text-xs text-neutral-300">{{ subform.posicion.label }}</span>
               {{ subform.posicion }}
             </td>
-            <td class="pt-6 px-2">
+            <td class="pt-6 w-[5%] px-2">
               <label class="inline-flex items-center gap-2 bg-red-400/10 px-2 py-1 rounded text-red-400">
                 Eliminar {{ subform.DELETE }}
               </label>
@@ -73,14 +73,13 @@
           </tr>
         {% endfor %}
       </table>
-
       {# --- CLAVE: usar <template> para que NO se inicialicen los select2 antes de clonar --- #}
       <template id="empty-form-row-template">
         <tr class="align-top">
-          <td class="universidad-select p-2">{{ formset.empty_form.universidad }}</td>
-          <td class="empresa-select p-2">{{ formset.empty_form.empresa }}</td>
-          <td class="p-2">{{ formset.empty_form.posicion }}</td>
-          <td class="p-2">
+          <td class="universidad-select w-[80%] p-2">{{ formset.empty_form.universidad }}</td>
+          <td class="empresa-select w-[80%] p-2">{{ formset.empty_form.empresa }}</td>
+          <td class="p-2 w-[10%]">{{ formset.empty_form.posicion }}</td>
+          <td class="p-2 w-[5%]">
             <label class="inline-flex items-center gap-2 bg-red-400/10 px-2 py-1 rounded text-red-400">
               Eliminar {{ formset.empty_form.DELETE }}
             </label>
