@@ -37,14 +37,13 @@
                         {% else %}
                             <img id="preview-{{ field.name }}" src="#" class="rounded-lg mb-2 hidden w-full" />
                         {% endif %}
-
                         <input 
-                            type="file" 
-                            name="{{ field.name }}" 
-                            id="{{ field.id_for_label }}" 
-                            class="w-full border border-white bg-white rounded-lg px-4 py-1" 
-                            onchange="previewImage(event, '{{ field.name }}')"
-                        >
+                        type="file" 
+                        name="{{ field.name }}" 
+                        id="{{ field.id_for_label }}" 
+                        class="w-full border border-white bg-white rounded-lg px-4 py-1" 
+                        onchange="previewImage(event, '{{ field.name }}')"
+                        />
                     {% elif field.name == "fecha_redaccion_blog" %}
                         <input class="w-full border border-white rounded-lg px-4 py-1" type="date" name="{{ field.name }}" id="{{ field.id_for_label }}" value="{{ field.value|date:'Y-m-d' }}">
                     {% else %}

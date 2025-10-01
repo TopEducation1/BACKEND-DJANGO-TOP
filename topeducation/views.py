@@ -101,15 +101,17 @@ def updatePost(request, post_id):
         if form.is_valid():
             form.save()
             link = reverse("updatePost", args=[post.id])
-            messages.success(request, f'Blog <a class="font-bold" href="{link}">{post.nombre_blog}</a> actualizado correctamente.')
+            messages.success(
+                request,
+                f'Blog <a class="font-bold" href="{link}">{post.nombre_blog}</a> actualizado correctamente.'
+            )
             return redirect('posts')
         else:
+            # Útil para depurar si algo invalida el form (incluida la imagen)
+            # print("FORM ERRORS:", form.errors.as_json())
             messages.error(request, "Hay errores en el formulario. Revísalos abajo.")
     else:
         form = BlogsForm(instance=post)
-
-    # (Opcional) inspección rápida de archivos recibidos
-    # print("FILES:", request.FILES.keys())
 
     return render(request, "posts/update.html", {"post": post, "form": form})
 

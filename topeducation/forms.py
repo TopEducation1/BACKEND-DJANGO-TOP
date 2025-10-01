@@ -32,11 +32,28 @@ class CertificationsForm(forms.ModelForm):
 class BlogsForm(forms.ModelForm):
     class Meta:
         model = Blog
-        fields = '__all__'
+        # Mejor lista explícita. Evitas incluir campos no editables/auto.
+        fields = [
+            "nombre_blog",
+            "slug",
+            "contenido",
+            "miniatura_blog",   # ImageField
+            "url_img_cta",      # ImageField/FileField si aplica
+            "fecha_redaccion_blog",
+            # agrega los demás campos que SÍ edita el usuario
+        ]
         widgets = {
-            'contenido': forms.TextInput(attrs={'id':'editor'}),
-            'fecha_redaccion_blog': forms.DateInput(attrs={'type':'date'})
+            # Textarea para CKEditor/HTML
+            "contenido": forms.Textarea(attrs={
+                "id": "id_contenido",  # que coincida con tu ClassicEditor
+                "rows": 10,
+            }),
+            "fecha_redaccion_blog": forms.DateInput(attrs={"type": "date"}),
+            # (Opcional) asegurarte de file input nativo
+            # "miniatura_blog": forms.ClearableFileInput(),
+            # "url_img_cta": forms.ClearableFileInput(),
         }
+
 
 class UniversitiesForm(forms.ModelForm):
     class Meta:
