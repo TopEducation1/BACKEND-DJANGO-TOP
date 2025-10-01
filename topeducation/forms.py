@@ -35,11 +35,16 @@ class BlogsForm(forms.ModelForm):
         # Mejor lista explícita. Evitas incluir campos no editables/auto.
         fields = [
             "nombre_blog",
+            "metadescripcion_blog",
             "slug",
+            "palabra_clave_blog",
+            "autor_blog_id",
+            "categoria_blog_id",
+            "objetivo_blog",
             "contenido",
             "miniatura_blog",   # ImageField
             "url_img_cta",      # ImageField/FileField si aplica
-            "fecha_redaccion_blog",
+            #"fecha_redaccion_blog",
             # agrega los demás campos que SÍ edita el usuario
         ]
         widgets = {
@@ -48,7 +53,7 @@ class BlogsForm(forms.ModelForm):
                 "id": "id_contenido",  # que coincida con tu ClassicEditor
                 "rows": 10,
             }),
-            "fecha_redaccion_blog": forms.DateInput(attrs={"type": "date"}),
+            #"fecha_redaccion_blog": forms.DateInput(attrs={"type": "date"}),
             # (Opcional) asegurarte de file input nativo
             # "miniatura_blog": forms.ClearableFileInput(),
             # "url_img_cta": forms.ClearableFileInput(),
