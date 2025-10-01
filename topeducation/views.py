@@ -93,24 +93,26 @@ def createPost(request):
         except Exception as e:
             messages.warning(request,f"{str(e)}")
 
-def updatePost(request,post_id):
-    if request.method == 'GET':
-        
-        post = get_object_or_404(Blog,pk=post_id)
-        form = BlogsForm(request.POST or None, request.FILES or None, instance=post)
-        return render(request, 'posts/update.html',{'post':post,
-            'form':form
-        })
-    else:
-        try:
-            post = get_object_or_404(Blog, pk=post_id)
-            form = BlogsForm(request.POST or None,request.FILES or None, instance=post)
+def updatePost(request, post_id):
+    post = get_object_or_404(Blog, pk=post_id)
+
+    if request.method == "POST":
+        form = BlogsForm(request.POST, request.FILES, instance=post)
+        if form.is_valid():
             form.save()
             link = reverse("updatePost", args=[post.id])
             messages.success(request, f'Blog <a class="font-bold" href="{link}">{post.nombre_blog}</a> actualizado correctamente.')
             return redirect('posts')
-        except Exception as e:
-            messages.warning(request,f"{str(e)}")
+        else:
+            messages.error(request, "Hay errores en el formulario. Revísalos abajo.")
+    else:
+        form = BlogsForm(instance=post)
+
+    # (Opcional) inspección rápida de archivos recibidos
+    # print("FILES:", request.FILES.keys())
+
+    return render(request, "posts/update.html", {"post": post, "form": form})
+
 
 def deletePost(request,post_id):
     post = Blog.objects.get(id = post_id)
