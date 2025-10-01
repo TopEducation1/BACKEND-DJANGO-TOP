@@ -38,8 +38,8 @@ class BlogsForm(forms.ModelForm):
             "metadescripcion_blog",
             "slug",
             "palabra_clave_blog",
-            "autor_blog_id",
-            "categoria_blog_id",
+            "autor_blog",
+            "categoria_blog",
             "objetivo_blog",
             "contenido",
             "miniatura_blog",   # ImageField
