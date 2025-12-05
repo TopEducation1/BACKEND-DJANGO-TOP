@@ -41,6 +41,19 @@ from django.views.decorators.http import require_GET
 import requests
 from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
 
+from rest_framework import generics, permissions as drf_permissions
+from .models import Marca
+from .serializers import MarcaSerializer
+
+from django.contrib.auth.decorators import login_required, user_passes_test
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.db import transaction
+
+from .models import Marca, MarcaPermisos
+from .forms import MarcaForm, MarcaPermisosFormSet
+from .serializers import MarcaPublicSerializer
+
 
 def inicio(request):
     return HttpResponse("<h1>Bienvenido a Top.Education</h1>")
@@ -588,6 +601,9 @@ def proxy_json(request):
     """
     Proxy seguro (GET) con whitelist por host.
     Acepta ?url=https://... y reencadena el resto de params (?q, ?page, etc.)
+    Además:
+    - Reenvía el header x-api-key (si viene del front)
+    - O usa headers definidos en settings.PROXY_HEADERS para ese host
     """
     raw_url = request.GET.get("url", "").strip()
     if not raw_url:
@@ -612,16 +628,44 @@ def proxy_json(request):
     final_query = urlencode(upstream_qs, doseq=True)
     final_url = urlunparse(parsed._replace(query=final_query))
 
+    # --- HEADERS HACIA EL ENDPOINT EXTERNO ---
+
+    # Base: siempre pedimos JSON
     headers = {"Accept": "application/json"}
-    headers.update(getattr(settings, "PROXY_HEADERS", {}).get(host, {}))
+
+    # 1) Headers configurados en settings.PROXY_HEADERS (por host)
+    #    Ej: PROXY_HEADERS = {"erucsg6yrj.execute-api.us-east-1.amazonaws.com": {"x-api-key": "xxxx"}}
+    host_headers = getattr(settings, "PROXY_HEADERS", {}).get(host, {})
+    headers.update(host_headers)
+
+    # 2) Si el cliente envía x-api-key en el request (desde el front),
+    #    la respetamos y la usamos para el upstream (sobreescribe la de PROXY_HEADERS si existiera).
+    api_key = request.headers.get("x-api-key") or request.META.get("HTTP_X_API_KEY")
+    if api_key:
+        headers["x-api-key"] = api_key
 
     try:
-        resp = requests.get(final_url, headers=headers, timeout=getattr(settings, "PROXY_TIMEOUT", 15))
+        resp = requests.get(
+            final_url,
+            headers=headers,
+            timeout=getattr(settings, "PROXY_TIMEOUT", 15),
+        )
     except requests.RequestException as e:
-        return JsonResponse({"error": "upstream_unreachable", "detail": str(e)}, status=502)
+        return JsonResponse(
+            {"error": "upstream_unreachable", "detail": str(e)},
+            status=502,
+        )
 
     if resp.status_code >= 400:
-        return JsonResponse({"error": "upstream_error", "status": resp.status_code, "url": final_url}, status=502)
+        return JsonResponse(
+            {
+                "error": "upstream_error",
+                "status": resp.status_code,
+                "url": final_url,
+                "body": resp.text,
+            },
+            status=502,
+        )
 
     try:
         data = resp.json()
@@ -1100,3 +1144,101 @@ class RankingDetailView(APIView):
             data['entradas'][idx]['temas_certificaciones'] = entrada.temas_certificaciones
 
         return Response(data)
+
+
+
+def staff_required(view_func):
+    return login_required(user_passes_test(lambda u: u.is_staff)(view_func))
+
+
+# ------ 1) LISTAR MARCAS ------
+
+@staff_required
+def brand_list(request):
+    marcas = Marca.objects.all().order_by("-id")
+    return render(request, "brand/index.html", {"marcas": marcas})
+
+
+# ------ 2) CREAR / EDITAR MARCA ------
+
+@staff_required
+@transaction.atomic
+def brand_update(request, marca_id=None):
+    if marca_id:
+        marca = get_object_or_404(Marca, pk=marca_id)
+    else:
+        marca = None
+
+    if request.method == "POST":
+        form = MarcaForm(request.POST, request.FILES, instance=marca)
+        if form.is_valid():
+            marca = form.save()
+            return redirect("brand_settings", marca_id=marca.id)
+    else:
+        form = MarcaForm(instance=marca)
+
+    return render(
+        request,
+        "brand/form.html",
+        {
+            "form": form,
+            "marca": marca,
+        },
+    )
+
+
+# ------ 3) CONFIGURAR PERMISOS/SECCIONES POR MARCA ------
+
+DEFAULT_SECTIONS = [
+    ("about_us", "Sección About us"),
+    ("explora", "Sección Explora"),
+    ("los_mas_top", "Sección Los más top"),
+    ("blog", "Sección Blog"),
+    ("habilidades", "Sección Habilidades"),
+    ("temas", "Sección Temas"),
+]
+
+
+@staff_required
+@transaction.atomic
+def brand_settings(request, marca_id):
+    marca = get_object_or_404(Marca, pk=marca_id)
+
+    # Si NO hay permisos, crear los iniciales en memoria (solo para el formset inicial)
+    if request.method == "GET" and not marca.permisos.exists():
+        for index, (key, _) in enumerate(DEFAULT_SECTIONS, start=1):
+            # se crean en DB para simplificar el manejo
+            MarcaPermisos.objects.create(
+                marca=marca,
+                nombre_permiso=key,
+                visible=True,
+                orden=index,
+            )
+
+    if request.method == "POST":
+        formset = MarcaPermisosFormSet(request.POST, instance=marca)
+        if formset.is_valid():
+            formset.save()
+            return redirect("index")
+    else:
+        formset = MarcaPermisosFormSet(instance=marca)
+
+    # Para mostrar etiqueta bonita en el template
+    section_labels = dict(DEFAULT_SECTIONS)
+
+    return render(
+        request,
+        "brand/settings.html",
+        {
+            "marca": marca,
+            "formset": formset,
+            "section_labels": section_labels,
+        },
+    )
+
+class MarcaPublicBySlugView(generics.RetrieveAPIView):
+    queryset = Marca.objects.filter(estado="activo")
+    serializer_class = MarcaPublicSerializer
+    permission_classes = [drf_permissions.AllowAny]
+    lookup_field = "slug"
+

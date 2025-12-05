@@ -29,7 +29,7 @@ SECURE_SSL_REDIRECT = False
 
 # Whitelist del proxy: agrega el host exacto de tu URL externa
 PROXY_WHITELIST = {
-    "rgudwgvtgk.execute-api.us-east-1.amazonaws.com",
+    "erucsg6yrj.execute-api.us-east-1.amazonaws.com",
 }
 
 # (opcional) headers por host si algún día los necesitas

@@ -266,3 +266,54 @@ class RankingEntry(models.Model):
     def __str__(self):
         entidad = self.universidad if self.universidad else self.empresa
         return f"{self.ranking.nombre} - {entidad} (Posición {self.posicion})"
+
+
+class Marca(models.Model):
+    ESTADO_CHOICES = (
+        ('activo', 'Activo'),
+        ('inactivo', 'Inactivo'),
+    )
+
+    nombre = models.CharField(max_length=150)
+    slug = models.SlugField(max_length=150, unique=True)
+    descripcion = models.TextField(blank=True, null=True)
+    logo = models.ImageField(upload_to='brand/logos/', null=True, blank=True,verbose_name='Logo')
+    color_principal = models.CharField(max_length=7, default='#0F090B')
+    color_secundario = models.CharField(max_length=7, default='#F6F4EF')
+    phrase = models.CharField(max_length=255)
+    about_us = models.TextField(blank=True, null=True)
+    banner = models.ImageField(upload_to='brand/banners/', null=True, blank=True,verbose_name='Banner')
+    estado = models.CharField(max_length=10, choices=ESTADO_CHOICES, default='activo')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'marca'
+        managed = False
+        verbose_name = 'Marca blanca'
+        verbose_name_plural = 'Marcas blancas'
+
+    def __str__(self):
+        return self.nombre
+
+
+class MarcaPermisos(models.Model):
+    marca = models.ForeignKey(
+        Marca,
+        on_delete=models.DO_NOTHING,
+        db_column='marca_id',
+        related_name='permisos',
+    )
+    nombre_permiso = models.CharField(max_length=100)
+    visible = models.BooleanField(default=True)
+    orden = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = 'marca_permisos'
+        managed = False
+        verbose_name = 'Permiso de marca'
+        verbose_name_plural = 'Permisos de marca'
+        ordering = ['orden']
+
+    def __str__(self):
+        return f"{self.marca.nombre} · {self.nombre_permiso}"

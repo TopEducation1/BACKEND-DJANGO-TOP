@@ -2,6 +2,7 @@ from django import forms
 from django.forms.models import BaseInlineFormSet, inlineformset_factory
 from django_select2.forms import ModelSelect2Widget
 from django.core.exceptions import ValidationError
+from .models import Marca, MarcaPermisos
 from .models import *
 
 class UniSelect2(ModelSelect2Widget):
@@ -167,5 +168,83 @@ OriginalCertFormSet = inlineformset_factory(
     form=OriginalCertForm,
     formset=BaseOriginalCertFormSet,  # usa tu formset personalizado
     extra=1,
+    can_delete=True,
+)
+
+
+
+class MarcaForm(forms.ModelForm):
+    class Meta:
+        model = Marca
+        fields = [
+            "nombre",
+            "slug",
+            "descripcion",
+            "logo",
+            "color_principal",
+            "color_secundario",
+            "phrase",
+            "about_us",
+            "banner",
+            "estado",
+        ]
+        widgets = {
+            "nombre": forms.TextInput(attrs={
+                "class": "mt-1 block w-full rounded-md border border-gray-200 py-1 px-2 text-white shadow-sm text-sm focus:border-gray-200 focus:ring-gray-300"
+            }),
+            "slug": forms.TextInput(attrs={
+                "class": "mt-1 block w-full rounded-md border border-gray-200 py-1 px-2 text-white shadow-sm text-sm focus:border-gray-200 focus:ring-gray-300"
+            }),
+            "descripcion": forms.Textarea(attrs={
+                "rows": 3,
+                "class": "mt-1 block w-full rounded-md border border-gray-200 py-1 px-2 text-white shadow-sm text-sm focus:border-gray-200 focus:ring-gray-300"
+            }),
+            "about_us": forms.Textarea(attrs={
+                "rows": 3,
+                "class": "mt-1 block w-full rounded-md border border-gray-200 py-1 px-2 text-white shadow-sm text-sm focus:border-gray-200 focus:ring-gray-300"
+            }),
+            "phrase": forms.TextInput(attrs={
+                "class": "mt-1 block w-full rounded-md border border-gray-200 py-1 px-2 text-white shadow-sm text-sm focus:border-gray-200 focus:ring-gray-300"
+            }),
+            "banner": forms.ClearableFileInput(attrs={
+                "class": "block w-full rounded-md border border-gray-200 py-1 px-2 text-sm text-gray-200 bg-white text-gray-950"
+            }),
+            "logo": forms.ClearableFileInput(attrs={
+                "class": "block w-full rounded-md border border-gray-200 py-1 px-2 text-sm text-gray-200 bg-white text-gray-950"
+            }),
+            "color_principal": forms.TextInput(attrs={
+                "class": "mt-1 block w-full rounded-md border border-gray-200 py-1 px-2 text-white shadow-sm text-sm focus:border-gray-200 focus:ring-gray-300"
+            }),
+            "color_secundario": forms.TextInput(attrs={
+                "class": "mt-1 block w-full rounded-md border border-gray-200 py-1 px-2 text-white shadow-sm text-sm focus:border-gray-200 focus:ring-gray-300"
+            }),
+            "estado": forms.Select(attrs={
+                "class": "mt-1 block w-full rounded-md border border-gray-200 py-1 px-2 text-white shadow-sm text-sm focus:border-gray-200 focus:ring-gray-300"
+            }),
+        }
+
+
+class MarcaPermisosForm(forms.ModelForm):
+    class Meta:
+        model = MarcaPermisos
+        fields = ["nombre_permiso", "visible", "orden"]
+        widgets = {
+            "nombre_permiso": forms.TextInput(attrs={
+                "class": "block w-full rounded-md border-gray-200 py-1 px-2 text-white shadow-sm text-sm focus:border-gray-200 focus:ring-gray-300"
+            }),
+            "visible": forms.CheckboxInput(attrs={
+                "class": "h-4 w-4 rounded border-gray-200 py-1 px-2 text-white text-indigo-600 focus:ring-gray-300"
+            }),
+            "orden": forms.NumberInput(attrs={
+                "class": "w-20 rounded-md border-gray-200 py-1 px-2 text-white shadow-sm text-sm focus:border-gray-200 focus:ring-gray-300"
+            }),
+        }
+
+
+MarcaPermisosFormSet = inlineformset_factory(
+    Marca,
+    MarcaPermisos,
+    form=MarcaPermisosForm,
+    extra=0,
     can_delete=True,
 )

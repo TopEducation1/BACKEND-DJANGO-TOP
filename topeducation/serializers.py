@@ -2,6 +2,7 @@
 from django.conf import settings
 from datetime import datetime
 from rest_framework import serializers
+from .models import Marca, MarcaPermisos
 from .models import *
 from django.db.models import F
 from django.utils.html import escape
@@ -479,3 +480,89 @@ class RankingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ranking
         fields = ['id', 'nombre', 'descripcion','image', 'fecha', 'tipo', 'estado', 'entradas']
+
+
+class MarcaPermisosSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MarcaPermisos
+        fields = ("id", "nombre_permiso", "visible", "orden")
+
+
+class MarcaSerializer(serializers.ModelSerializer):
+    permisos = MarcaPermisosSerializer(many=True, required=False)
+
+    class Meta:
+        model = Marca
+        fields = (
+            "id",
+            "nombre",
+            "slug",
+            "descripcion",
+            "logo",
+            "color_principal",
+            "color_secundario",
+            "phrase",
+            "about_us",
+            "banner",
+            "estado",
+            "permisos",
+        )
+
+    def create(self, validated_data):
+        permisos_data = validated_data.pop("permisos", [])
+        marca = Marca.objects.create(**validated_data)
+        for idx, p in enumerate(permisos_data):
+            MarcaPermisos.objects.create(
+                marca=marca,
+                nombre_permiso=p.get("nombre_permiso"),
+                visible=p.get("visible", True),
+                orden=p.get("orden", idx),
+            )
+        return marca
+
+    def update(self, instance, validated_data):
+        permisos_data = validated_data.pop("permisos", None)
+
+        # Campos básicos
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        # Permisos (borramos y recreamos para simplificar)
+        if permisos_data is not None:
+            MarcaPermisos.objects.filter(marca=instance).delete()
+            for idx, p in enumerate(permisos_data):
+                MarcaPermisos.objects.create(
+                    marca=instance,
+                    nombre_permiso=p.get("nombre_permiso"),
+                    visible=p.get("visible", True),
+                    orden=p.get("orden", idx),
+                )
+
+        return instance
+
+class MarcaPermisosPublicSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MarcaPermisos
+        fields = ("id", "nombre_permiso", "visible", "orden")
+
+
+class MarcaPublicSerializer(serializers.ModelSerializer):
+    permisos = MarcaPermisosPublicSerializer(many=True)
+
+    class Meta:
+        model = Marca
+        fields = (
+            "id",
+            "nombre",
+            "slug",
+            "descripcion",
+            "logo",
+            "color_principal",
+            "color_secundario",
+            "estado",
+            "phrase",
+            "about_us",
+            "banner",
+            "permisos",
+        )

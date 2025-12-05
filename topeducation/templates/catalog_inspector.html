@@ -1,4 +1,3 @@
-
 {% extends "base.html" %}
 
 {% block title %} Inspertor de Endpoints {% endblock %}
@@ -14,7 +13,7 @@
         <div class="space-y-3">
           <label class="block text-sm">
             <span class="text-slate-100">Base URL</span>
-            <input id="base-input" type="text" value="https://rgudwgvtgk.execute-api.us-east-1.amazonaws.com/raul/course-information"
+            <input id="base-input" type="text" value="https://erucsg6yrj.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information"
                    class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-indigo-500 bg-neutral-950" />
           </label>
 
@@ -22,13 +21,26 @@
             <span class="text-slate-100">Recurso</span>
             <select id="resource-select"
                     class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-neutral-950 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-indigo-500">
-              <option value="certifications" selected>/certifications</option>
+              <!-- nuevo endpoint principal -->
+              <option value="courses" selected>/courses</option>
+              <!-- otros recursos que ya tenías, por si siguen existiendo -->
+              <option value="certifications">/certifications</option>
               <option value="topics">/topics</option>
               <option value="companies">/companies</option>
               <option value="universities">/universities</option>
               <option value="platforms">/platforms</option>
               <option value="regions">/regions</option>
             </select>
+          </label>
+
+          <!-- API KEY -->
+          <label class="block text-sm">
+            <span class="text-slate-100">API Key (x-api-key)</span>
+            <input id="api-key-input" type="password" placeholder="Pega aquí tu API key…"
+                   class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-indigo-500 bg-neutral-950" />
+            <p class="mt-1 text-xs text-slate-400">
+              Este valor se envía en el header <code>x-api-key</code>.
+            </p>
           </label>
 
           <div class="flex items-center gap-2">
@@ -75,13 +87,36 @@
           <div class="mt-3 flex flex-wrap items-center gap-3">
             <input id="global-search" type="text" placeholder="Búsqueda global…"
                    class="w-full sm:w-64 rounded-lg border border-slate-300 px-3 py-2 text-sm bg-neutral-950 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-indigo-500" />
-            <select id="page-size"
-                    class="rounded-lg border border-slate-300 px-3 py-2 text-sm bg-neutral-950 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-indigo-500">
-              <option value="10">10 por página</option>
-              <option value="25" selected>25 por página</option>
-              <option value="50">50 por página</option>
-              <option value="100">100 por página</option>
-            </select>
+
+            <!-- INPUT: PAGE -->
+            <div class="flex items-center gap-2">
+              <label for="page-input" class="text-sm">Página:</label>
+              <input
+                id="page-input"
+                type="number"
+                min="1"
+                value="1"
+                class="w-16 rounded-lg border border-slate-300 px-2 py-1 text-sm bg-neutral-950 focus:outline-none focus:ring-2 focus:ring-blue-600 text-slate-100"
+              />
+            </div>
+
+            <!-- INPUT: PAGE SIZE -->
+            <div class="flex items-center gap-2">
+              <label for="page-size-input" class="text-sm">Resultados:</label>
+              <input
+                id="page-size-input"
+                type="number"
+                min="1"
+                max="500"
+                value="25"
+                class="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm bg-neutral-950 focus:outline-none focus:ring-2 focus:ring-blue-600 text-slate-100"
+              />
+            </div>
+
+            <button id="apply-pagination" class="px-3 py-1 rounded-lg border border-slate-300 text-sm hover:bg-neutral-950">
+              Aplicar
+            </button>
+
             <span id="count" class="text-sm text-slate-100 ml-auto"></span>
           </div>
         </div>
@@ -107,32 +142,65 @@
 <script>
 (function(){
   // DOM refs
-  const baseInput   = document.getElementById('base-input');
-  const resourceSel = document.getElementById('resource-select');
-  const reloadBtn   = document.getElementById('reload');
-  const copyBtn     = document.getElementById('copy-url');
+  const baseInput     = document.getElementById('base-input');
+  const resourceSel   = document.getElementById('resource-select');
+  const apiKeyInput   = document.getElementById('api-key-input');
+  const reloadBtn     = document.getElementById('reload');
+  const copyBtn       = document.getElementById('copy-url');
 
-  const fullUrl   = document.getElementById('full-url');
-  const metaDiv   = document.getElementById('meta');
-  const rawPre    = document.getElementById('raw-json');
-  const examplePre= document.getElementById('example');
+  const fullUrl       = document.getElementById('full-url');
+  const metaDiv       = document.getElementById('meta');
+  const rawPre        = document.getElementById('raw-json');
+  const examplePre    = document.getElementById('example');
 
-  const theadRow  = document.getElementById('thead-row');
-  const tbody     = document.getElementById('tbody');
+  const theadRow      = document.getElementById('thead-row');
+  const tbody         = document.getElementById('tbody');
 
-  const globalSearch = document.getElementById('global-search');
-  const pageSizeSel  = document.getElementById('page-size');
-  const countLabel   = document.getElementById('count');
-  const prevBtn      = document.getElementById('prev');
-  const nextBtn      = document.getElementById('next');
-  const pageInfo     = document.getElementById('page-info');
+  const globalSearch  = document.getElementById('global-search');
+  const countLabel    = document.getElementById('count');
+  const prevBtn       = document.getElementById('prev');
+  const nextBtn       = document.getElementById('next');
+  const pageInfo      = document.getElementById('page-info');
+
+  const pageInput     = document.getElementById('page-input');
+  const pageSizeInput = document.getElementById('page-size-input');
+  const applyBtn      = document.getElementById('apply-pagination');
 
   // State
   let RAW = [];
   let COLUMNS = [];
   let PAGE = 1;
-  let PAGE_SIZE = parseInt(pageSizeSel.value, 10) || 25;
+  let PAGE_SIZE = 25;
   let serverMeta = { page: null, pageSize: null, total: null };
+
+  // Inicializar inputs con el estado
+  pageInput.value = PAGE;
+  pageSizeInput.value = PAGE_SIZE;
+
+  // Columnas fijas para el endpoint de cursos
+  const COURSE_COLUMNS = [
+    "nombre",
+    "tema_certificacion",
+    "nivel_certificacion",
+    "tiempo_certificacion",
+    "lenguaje_certificacion",
+    "aprendizaje_certificacion",
+    "habilidades_certificacion",
+    "experiencia_certificacion",
+    "testimonios_certificacion",
+    "contenido_certificacion",
+    "modulos_certificacion",
+    "universidad_certificacion",
+    "empresa_certificacion",
+    "plataforma_certificacion",
+    "url_certificacion_original",
+    "video_certificacion",
+    "imagen_final",
+    // columnas agregadas desde arrays globales
+    "temas",
+    "universidades",
+    "plataformas"
+  ];
 
   // Utils
   const toStr = v => v == null ? "" : String(v);
@@ -144,7 +212,12 @@
   const buildExactUrl = () => {
     const base = baseInput.value.replace(/\/+$/,'');
     const res  = resourceSel.value.replace(/^\/+/,'');
-    return `${base}/${res}`;
+    const url  = `${base}/${res}`;
+
+    const u = new URL(url);
+    u.searchParams.set("page", PAGE);
+    u.searchParams.set("pageSize", PAGE_SIZE);
+    return u.toString();
   };
 
   const buildProxyUrl = (externalUrl) => {
@@ -173,14 +246,15 @@
     return Array.from(keys);
   };
 
+  // Para otros endpoints genéricos (no cursos)
   const pickRowsFromResponse = (data) => {
-    // Formato esperado: { message, data: { items: [...], page, pageSize, total }, ok }
     if (Array.isArray(data?.data?.items)) return data.data.items;
-    // Fallbacks
-    if (Array.isArray(data?.results)) return data.results;
-    if (Array.isArray(data?.data))    return data.data;
-    if (Array.isArray(data))          return data;
-    const k = data && typeof data === 'object' ? Object.keys(data).find(x => Array.isArray(data[x])) : null;
+    if (Array.isArray(data?.results))     return data.results;
+    if (Array.isArray(data?.data))        return data.data;
+    if (Array.isArray(data))              return data;
+    const k = data && typeof data === 'object'
+      ? Object.keys(data).find(x => Array.isArray(data[x]))
+      : null;
     return k ? data[k] : [];
   };
 
@@ -193,19 +267,22 @@
     });
   };
 
-  const paginate = (rows) => rows.slice((PAGE-1)*PAGE_SIZE, (PAGE-1)*PAGE_SIZE + PAGE_SIZE);
-
   const renderHead = () => {
     theadRow.innerHTML = COLUMNS.map(c => `<th class="px-3 py-2 font-medium">${c}</th>`).join('');
   };
 
   const renderTable = () => {
     const filtered = applyFilters(RAW);
-    countLabel.textContent = `${filtered.length} registros (de ${RAW.length})`;
-    const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const totalServer = serverMeta.total != null ? serverMeta.total : filtered.length;
+    countLabel.textContent = `${filtered.length} registros (total servidor: ${totalServer})`;
+
+    const baseTotal = serverMeta.total != null ? serverMeta.total : filtered.length;
+    const pageCount = Math.max(1, Math.ceil(baseTotal / PAGE_SIZE));
+
     PAGE = Math.min(PAGE, pageCount);
 
-    const pageRows = paginate(filtered);
+    // Como el servidor ya pagina, usamos lo que llega tal cual
+    const pageRows = filtered;
 
     tbody.innerHTML = pageRows.map(row => {
       const flat = flatten(row);
@@ -216,7 +293,7 @@
         return `<td class="px-3 py-2 align-top">${escapeHtml(String(v))}</td>`;
       }).join('');
       return `<tr class="hover:bg-neutral-950">${tds}</tr>`;
-    }).join('') || `<tr><td class="px-3 py-6 text-slate-200 text-sm" colspan="${COLUMNS.length}">Sin resultados.</td></tr>`;
+    }).join('') || `<tr><td class="px-3 py-6 text-slate-200 text-sm" colspan="${COLUMNS.length || 1}">Sin resultados.</td></tr>`;
 
     prevBtn.disabled = PAGE<=1;
     nextBtn.disabled = PAGE>=pageCount;
@@ -232,10 +309,29 @@
   };
 
   async function load(){
+    // Lee valores actuales de los inputs
+    const inputPage = parseInt(pageInput.value, 10);
+    const inputSize = parseInt(pageSizeInput.value, 10);
+
+    if (!isNaN(inputPage) && inputPage > 0) {
+      PAGE = inputPage;
+    }
+    if (!isNaN(inputSize) && inputSize > 0) {
+      PAGE_SIZE = inputSize;
+    }
+
     const exactUrl = buildExactUrl();
     fullUrl.textContent = exactUrl;
 
-    // Reset UI
+    // Validar API Key
+    const apiKey = apiKeyInput.value.trim();
+    if (!apiKey) {
+      examplePre.textContent = 'Error: Debes ingresar una API Key (x-api-key).';
+      rawPre.textContent = '';
+      return;
+    }
+
+    // Reset UI de carga
     tbody.innerHTML = '';
     theadRow.innerHTML = '';
     examplePre.textContent = 'Cargando…';
@@ -245,30 +341,67 @@
     serverMeta = { page: null, pageSize: null, total: null };
 
     try {
-      const res = await fetch(buildProxyUrl(exactUrl), { headers: { 'Accept': 'application/json' } });
+      const res = await fetch(buildProxyUrl(exactUrl), {
+        headers: {
+          'Accept': 'application/json',
+          'x-api-key': apiKey,
+        }
+      });
+
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
-      // JSON crudo y metadatos del server
+      // JSON crudo
       rawPre.textContent = JSON.stringify(data, null, 2);
+
+      // Metadatos del servidor (si existen en root)
+      if (typeof data.page === 'number')      serverMeta.page = data.page;
+      if (typeof data.pageSize === 'number')  serverMeta.pageSize = data.pageSize;
+      if (typeof data.total === 'number')     serverMeta.total = data.total;
+
+      // O en data.data.*
       if (data?.data) {
         if (typeof data.data.page === 'number')     serverMeta.page = data.data.page;
         if (typeof data.data.pageSize === 'number') serverMeta.pageSize = data.data.pageSize;
         if (typeof data.data.total === 'number')    serverMeta.total = data.data.total;
       }
+
+      // Sincronizamos PAGE y PAGE_SIZE con lo que diga el servidor, si aplica
+      if (serverMeta.page != null) {
+        PAGE = serverMeta.page;
+        pageInput.value = PAGE;
+      }
+      if (serverMeta.pageSize != null) {
+        PAGE_SIZE = serverMeta.pageSize;
+        pageSizeInput.value = PAGE_SIZE;
+      }
+
       renderMeta();
 
-      // Filas
-      const rows = pickRowsFromResponse(data);
-      RAW = Array.isArray(rows) ? rows : [];
+      // LÓGICA ESPECIAL PARA CURSOS (certificaciones + temas/universidades/plataformas)
+      if (Array.isArray(data?.certificaciones)) {
+        const temasNames = (data.temas || []).map(t => t.nombre).join(', ');
+        const universidadesNames = (data.universidades || []).map(u => u.nombre).join(', ');
+        const plataformasNames = (data.plataformas || []).map(p => p.nombre).join(', ');
+
+        RAW = data.certificaciones.map(c => ({
+          ...c,
+          temas: temasNames,
+          universidades: universidadesNames,
+          plataformas: plataformasNames,
+        }));
+
+        COLUMNS = COURSE_COLUMNS.slice(); // columnas fijas
+      } else {
+        // Fallback genérico para otros endpoints
+        const rows = pickRowsFromResponse(data);
+        RAW = Array.isArray(rows) ? rows : [];
+        COLUMNS = guessColumns(RAW);
+      }
 
       examplePre.textContent = RAW[0] ? JSON.stringify(RAW[0], null, 2) : '{}';
 
-      COLUMNS = guessColumns(RAW);
       renderHead();
-
-      PAGE = 1;
-      PAGE_SIZE = parseInt(pageSizeSel.value, 10) || 25;
       renderTable();
     } catch (err) {
       examplePre.textContent = 'Error: ' + err.message;
@@ -280,19 +413,64 @@
   }
 
   // Eventos
-  reloadBtn.addEventListener('click', load);
+  reloadBtn.addEventListener('click', () => {
+    PAGE = 1;
+    pageInput.value = 1;
+    load();
+  });
+
   copyBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(buildExactUrl());
+    const url = buildExactUrl();
+    navigator.clipboard.writeText(url);
     copyBtn.textContent = 'Copiado ✔';
     setTimeout(()=>copyBtn.textContent='Copiar URL exacta', 1200);
   });
-  globalSearch.addEventListener('input', () => { PAGE=1; renderTable(); });
-  pageSizeSel.addEventListener('change', () => { PAGE_SIZE=parseInt(pageSizeSel.value,10)||25; PAGE=1; renderTable(); });
-  prevBtn.addEventListener('click', () => { if (PAGE>1){ PAGE--; renderTable(); } });
-  nextBtn.addEventListener('click', () => { PAGE++; renderTable(); });
 
-  resourceSel.addEventListener('change', load);
-  baseInput.addEventListener('change', load);
+  globalSearch.addEventListener('input', () => { 
+    PAGE = 1; 
+    pageInput.value = 1;
+    renderTable(); 
+  });
+
+  applyBtn.addEventListener('click', () => {
+    const newPage = parseInt(pageInput.value, 10);
+    const newSize = parseInt(pageSizeInput.value, 10);
+
+    if (!isNaN(newPage) && newPage > 0) {
+      PAGE = newPage;
+    }
+    if (!isNaN(newSize) && newSize > 0) {
+      PAGE_SIZE = newSize;
+    }
+
+    load();
+  });
+
+  prevBtn.addEventListener('click', () => { 
+    if (PAGE > 1) { 
+      PAGE--;
+      pageInput.value = PAGE;
+      load();
+    }
+  });
+
+  nextBtn.addEventListener('click', () => { 
+    PAGE++;
+    pageInput.value = PAGE;
+    load();
+  });
+
+  resourceSel.addEventListener('change', () => {
+    PAGE = 1;
+    pageInput.value = 1;
+    load();
+  });
+
+  baseInput.addEventListener('change', () => {
+    PAGE = 1;
+    pageInput.value = 1;
+    load();
+  });
 
   // Init
   load();

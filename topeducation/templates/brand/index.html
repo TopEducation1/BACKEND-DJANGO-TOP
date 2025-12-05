@@ -1,0 +1,74 @@
+{# marca_blanca/marca_list.html #}
+{% extends "base.html" %}
+
+{% block title %} Marca blanca {% endblock %}
+{% block header %} Marca blanca 
+  <p class="text-[16px] text-gray-200">
+    Gestiona las marcas blancas y su configuración de secciones.
+  </p> 
+{% endblock %}
+
+{% block botons %}
+<a href="{% url 'brand_create' %}"
+       class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-blue-700">
+      + Crear marca
+    </a>
+{% endblock %}
+
+{% block content %}
+<div class="p-6 space-y-6">
+  <section class="bg-neutral-900 shadow-sm rounded-lg border border-gray-200">
+    <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-gray-100">Marcas registradas</h2>
+    </div>
+    <div class="overflow-x-auto">
+      {% if marcas %}
+        <table class="min-w-full divide-y divide-gray-200 text-sm">
+          <thead class="bg-gray-900">
+            <tr>
+              <th class="px-4 py-2 text-left font-medium text-gray-200">ID</th>
+              <th class="px-4 py-2 text-left font-medium text-gray-200">Nombre</th>
+              <th class="px-4 py-2 text-left font-medium text-gray-200">Slug</th>
+              <th class="px-4 py-2 text-left font-medium text-gray-200">Estado</th>
+              <th class="px-4 py-2 text-right font-medium text-gray-200">Acciones</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 bg-neutral-700">
+            {% for marca in marcas %}
+              <tr>
+                <td class="px-4 py-2 text-gray-100">{{ marca.id }}</td>
+                <td class="px-4 py-2 text-gray-200">{{ marca.nombre }}</td>
+                <td class="px-4 py-2 text-gray-200">{{ marca.slug }}</td>
+                <td class="px-4 py-2">
+                  <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium
+                               {% if marca.estado == 'activo' %}
+                                 bg-green-50 text-green-700
+                               {% else %}
+                                 bg-gray-100 text-gray-600
+                               {% endif %}">
+                    {{ marca.estado|title }}
+                  </span>
+                </td>
+                <td class="px-4 py-2 text-right space-x-2">
+                  <a href="{% url 'brand_settings' marca.id %}"
+                     class="inline-flex items-center rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-gray-100 hover:bg-blue-700">
+                    Configurar secciones
+                  </a>
+                  <a href="{% url 'brand_update' marca.id %}"
+                     class="inline-flex items-center rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-350">
+                    Editar
+                  </a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="p-4 text-sm text-gray-200">
+          No hay marcas creadas todavía.
+        </div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

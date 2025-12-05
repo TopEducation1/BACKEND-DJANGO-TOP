@@ -1,0 +1,83 @@
+{# marca_blanca/marca_configurar.html #}
+{% extends "base.html" %}
+
+{% block content %}
+<div class="p-6 max-w-4xl mx-auto space-y-6">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-semibold text-gray-100">
+        Configurar secciones · {{ marca.nombre }}
+      </h1>
+      <p class="text-sm text-gray-200">
+        Activa / desactiva y ordena las secciones que se mostrarán en la subpágina de esta marca.
+      </p>
+    </div>
+    <a href="{% url 'brand_list' %}"
+       class="text-sm text-gray-200 hover:text-gray-700">
+      &larr; Volver al listado
+    </a>
+  </div>
+
+  <section class="bg-neutral-700 shadow-sm rounded-lg border border-gray-200">
+    <form method="post" class="space-y-4 p-6">
+      {% csrf_token %}
+      {{ formset.management_form }}
+
+      {% if formset.non_form_errors %}
+        <div class="rounded-md bg-red-50 p-3 text-sm text-red-800 mb-2">
+          {{ formset.non_form_errors }}
+        </div>
+      {% endif %}
+
+      <div class="space-y-2">
+        {% for form in formset %}
+          <div class="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2">
+            <div class="flex-1 flex items-center gap-3">
+              {{ form.id }}
+
+              <div class="flex items-center gap-2">
+                {{ form.visible }}
+                <div class="flex flex-col">
+                  <span class="text-sm font-medium text-gray-100">
+                    {% with key=form.nombre_permiso.value %}
+                      {{ section_labels.key|default:form.nombre_permiso.value }}
+                    {% endwith %}
+                  </span>
+                  <span class="text-xs text-gray-400">
+                    clave: {{ form.nombre_permiso.value }}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-1">
+                <span class="text-xs text-gray-200">Orden</span>
+                {{ form.orden }}
+              </div>
+
+              {% if form.DELETE %}
+                <div class="flex items-center gap-1">
+                  <span class="text-xs text-gray-200">Eliminar</span>
+                  {{ form.DELETE }}
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2 border-t border-gray-100">
+        <a href="{% url 'brand_list' %}"
+           class="inline-flex items-center rounded-md border border-gray-100 px-4 py-2 text-sm font-medium text-gray-950 bg-gray-50 hover:bg-gray-350">
+          Cancelar
+        </a>
+        <button type="submit"
+                class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-blue-700">
+          Guardar configuración
+        </button>
+      </div>
+    </form>
+  </section>
+</div>
+{% endblock %}
