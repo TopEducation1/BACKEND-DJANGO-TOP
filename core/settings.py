@@ -87,7 +87,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware', 
+    #'whitenoise.middleware.WhiteNoiseMiddleware', 
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -163,11 +163,11 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'railway',
-        'USER': 'root',
-        'PASSWORD': 'root',
-        'HOST': 'localhost',
-        'PORT': ''
+        'NAME': str(os.getenv('MYSQL_DATABASE')),
+        'USER': str(os.getenv('MYSQLUSER')),
+        'PASSWORD': str(os.getenv('MYSQLPASSWORD')),
+        'HOST': str(os.getenv('DATABASE_HOST')),
+        'PORT': str(os.getenv('MYSQLPORT'))
     }
 }
 
