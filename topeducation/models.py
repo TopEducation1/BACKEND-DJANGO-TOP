@@ -2,7 +2,7 @@ from django.db import models
 from django.utils.text import slugify
 from django.utils import timezone
 from ckeditor_uploader.fields import RichTextUploadingField
-
+from django.conf import settings
 
 class Habilidades (models.Model):
     nombre = models.CharField(max_length=250)
@@ -41,7 +41,7 @@ class Regiones (models.Model):
 class Universidades (models.Model):
     nombre = models.CharField(max_length=500,null=False, verbose_name='Nombre')
     region_universidad = models.ForeignKey(Regiones, on_delete=models.SET_NULL, null=True, related_name='universidades')
-    univ_img = models.CharField(max_length=200,null=True,verbose_name='Imagen')
+    univ_img = models.CharField(max_length=300,null=True,verbose_name='Imagen')
     univ_fla = models.CharField(max_length=200,null=True,verbose_name='Bandera')
     univ_ico = models.CharField(max_length=100,null=True,verbose_name='Icono')
     univ_est = models.CharField(max_length=50,null=True,verbose_name='Estado')
@@ -317,3 +317,74 @@ class MarcaPermisos(models.Model):
 
     def __str__(self):
         return f"{self.marca.nombre} · {self.nombre_permiso}"
+
+
+class UserBillingProfile(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="billing")
+    stripe_customer_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+
+    # opcional: datos de facturación
+    country = models.CharField(max_length=2, blank=True, null=True)
+    phone = models.CharField(max_length=50, blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"BillingProfile({self.user_id})"
+
+
+class StripeSubscription(models.Model):
+    STATUS_CHOICES = (
+        ("incomplete", "incomplete"),
+        ("incomplete_expired", "incomplete_expired"),
+        ("trialing", "trialing"),
+        ("active", "active"),
+        ("past_due", "past_due"),
+        ("canceled", "canceled"),
+        ("unpaid", "unpaid"),
+        ("paused", "paused"),
+    )
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="stripe_subscriptions")
+    stripe_subscription_id = models.CharField(max_length=255, unique=True, db_index=True)
+
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default="incomplete")
+    price_id = models.CharField(max_length=255, blank=True, null=True)
+    interval = models.CharField(max_length=20, blank=True, null=True)  # month/year
+    current_period_end = models.DateTimeField(blank=True, null=True)
+
+    cancel_at_period_end = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class StripePurchase(models.Model):
+    """Historial de compras / cobros (invoices / payment_intents / checkout)"""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="stripe_purchases")
+
+    stripe_checkout_session_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    stripe_payment_intent_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    stripe_invoice_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+
+    amount_total = models.IntegerField(default=0)     # centavos
+    currency = models.CharField(max_length=10, default="usd")
+    status = models.CharField(max_length=50, default="unknown")  # paid/open/void/etc
+
+    description = models.CharField(max_length=500, blank=True, null=True)
+    hosted_invoice_url = models.URLField(blank=True, null=True)
+    invoice_pdf = models.URLField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class ExternalSyncState(models.Model):
+    key = models.CharField(max_length=100, unique=True)
+    cursor_value = models.CharField(max_length=200, blank=True, default="1")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.key} -> {self.cursor}"

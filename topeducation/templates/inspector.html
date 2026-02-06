@@ -3,96 +3,170 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Cursos (inspector robusto)</title>
+  <title>Inspector de Cursos</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root { --bd:#e5e7eb; --muted:#6b7280; }
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;color:#111;}
-    .grid{display:grid;grid-template-columns:320px 1fr;gap:24px}
-    .card{border:1px solid var(--bd);border-radius:12px;padding:16px;background:#fff}
-    h1{font-size:20px;margin:0 0 16px}
-    h2{font-size:16px;margin:0 0 12px}
-    code,pre{background:#f9fafb;padding:8px;border-radius:8px;display:block;overflow:auto}
-    .muted{color:var(--muted)}
-    .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3}
-    .controls{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-    .controls>*{min-width:180px}
-    input,select{border:1px solid var(--bd);border-radius:8px;padding:6px 8px}
-    button{padding:6px 10px;border:1px solid var(--bd);background:#fff;border-radius:8px;cursor:pointer}
-    button[disabled]{opacity:.5;cursor:default}
-    .sticky-top{position:sticky;top:0;background:#fff;padding-bottom:8px;z-index:3}
-    table{width:100%;border-collapse:collapse}
-    th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #eef2f7;vertical-align:top}
-    th{position:sticky;top:0;background:#fff;z-index:2}
-    .img-cell img{max-width:140px;max-height:90px;border-radius:8px;border:1px solid #f1f5f9;object-fit:cover}
-    .skills-list{margin:0;padding-left:18px}
-    .skills-list li{margin:2px 0}
-    .pagination{display:flex;gap:8px;align-items:center;margin-top:12px}
-  </style>
-</head>
-<body>
-  <h1>Inspector de Cursos <span class="badge">auto-detección</span></h1>
-  <p class="muted">Endpoint externo: <code id="endpoint-label">{{ external }}</code></p>
 
-  <div class="grid">
-    <div class="card">
-      <h2>Opciones</h2>
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        <label>
-          URL externa:
-          <input id="endpoint-input" type="text" value="{{ external }}" />
-        </label>
+  <!-- Tailwind (CDN para herramientas internas). Si ya lo cargas global, puedes quitar esto -->
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-slate-50 text-slate-900">
+  <div class="mx-auto max-w-7xl px-4 py-6">
+    <!-- Header -->
+    <div class="mb-6">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <button id="reload">Recargar</button>
-          <button id="copy-url">Copiar URL con ?endpoint=…</button>
+          <h1 class="text-xl font-semibold tracking-tight">
+            Inspector de Cursos
+            <span class="ml-2 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-100">
+              auto-detección
+            </span>
+            <span class="ml-2 inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-100">
+              API Key via backend
+            </span>
+          </h1>
+          <p class="mt-1 text-sm text-slate-500">
+            Endpoint externo:
+            <code id="endpoint-label" class="rounded-lg bg-white px-2 py-1 text-xs ring-1 ring-slate-200">{{ external }}</code>
+          </p>
         </div>
       </div>
-      <hr style="margin:16px 0;">
-      <h2>Muestra (primer curso mapeado)</h2>
-      <pre id="example">{}</pre>
-      <p class="muted" style="margin-top:8px;">Campos mostrados: <code>id</code>, <code>nombre</code>, <code>imagen</code>, <code>skills.name</code></p>
-      <details style="margin-top:8px;">
-        <summary>Depuración</summary>
-        <pre id="debug-log" style="max-height:200px"></pre>
-      </details>
     </div>
 
-    <div class="card">
-      <div class="sticky-top">
-        <h2>Listado</h2>
-        <div class="controls">
-          <input id="global-search" type="text" placeholder="Búsqueda global…" />
-          <label>ID <input id="f-id" type="text" placeholder="Ej: 123" /></label>
-          <label>Nombre <input id="f-nombre" type="text" placeholder="Contiene…" /></label>
-          <label>Skills <input id="f-skills" type="text" placeholder="Contiene…" /></label>
-          <select id="page-size" title="Tamaño de página">
-            <option value="10">10 por página</option>
-            <option value="25" selected>25 por página</option>
-            <option value="50">50 por página</option>
-            <option value="100">100 por página</option>
-          </select>
-          <span id="count" class="muted"></span>
+    <!-- Layout -->
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <!-- Left / Options -->
+      <div class="lg:col-span-4">
+        <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <h2 class="text-sm font-semibold text-slate-900">Opciones</h2>
+
+          <div class="mt-3 space-y-3">
+            <label class="block">
+              <span class="text-xs font-medium text-slate-600">URL externa</span>
+              <p class="mt-1 text-xs text-slate-500">
+                *No necesitas API Key aquí: el servidor la agrega automáticamente al llamar <code class="rounded bg-slate-50 px-1 py-0.5 ring-1 ring-slate-200">/api/proxy/courses</code>.
+              </p>
+              <input
+                id="endpoint-input"
+                type="text"
+                value="{{ external }}"
+                class="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-0 placeholder:text-slate-400 focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                placeholder="https://..."
+              />
+            </label>
+
+            <div class="flex flex-wrap gap-2">
+              <button
+                id="reload"
+                type="button"
+                class="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm hover:bg-slate-50"
+              >
+                Recargar
+              </button>
+
+              <button
+                id="copy-url"
+                type="button"
+                class="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm hover:bg-slate-50"
+              >
+                Copiar URL con ?endpoint=…
+              </button>
+
+              <button
+                id="run-sync"
+                type="button"
+                class="inline-flex items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800"
+                title="Ejecuta 1 página (50 registros) y avanza el cursor"
+              >
+                Ejecutar Sync (1 página)
+              </button>
+            </div>
+
+            <div class="h-px w-full bg-slate-200/70"></div>
+
+            <h3 class="text-sm font-semibold text-slate-900">Muestra (primer curso mapeado)</h3>
+            <pre id="example" class="max-h-64 overflow-auto rounded-2xl bg-slate-50 p-3 text-xs text-slate-900 ring-1 ring-slate-200">{}</pre>
+
+            <details class="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200">
+              <summary class="cursor-pointer text-sm font-medium text-slate-900">
+                Depuración
+              </summary>
+              <pre id="debug-log" class="mt-2 max-h-64 overflow-auto text-xs text-slate-800"></pre>
+            </details>
+          </div>
         </div>
       </div>
 
-      <div style="overflow:auto; max-height:70vh;">
-        <table id="data-table">
-          <thead>
-            <tr>
-              <th style="width:100px;">ID</th>
-              <th>Nombre</th>
-              <th style="width:160px;">Imagen</th>
-              <th>Skills</th>
-            </tr>
-          </thead>
-          <tbody id="tbody"></tbody>
-        </table>
-      </div>
+      <!-- Right / Table -->
+      <div class="lg:col-span-8">
+        <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <div class="sticky top-0 z-10 -mx-4 -mt-4 rounded-t-2xl bg-white px-4 pt-4">
+            <div class="flex items-center justify-between gap-4">
+              <h2 class="text-sm font-semibold text-slate-900">Listado</h2>
+              <span id="count" class="text-xs text-slate-500"></span>
+            </div>
 
-      <div class="pagination">
-        <button id="prev">Anterior</button>
-        <span id="page-info" class="muted"></span>
-        <button id="next">Siguiente</button>
+            <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-12">
+              <div class="lg:col-span-4">
+                <input id="global-search" type="text" placeholder="Búsqueda global…"
+                  class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" />
+              </div>
+
+              <div class="lg:col-span-2">
+                <input id="f-id" type="text" placeholder="ID (ej: 123)"
+                  class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" />
+              </div>
+
+              <div class="lg:col-span-3">
+                <input id="f-nombre" type="text" placeholder="Nombre contiene…"
+                  class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" />
+              </div>
+
+              <div class="lg:col-span-2">
+                <input id="f-skills" type="text" placeholder="Skills contiene…"
+                  class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" />
+              </div>
+
+              <div class="lg:col-span-1">
+                <select id="page-size" title="Tamaño de página"
+                  class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100">
+                  <option value="10">10</option>
+                  <option value="25" selected>25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="mt-4 h-px w-full bg-slate-200/70"></div>
+          </div>
+
+          <div class="mt-4 overflow-auto">
+            <table class="min-w-full text-left text-sm">
+              <thead class="sticky top-0 bg-white">
+                <tr class="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <th class="w-28 border-b border-slate-200 px-3 py-2">ID</th>
+                  <th class="border-b border-slate-200 px-3 py-2">Nombre</th>
+                  <th class="w-44 border-b border-slate-200 px-3 py-2">Imagen</th>
+                  <th class="border-b border-slate-200 px-3 py-2">Skills</th>
+                </tr>
+              </thead>
+              <tbody id="tbody" class="divide-y divide-slate-100"></tbody>
+            </table>
+          </div>
+
+          <div class="mt-4 flex items-center justify-between gap-3">
+            <button id="prev" type="button"
+              class="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed">
+              Anterior
+            </button>
+            <span id="page-info" class="text-xs text-slate-500"></span>
+            <button id="next" type="button"
+              class="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed">
+              Siguiente
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -103,6 +177,7 @@
   const endpointLabel = document.getElementById('endpoint-label');
   const reloadBtn = document.getElementById('reload');
   const copyBtn = document.getElementById('copy-url');
+  const runSyncBtn = document.getElementById('run-sync');
 
   const examplePre = document.getElementById('example');
   const debugLog = document.getElementById('debug-log');
@@ -128,36 +203,46 @@
   const escapeHtml = (s) => toStr(s)
     .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
     .replaceAll('"','&quot;').replaceAll("'","&#039;");
-  const log = (...args) => { debugLog.textContent += args.map(a => typeof a==='string'?a:JSON.stringify(a,null,2)).join(' ') + "\n"; };
 
+  const log = (...args) => {
+    debugLog.textContent += args
+      .map(a => typeof a === 'string' ? a : JSON.stringify(a, null, 2))
+      .join(' ') + "\n";
+    debugLog.scrollTop = debugLog.scrollHeight;
+  };
+
+  // ✅ SIEMPRE a través del backend (API Key via env)
   const buildProxyUrl = (externalUrl) => {
-    const u = new URL(window.location.origin + '/api/proxy');
+    const u = new URL(window.location.origin + '/api/proxy/courses');
     u.searchParams.set('url', externalUrl);
     return u.toString();
   };
 
-  // Busca recursivamente un arreglo que parezca "lista de cursos"
+  function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return '';
+  }
+
   function findCoursesArray(node){
     const NAME_KEYS = ['nombre','name','title'];
     const hasNameLike = (obj) => NAME_KEYS.some(k => typeof obj?.[k] === 'string');
     const hasSkills = (obj) => Array.isArray(obj?.skills) || typeof obj?.skills === 'object';
 
     const candidates = [];
-
-    function walk(n, path='root'){
+    function walk(n){
       if (Array.isArray(n)) {
-        // ¿es un array de objetos "curso"?
         if (n.length && typeof n[0] === 'object' && (hasNameLike(n[0]) || hasSkills(n[0]))) {
-          candidates.push({path, value:n});
+          candidates.push({value:n});
         }
-        // igual recorre elementos
-        n.forEach((v,i)=>walk(v, path+'['+i+']'));
+        n.forEach(walk);
       } else if (n && typeof n === 'object') {
-        for (const [k,v] of Object.entries(n)) walk(v, path+'.'+k);
+        Object.values(n).forEach(walk);
       }
     }
     walk(node);
-    // prioridad: arrays más grandes con objetos que tengan skills
+
     candidates.sort((a,b)=>{
       const aScore = (Array.isArray(a.value)?a.value.length:0) + (hasSkills(a.value?.[0])?1000:0);
       const bScore = (Array.isArray(b.value)?b.value.length:0) + (hasSkills(b.value?.[0])?1000:0);
@@ -166,7 +251,6 @@
     return candidates[0]?.value || [];
   }
 
-  // Mapea un item curso a {id, nombre, imagen, skills}
   function mapCourse(item){
     const id = item?.id ?? item?.courseId ?? item?.slug ?? '';
     const nombre = item?.nombre ?? item?.name ?? item?.title ?? '';
@@ -175,13 +259,11 @@
     return { id, nombre, imagen, skills };
   }
 
-  // Extrae solo los "name" dentro de skills (array de objetos {id,name,isActive})
   function extractSkillNames(skills){
     if (!skills) return [];
     if (Array.isArray(skills)) {
       return skills.map(s => s && typeof s==='object' ? s.name : null).filter(Boolean).map(String);
     }
-    // si viene como objeto, por si acaso (poco probable en tu caso)
     const names = [];
     const walk = (n)=>{
       if (!n) return;
@@ -198,7 +280,7 @@
   function renderSkills(skills){
     const names = extractSkillNames(skills);
     if (!names.length) return '';
-    return `<ul class="skills-list">${names.map(n=>`<li>${escapeHtml(n)}</li>`).join('')}</ul>`;
+    return `<ul class="ml-4 list-disc space-y-0.5 text-xs text-slate-700">${names.map(n=>`<li>${escapeHtml(n)}</li>`).join('')}</ul>`;
   }
 
   function applyFilters(rows){
@@ -221,24 +303,32 @@
     });
   }
 
-  function paginate(rows){ const start=(PAGE-1)*PAGE_SIZE; return rows.slice(start, start+PAGE_SIZE); }
+  function paginate(rows){
+    const start=(PAGE-1)*PAGE_SIZE;
+    return rows.slice(start, start+PAGE_SIZE);
+  }
 
   function renderTable(){
     const filtered = applyFilters(RAW);
     countLabel.textContent = `${filtered.length} registros (de ${RAW.length})`;
+
     const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     PAGE = Math.min(PAGE, pageCount);
 
     const pageRows = paginate(filtered);
     tbody.innerHTML = pageRows.map(r=>{
-      const imgHtml = r.imagen ? `<div class="img-cell"><img src="${escapeHtml(r.imagen)}" alt="${escapeHtml(r.nombre||'img')}" loading="lazy"></div>` : '';
-      return `<tr>
-        <td>${escapeHtml(toStr(r.id))}</td>
-        <td>${escapeHtml(toStr(r.nombre))}</td>
-        <td>${imgHtml}</td>
-        <td>${renderSkills(r.skills)}</td>
+      const imgHtml = r.imagen
+        ? `<div class="flex items-center"><img src="${escapeHtml(r.imagen)}" alt="${escapeHtml(r.nombre||'img')}" loading="lazy"
+             class="h-[90px] w-[140px] rounded-xl border border-slate-200 object-cover bg-white" /></div>`
+        : `<span class="text-xs text-slate-400">—</span>`;
+
+      return `<tr class="align-top">
+        <td class="px-3 py-3 text-xs text-slate-600">${escapeHtml(toStr(r.id))}</td>
+        <td class="px-3 py-3 font-medium text-slate-900">${escapeHtml(toStr(r.nombre))}</td>
+        <td class="px-3 py-3">${imgHtml}</td>
+        <td class="px-3 py-3">${renderSkills(r.skills)}</td>
       </tr>`;
-    }).join('') || `<tr><td colspan="4" class="muted">Sin resultados.</td></tr>`;
+    }).join('') || `<tr><td colspan="4" class="px-3 py-6 text-sm text-slate-500">Sin resultados.</td></tr>`;
 
     prevBtn.disabled = PAGE<=1;
     nextBtn.disabled = PAGE>=pageCount;
@@ -251,40 +341,74 @@
     endpointLabel.textContent = external || '—';
     tbody.innerHTML = '';
     examplePre.textContent = 'Cargando…';
+
     try {
       const res = await fetch(buildProxyUrl(external), { headers: { 'Accept': 'application/json' } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      // Si el externo exige API key y el backend no la está enviando,
+      // normalmente volverá 401/403. Te lo mostramos claro aquí.
+      if (!res.ok) {
+        const text = await res.text().catch(()=> '');
+        let msg = `HTTP ${res.status}`;
+        if (res.status === 401 || res.status === 403) {
+          msg += " (probable API Key faltante/incorrecta en el backend)";
+        }
+        log("Proxy error raw:", text);
+        throw new Error(msg);
+      }
+
       const data = await res.json();
 
-      // 1) intenta rutas comunes
       let arr = [];
       if (Array.isArray(data?.data?.coursParsed)) arr = data.data.coursParsed;
       else if (Array.isArray(data?.coursParsed)) arr = data.coursParsed;
-      else {
-        // 2) búsqueda recursiva como fallback
-        arr = findCoursesArray(data);
-      }
+      else arr = findCoursesArray(data);
 
       log('Ruta detectada, tamaño:', Array.isArray(arr) ? arr.length : 0);
 
       RAW = (Array.isArray(arr) ? arr : []).map(mapCourse);
-
       examplePre.textContent = RAW[0] ? JSON.stringify(RAW[0], null, 2) : '{}';
+
       PAGE=1; PAGE_SIZE=parseInt(pageSizeSel.value,10)||25;
       renderTable();
-
-      if (!RAW.length) {
-        log('Aviso:', 'No se detectó una lista de cursos. Muestra el JSON raíz para revisar:');
-        log(data);
-      }
     } catch(err) {
-      examplePre.textContent = 'Error: '+err.message;
-      log('Error en fetch:', String(err));
+      examplePre.textContent = 'Error: ' + err.message;
+      log('Error:', String(err));
       RAW=[]; renderTable();
     }
   }
 
+  async function runSyncOnce(){
+    runSyncBtn.disabled = true;
+    const originalText = runSyncBtn.textContent;
+    runSyncBtn.textContent = 'Ejecutando…';
+
+    try {
+      const res = await fetch('/api/sync/courses/run', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'X-CSRFToken': getCookie('csrftoken'),
+        }
+      });
+
+      const data = await res.json().catch(()=> ({}));
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+
+      log('SYNC OK:', data);
+      await load();
+    } catch (err) {
+      log('SYNC ERROR:', String(err));
+      alert('Error ejecutando sync: ' + err.message);
+    } finally {
+      runSyncBtn.disabled = false;
+      runSyncBtn.textContent = originalText;
+    }
+  }
+
   reloadBtn.addEventListener('click', load);
+  runSyncBtn.addEventListener('click', runSyncOnce);
+
   copyBtn.addEventListener('click', () => {
     const u = new URL(window.location.href);
     u.searchParams.set('endpoint', externalInput.value.trim());
@@ -292,6 +416,7 @@
     copyBtn.textContent = 'Copiado ✔';
     setTimeout(()=>copyBtn.textContent = 'Copiar URL con ?endpoint=…',1200);
   });
+
   [globalSearch,fId,fNombre,fSkills].forEach(el=>el.addEventListener('input', ()=>{PAGE=1;renderTable();}));
   pageSizeSel.addEventListener('change', ()=>{PAGE_SIZE=parseInt(pageSizeSel.value,10)||25;PAGE=1;renderTable();});
   prevBtn.addEventListener('click', ()=>{if(PAGE>1){PAGE--;renderTable();}});

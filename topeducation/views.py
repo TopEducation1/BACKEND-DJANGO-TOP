@@ -1,6 +1,14 @@
+from __future__ import annotations
+
+from topeducation.inspectors.courses_inspector import fetch_and_parse_page
+from topeducation.models import ExternalSyncState
+
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 import re
+
+from django.contrib.admin.views.decorators import staff_member_required
+
 from django.shortcuts import render, redirect
 from django.contrib import messages
 from .forms import *
@@ -14,14 +22,13 @@ from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework import status
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework.response import Response
 from rest_framework.decorators import api_view
 import json
-from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.core.paginator import EmptyPage, PageNotAnInteger
+from django.core.paginator import Paginator
 from rest_framework.pagination import PageNumberPagination
 from django.views import View
 from django.http import HttpResponse
@@ -37,7 +44,6 @@ from django.db.models import Count
 from django.db.models import Prefetch
 
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden
-from django.views.decorators.http import require_GET
 import requests
 from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
 
@@ -54,6 +60,43 @@ from .models import Marca, MarcaPermisos
 from .forms import MarcaForm, MarcaPermisosFormSet
 from .serializers import MarcaPublicSerializer
 
+from django.views.decorators.csrf import csrf_exempt
+
+from topeducation.services.import_courses import ingest_course_payload
+
+from django.contrib.auth.decorators import login_required
+import stripe
+from django.contrib.auth import get_user_model
+from .models import UserBillingProfile, StripeSubscription, StripePurchase
+
+
+from django.views.decorators.http import require_POST, require_GET
+from django.views.decorators.csrf import ensure_csrf_cookie
+
+from django.contrib.auth.models import User
+from django.middleware.csrf import get_token
+
+from .utils.auth import api_login_required
+
+
+from django.contrib.auth.tokens import default_token_generator
+from django.core.mail import send_mail
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+
+
+
+@staff_member_required(login_url="/signin/")
+def admin_purchases_page(request):
+    # opcional: si quieres solo staff
+    if not request.user.is_staff:
+        # puedes renderizar un 403 bonito o redirigir
+        return render(request, "404.html", status=403)
+
+    return render(request, "bussines/purchases.html", {})
 
 def inicio(request):
     return HttpResponse("<h1>Bienvenido a Top.Education</h1>")
@@ -598,13 +641,6 @@ def catalog_inspector(request):
 
 @require_GET
 def proxy_json(request):
-    """
-    Proxy seguro (GET) con whitelist por host.
-    Acepta ?url=https://... y reencadena el resto de params (?q, ?page, etc.)
-    Además:
-    - Reenvía el header x-api-key (si viene del front)
-    - O usa headers definidos en settings.PROXY_HEADERS para ese host
-    """
     raw_url = request.GET.get("url", "").strip()
     if not raw_url:
         return HttpResponseBadRequest("Missing 'url' param.")
@@ -628,49 +664,33 @@ def proxy_json(request):
     final_query = urlencode(upstream_qs, doseq=True)
     final_url = urlunparse(parsed._replace(query=final_query))
 
-    # --- HEADERS HACIA EL ENDPOINT EXTERNO ---
-
-    # Base: siempre pedimos JSON
+    # ✅ Headers upstream
     headers = {"Accept": "application/json"}
 
-    # 1) Headers configurados en settings.PROXY_HEADERS (por host)
-    #    Ej: PROXY_HEADERS = {"erucsg6yrj.execute-api.us-east-1.amazonaws.com": {"x-api-key": "xxxx"}}
-    host_headers = getattr(settings, "PROXY_HEADERS", {}).get(host, {})
-    headers.update(host_headers)
+    # 1) headers fijos desde settings (por host)
+    headers.update(getattr(settings, "PROXY_HEADERS", {}).get(host, {}))
 
-    # 2) Si el cliente envía x-api-key en el request (desde el front),
-    #    la respetamos y la usamos para el upstream (sobreescribe la de PROXY_HEADERS si existiera).
+    # 2) ✅ reenviar x-api-key del navegador si viene (case-insensitive)
     api_key = request.headers.get("x-api-key") or request.META.get("HTTP_X_API_KEY")
     if api_key:
         headers["x-api-key"] = api_key
 
     try:
-        resp = requests.get(
-            final_url,
-            headers=headers,
-            timeout=getattr(settings, "PROXY_TIMEOUT", 15),
-        )
+        resp = requests.get(final_url, headers=headers, timeout=getattr(settings, "PROXY_TIMEOUT", 20))
     except requests.RequestException as e:
-        return JsonResponse(
-            {"error": "upstream_unreachable", "detail": str(e)},
-            status=502,
-        )
+        return JsonResponse({"error": "upstream_unreachable", "detail": str(e)}, status=502)
 
+    # si upstream devuelve error real, pásalo tal cual
     if resp.status_code >= 400:
         return JsonResponse(
-            {
-                "error": "upstream_error",
-                "status": resp.status_code,
-                "url": final_url,
-                "body": resp.text,
-            },
-            status=502,
+            {"error": "upstream_error", "status": resp.status_code, "url": final_url, "response": resp.text},
+            status=502
         )
 
     try:
         data = resp.json()
     except ValueError:
-        return JsonResponse({"error": "invalid_json_from_upstream"}, status=502)
+        return JsonResponse({"error": "invalid_json_from_upstream", "response": resp.text[:4000]}, status=502)
 
     return JsonResponse(data, safe=not isinstance(data, list))
 
@@ -1242,3 +1262,953 @@ class MarcaPublicBySlugView(generics.RetrieveAPIView):
     permission_classes = [drf_permissions.AllowAny]
     lookup_field = "slug"
 
+@csrf_exempt
+@require_POST
+def sync_courses_from_external(request):
+    """
+    Sincroniza cursos desde el endpoint externo (AWS)
+    Body opcional:
+    {
+      "page": 1,
+      "pageSize": 25
+    }
+    """
+
+    try:
+        body = json.loads(request.body or "{}")
+    except ValueError:
+        body = {}
+
+    page = body.get("page", 1)
+    page_size = body.get("pageSize", 25)
+
+    # Endpoint externo
+    base_url = "https://erucsg6yrj.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information/courses"
+
+    params = {
+        "page": page,
+        "pageSize": page_size,
+    }
+
+    headers = {
+        "Accept": "application/json",
+        "x-api-key": settings.AWS_COURSES_API_KEY,
+    }
+
+    try:
+        resp = requests.get(
+            base_url,
+            headers=headers,
+            params=params,
+            timeout=20,
+        )
+    except requests.RequestException as e:
+        return JsonResponse(
+            {"ok": False, "error": "upstream_unreachable", "detail": str(e)},
+            status=502,
+        )
+
+    if resp.status_code != 200:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "upstream_error",
+                "status": resp.status_code,
+                "response": resp.text,
+            },
+            status=502,
+        )
+
+    try:
+        payload = resp.json()
+        print("PAYLOAD KEYS:", payload.keys())
+        print("ITEMS LEN:", len(payload.get("items", [])))
+        if payload.get("items"):
+            print("FIRST ITEM KEYS:", payload["items"][0].keys())
+    except ValueError:
+        return JsonResponse(
+            {"ok": False, "error": "invalid_json_from_upstream"},
+            status=502,
+        )
+
+    # 🔄 Ingestión en BD
+    try:
+        result = ingest_course_payload(payload)
+    except Exception as e:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "ingestion_failed",
+                "detail": str(e),
+            },
+            status=500,
+        )
+
+    items_len = len(payload.get("items", [])) if isinstance(payload.get("items"), list) else None
+    return JsonResponse({
+        "ok": True,
+        "page": page,
+        "pageSize": page_size,
+        "items_len": items_len,
+        "summary": result,
+    })
+
+## Integración de Stripe
+User = get_user_model()
+stripe.api_key = settings.STRIPE_SECRET_KEY
+
+
+def _ts_to_dt(ts):
+    """Stripe timestamps (unix) -> datetime aware"""
+    if not ts:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    except Exception:
+        return None
+
+
+def _safe_get_email(session_obj):
+    # checkout.session: customer_details.email (normal) o customer_email (legacy)
+    cd = session_obj.get("customer_details") or {}
+    return (cd.get("email") or session_obj.get("customer_email") or "").strip() or None
+
+
+def _find_user_from_session(session_obj):
+    """
+    Encuentra usuario de forma robusta:
+    1) client_reference_id (ideal)
+    2) metadata.user_id (si lo mandaste)
+    3) email (customer_details.email / customer_email)
+    """
+    # 1) client_reference_id
+    rid = session_obj.get("client_reference_id")
+    if rid:
+        try:
+            return User.objects.filter(id=int(rid)).first()
+        except Exception:
+            return User.objects.filter(id=rid).first()
+
+    # 2) metadata.user_id
+    meta = session_obj.get("metadata") or {}
+    mid = meta.get("user_id")
+    if mid:
+        try:
+            return User.objects.filter(id=int(mid)).first()
+        except Exception:
+            return User.objects.filter(id=mid).first()
+
+    # 3) email
+    email = _safe_get_email(session_obj)
+    if email:
+        # ajusta si tu auth usa username distinto; aquí asumimos email en campo email
+        return User.objects.filter(email__iexact=email).first()
+
+    return None
+
+
+def _get_price_id_from_subscription_obj(sub_obj):
+    """
+    sub_obj.items.data[0].price.id -> price_id
+    """
+    try:
+        items = (sub_obj.get("items") or {}).get("data") or []
+        if not items:
+            return None
+        price = (items[0].get("price") or {})
+        return price.get("id")
+    except Exception:
+        return None
+
+
+def _get_interval_from_subscription_obj(sub_obj):
+    """
+    sub_obj.items.data[0].price.recurring.interval -> month/year
+    """
+    try:
+        items = (sub_obj.get("items") or {}).get("data") or []
+        if not items:
+            return None
+        price = (items[0].get("price") or {})
+        recurring = price.get("recurring") or {}
+        return recurring.get("interval")
+    except Exception:
+        return None
+
+
+def _upsert_subscription(user, subscription_id):
+    if not subscription_id:
+        return None
+
+    try:
+        sub = stripe.Subscription.retrieve(subscription_id, expand=["items.data.price"])
+    except Exception as e:
+        print("❌ Error retrieving subscription:", subscription_id, str(e))
+        return None
+
+    status = sub.get("status") or "incomplete"
+    current_period_end = _ts_to_dt(sub.get("current_period_end"))
+    cancel_at_period_end = bool(sub.get("cancel_at_period_end") or False)
+
+    price_id = _get_price_id_from_subscription_obj(sub)
+    interval = _get_interval_from_subscription_obj(sub)
+
+    try:
+        obj, _created = StripeSubscription.objects.update_or_create(
+            stripe_subscription_id=subscription_id,
+            defaults={
+                "user": user,
+                "status": status,
+                "price_id": price_id,
+                "interval": interval,
+                "current_period_end": current_period_end,
+                "cancel_at_period_end": cancel_at_period_end,
+            },
+        )
+        return obj
+    except Exception as e:
+        print("❌ Error saving StripeSubscription:", str(e))
+        return None
+
+
+def _ensure_billing_profile(user, customer_id=None):
+    profile, _ = UserBillingProfile.objects.get_or_create(user=user)
+    if customer_id and profile.stripe_customer_id != customer_id:
+        profile.stripe_customer_id = customer_id
+        profile.save(update_fields=["stripe_customer_id"])
+    return profile
+
+
+@require_POST
+@csrf_exempt
+def stripe_webhook(request):
+    print("✅ WEBHOOK HIT")
+    print("SIG HEADER:", request.META.get("HTTP_STRIPE_SIGNATURE", "")[:30], "...")
+    print("PAYLOAD FIRST 200:", (request.body or b"")[:200])
+    payload = request.body
+    sig_header = request.META.get("HTTP_STRIPE_SIGNATURE", "")
+
+    # 1) Validar firma
+    try:
+        event = stripe.Webhook.construct_event(
+            payload=payload,
+            sig_header=sig_header,
+            secret=settings.STRIPE_WEBHOOK_SECRET,
+        )
+    except Exception:
+        return HttpResponse(status=400)
+
+    event_type = event.get("type")
+    obj = (event.get("data") or {}).get("object") or {}
+
+    # --------------------------------------------
+    # A) checkout.session.completed
+    # --------------------------------------------
+    if event_type == "checkout.session.completed":
+        
+
+        session = obj
+        # Idempotencia (Stripe reintenta webhooks)
+        session_id = session.get("id")
+        if session_id and StripePurchase.objects.filter(stripe_checkout_session_id=session_id).exists():
+            return HttpResponse(status=200)
+
+        user = _find_user_from_session(session)
+        print("session.id:", session.get("id"))
+        print("client_reference_id:", session.get("client_reference_id"))
+        print("metadata:", session.get("metadata"))
+        print("customer_details:", session.get("customer_details"))
+        print("customer_email:", session.get("customer_email"))
+        print("found user:", user.id if user else None)
+
+        if not user:
+            # no bloquees el webhook: solo no guardes
+            return HttpResponse(status=200)
+
+        customer_id = session.get("customer")
+        subscription_id = session.get("subscription")
+
+        _ensure_billing_profile(user, customer_id=customer_id)
+
+        # Guardar compra base (checkout)
+        StripePurchase.objects.create(
+            user=user,
+            stripe_checkout_session_id=session_id,
+            stripe_payment_intent_id=session.get("payment_intent"),
+            amount_total=session.get("amount_total") or 0,
+            currency=session.get("currency") or "usd",
+            status=session.get("payment_status") or "unknown",
+            description="Checkout completed",
+        )
+
+        # Guardar/actualizar suscripción
+        if subscription_id:
+            _upsert_subscription(user, subscription_id)
+
+        return HttpResponse(status=200)
+
+    # --------------------------------------------
+    # B) invoice paid / payment succeeded
+    # (esto es el "historial real" de cobros)
+    # --------------------------------------------
+    if event_type in ("invoice.paid", "invoice.payment_succeeded"):
+        invoice = obj
+        invoice_id = invoice.get("id")
+        customer_id = invoice.get("customer")
+        subscription_id = invoice.get("subscription")
+
+        # buscar user por customer
+        profile = (
+            UserBillingProfile.objects
+            .filter(stripe_customer_id=customer_id)
+            .select_related("user")
+            .first()
+        )
+        if not profile:
+            return HttpResponse(status=200)
+
+        user = profile.user
+
+        # idempotencia por invoice_id
+        if invoice_id and StripePurchase.objects.filter(stripe_invoice_id=invoice_id).exists():
+            # aun así actualizamos subs por si cambió
+            if subscription_id:
+                _upsert_subscription(user, subscription_id)
+            return HttpResponse(status=200)
+
+        StripePurchase.objects.update_or_create(
+            user=user,
+            stripe_invoice_id=invoice_id,
+            defaults={
+                "stripe_payment_intent_id": invoice.get("payment_intent"),
+                "amount_total": invoice.get("amount_paid") or invoice.get("total") or 0,
+                "currency": invoice.get("currency") or "usd",
+                "status": invoice.get("status") or "unknown",
+                "description": (invoice.get("description") or "Invoice paid")[:500],
+                "hosted_invoice_url": invoice.get("hosted_invoice_url"),
+                "invoice_pdf": invoice.get("invoice_pdf"),
+            },
+        )
+
+        if subscription_id:
+            _upsert_subscription(user, subscription_id)
+
+        return HttpResponse(status=200)
+
+    # --------------------------------------------
+    # C) subscription updated/deleted
+    # --------------------------------------------
+    if event_type in ("customer.subscription.updated", "customer.subscription.deleted"):
+        sub_obj = obj
+        subscription_id = sub_obj.get("id")
+        customer_id = sub_obj.get("customer")
+
+        profile = (
+            UserBillingProfile.objects
+            .filter(stripe_customer_id=customer_id)
+            .select_related("user")
+            .first()
+        )
+        if not profile:
+            return HttpResponse(status=200)
+
+        _upsert_subscription(profile.user, subscription_id)
+        return HttpResponse(status=200)
+
+    # --------------------------------------------
+    # D) ignorar otros eventos (si quieres log)
+    # --------------------------------------------
+    return HttpResponse(status=200)
+
+PRICE_MAP = {
+    "yearly": os.environ.get("STRIPE_PRICE_YEARLY"),
+    "monthly": os.environ.get("STRIPE_PRICE_MONTHLY"),
+}
+@csrf_exempt
+@require_POST
+def create_checkout_session(request):
+    """
+    Crea sesión de Checkout (suscripción).
+    - Si el usuario está logueado: amarra con client_reference_id y customer_email
+    - Si ya existe stripe_customer_id: reusa customer
+    - Agrega metadata útil para el webhook/DB
+    """
+    try:
+        body = json.loads(request.body or "{}")
+    except ValueError:
+        body = {}
+
+    plan = (body.get("plan") or "yearly").lower().strip()
+    price_id = PRICE_MAP.get(plan)
+
+    if not price_id or not str(price_id).startswith("price_"):
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "invalid_price_id",
+                "detail": f"Price ID inválido para plan={plan}.",
+            },
+            status=400,
+        )
+
+    # valida que exista en Stripe (modo test/live según tu STRIPE_SECRET_KEY)
+    try:
+        price_obj = stripe.Price.retrieve(price_id)
+    except stripe.error.InvalidRequestError as e:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "price_not_found",
+                "detail": str(e),
+                "price_id": price_id,
+            },
+            status=400,
+        )
+
+    # -------- Asociar user si hay sesión --------
+    user = getattr(request, "user", None)
+
+    client_reference_id = None
+    customer_email = None
+    existing_customer_id = None
+
+    if user and getattr(user, "is_authenticated", False):
+        client_reference_id = str(user.id)
+        customer_email = getattr(user, "email", None) or None
+
+        profile = UserBillingProfile.objects.filter(user=user).first()
+        existing_customer_id = profile.stripe_customer_id if profile else None
+    else:
+        # si NO hay sesión, puedes mandar email desde el front
+        customer_email = (body.get("email") or "").strip() or None
+
+    # URLs (asegúrate que existan y estén bien)
+    success_url = getattr(settings, "STRIPE_SUCCESS_URL", "http://localhost:3000/success?session_id={CHECKOUT_SESSION_ID}")
+    cancel_url = getattr(settings, "STRIPE_CANCEL_URL", "http://localhost:3000/cancel")
+
+    # Interval (opcional pero útil para tu UI / DB)
+    interval = None
+    try:
+        # muchas veces viene en price.recurring.interval
+        interval = (price_obj.get("recurring") or {}).get("interval")
+    except Exception:
+        interval = None
+
+    try:
+        kwargs = dict(
+            mode="subscription",
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=success_url,
+            cancel_url=cancel_url,
+
+            # opcionales útiles
+            allow_promotion_codes=True,
+            # billing_address_collection="auto",  # si quieres capturar address
+            # automatic_tax={"enabled": True},     # si vas a manejar impuestos automáticos
+
+            # ✅ metadata que vas a usar en webhooks (debug + DB)
+            metadata={
+                "plan": plan,
+                "price_id": price_id,
+                "interval": interval or "",
+                "user_id": client_reference_id or "",
+                "email": customer_email or "",
+            },
+
+            # ✅ metadata también en la suscripción
+            subscription_data={
+                "metadata": {
+                    "plan": plan,
+                    "price_id": price_id,
+                    "interval": interval or "",
+                    "user_id": client_reference_id or "",
+                    "email": customer_email or "",
+                }
+            },
+        )
+
+        # ✅ Link con usuario
+        if client_reference_id:
+            kwargs["client_reference_id"] = client_reference_id
+
+        # ⚠️ Stripe no deja enviar customer_email si envías customer (existing_customer_id)
+        # Por eso:
+        if existing_customer_id:
+            kwargs["customer"] = existing_customer_id
+        elif customer_email:
+            kwargs["customer_email"] = customer_email
+
+        session = stripe.checkout.Session.create(**kwargs)
+        return JsonResponse({"ok": True, "url": session.url, "session_id": session.id})
+
+    except stripe.error.StripeError as e:
+        return JsonResponse(
+            {"ok": False, "error": "stripe_error", "detail": str(e)},
+            status=400,
+        )
+
+
+def _json(request):
+    try:
+        return json.loads(request.body or "{}")
+    except Exception:
+        return {}
+
+
+@csrf_exempt
+@require_POST
+def auth_register(request):
+    data = _json(request)
+
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    full_name = (data.get("full_name") or "").strip()
+
+    if not email or not password:
+        return JsonResponse({"ok": False, "error": "missing_fields"}, status=400)
+
+    # username: usamos email para simplificar
+    username = email
+
+    if User.objects.filter(username=username).exists():
+        return JsonResponse({"ok": False, "error": "user_exists"}, status=400)
+
+    user = User.objects.create_user(
+        username=username,
+        email=email,
+        password=password,
+    )
+
+    # guardamos nombre en first_name / last_name rápido
+    if full_name:
+        parts = full_name.split(" ", 1)
+        user.first_name = parts[0]
+        if len(parts) > 1:
+            user.last_name = parts[1]
+        user.save()
+
+    return JsonResponse({
+        "ok": True,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "full_name": (user.first_name + " " + user.last_name).strip(),
+        }
+    })
+
+
+@csrf_exempt
+@require_POST
+def auth_login(request):
+    body = json.loads(request.body or "{}")
+    email = body.get("email")
+    password = body.get("password")
+
+    user = authenticate(request, username=email, password=password)  # depende de tu auth
+    if not user:
+        return JsonResponse({"ok": False, "error": "invalid_credentials"}, status=400)
+
+    login(request, user)  # ✅ esto crea sessionid
+    return JsonResponse({"ok": True})
+
+
+
+@csrf_exempt
+@require_POST
+def auth_logout(request):
+    logout(request)
+    return JsonResponse({"ok": True})
+
+
+@api_login_required
+def account_me(request):
+    u = request.user
+
+    billing = UserBillingProfile.objects.filter(user=u).first()
+    sub = StripeSubscription.objects.filter(user=u).order_by("-updated_at").first()
+
+    return JsonResponse({
+        "ok": True,
+        "data": {
+            "id": u.id,
+            "email": u.email,
+            "full_name": u.get_full_name() or u.username,
+            "stripe_customer_id": getattr(billing, "stripe_customer_id", None),
+            "subscription_status": getattr(sub, "status", None),
+            "plan": getattr(sub, "interval", None),
+            "price_id": getattr(sub, "price_id", None),
+            "current_period_end": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
+            "cancel_at_period_end": bool(sub.cancel_at_period_end) if sub else False,
+        }
+    })
+
+@api_login_required
+def account_purchases(request):
+    qs = StripePurchase.objects.filter(user=request.user).order_by("-created_at")[:100]
+
+    items = []
+    for p in qs:
+        items.append({
+            "id": p.id,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "type": "invoice" if p.stripe_invoice_id else "checkout",
+            "amount": p.amount_total,
+            "currency": p.currency,
+            "status": p.status,
+            "session_id": p.stripe_checkout_session_id,
+            "invoice_id": p.stripe_invoice_id,
+            "payment_intent": p.stripe_payment_intent_id,
+            "hosted_invoice_url": p.hosted_invoice_url,
+            "invoice_pdf": p.invoice_pdf,
+            "description": p.description,
+        })
+
+    return JsonResponse({"ok": True, "data": items})
+
+
+
+@require_GET
+@csrf_exempt
+def stripe_sync_session(request):
+    """
+    Se llama desde el frontend en /success?session_id=...
+    GUARDA compra + suscripción en DB en el acto.
+    Esto resuelve el caso donde el webhook no llega (localhost, firewalls, etc.)
+    """
+    session_id = (request.GET.get("session_id") or "").strip()
+    if not session_id:
+        return JsonResponse({"ok": False, "error": "missing_session_id"}, status=400)
+
+    try:
+        # Expandimos para tener todo lo necesario
+        session = stripe.checkout.Session.retrieve(
+            session_id,
+            expand=["customer_details", "subscription", "payment_intent"]
+        )
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": "stripe_retrieve_failed", "detail": str(e)}, status=400)
+
+    # Encontrar usuario por client_reference_id / metadata / email
+    user = _find_user_from_session(session)
+    if not user:
+        return JsonResponse({"ok": False, "error": "user_not_found_from_session"}, status=200)
+
+    customer_id = session.get("customer")
+    subscription_id = session.get("subscription")
+    payment_intent = session.get("payment_intent")
+
+    # billing profile
+    _ensure_billing_profile(user, customer_id=customer_id)
+
+    # idempotencia por checkout session id
+    if not StripePurchase.objects.filter(stripe_checkout_session_id=session_id).exists():
+        StripePurchase.objects.create(
+            user=user,
+            stripe_checkout_session_id=session_id,
+            stripe_payment_intent_id=payment_intent if isinstance(payment_intent, str) else (payment_intent or {}).get("id"),
+            amount_total=session.get("amount_total") or 0,
+            currency=session.get("currency") or "usd",
+            status=session.get("payment_status") or "unknown",
+            description="Checkout success (sync)",
+        )
+
+    # suscripción
+    if subscription_id:
+        # a veces viene expandida como dict
+        if isinstance(subscription_id, dict):
+            sub_id = subscription_id.get("id")
+        else:
+            sub_id = subscription_id
+        if sub_id:
+            _upsert_subscription(user, sub_id)
+
+    return JsonResponse({"ok": True})
+
+
+def admin_purchases_api(request):
+    # opcional: solo staff
+    if not request.user.is_staff:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    q = (request.GET.get("q") or "").strip()
+    status = (request.GET.get("status") or "").strip()
+    page = int(request.GET.get("page") or 1)
+    page_size = int(request.GET.get("page_size") or 25)
+
+    qs = StripePurchase.objects.select_related("user").all().order_by("-created_at")
+
+    if status:
+        qs = qs.filter(status__iexact=status)
+
+    if q:
+        qs = qs.filter(
+            Q(user__email__icontains=q) |
+            Q(user__username__icontains=q) |
+            Q(user__first_name__icontains=q) |
+            Q(user__last_name__icontains=q) |
+            Q(stripe_invoice_id__icontains=q) |
+            Q(stripe_checkout_session_id__icontains=q) |
+            Q(stripe_payment_intent_id__icontains=q)
+        )
+
+    paginator = Paginator(qs, page_size)
+    page_obj = paginator.get_page(page)
+
+    items = []
+    for p in page_obj.object_list:
+        u = p.user
+        items.append({
+            "id": p.id,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "amount_total": p.amount_total,
+            "currency": p.currency,
+            "status": p.status,
+            "invoice_id": p.stripe_invoice_id,
+            "session_id": p.stripe_checkout_session_id,
+            "payment_intent": p.stripe_payment_intent_id,
+            "hosted_invoice_url": p.hosted_invoice_url,
+            "invoice_pdf": p.invoice_pdf,
+            "description": p.description,
+            "user": {
+                "id": u.id,
+                "email": u.email,
+                "username": u.username,
+                "full_name": (u.get_full_name() or "").strip(),
+            }
+        })
+
+    return JsonResponse({
+        "ok": True,
+        "total": paginator.count,
+        "page": page_obj.number,
+        "page_size": page_size,
+        "items": items,
+    })
+
+
+User = get_user_model()
+
+# ---------------------------------------------------------
+# POST /api/auth/password/reset/   { "email": "..." }
+# ---------------------------------------------------------
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def auth_password_reset_request(request):
+    print("EMAIL_BACKEND:", settings.EMAIL_BACKEND)
+    print("EMAIL_HOST:", getattr(settings, "EMAIL_HOST", None))
+    print("EMAIL_PORT:", getattr(settings, "EMAIL_PORT", None))
+    email = (request.data.get("email") or "").strip().lower()
+    if not email:
+        return Response({"ok": False, "error": "Email es obligatorio"}, status=status.HTTP_400_BAD_REQUEST)
+
+    # ✅ Responder SIEMPRE ok para no revelar si existe o no el usuario
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return Response({"ok": True})
+
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+
+    frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+    reset_link = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+
+    subject = "Restablecer contraseña"
+    message = (
+        "Hola,\n\n"
+        "Recibimos una solicitud para restablecer tu contraseña.\n"
+        "Abre este enlace para crear una nueva contraseña:\n\n"
+        f"{reset_link}\n\n"
+        "Si no solicitaste esto, ignora este correo.\n"
+    )
+
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+        recipient_list=[email],
+        fail_silently=False,
+    )
+
+    return Response({"ok": True})
+
+
+# ---------------------------------------------------------
+# POST /api/auth/password/reset/confirm/
+# { "uid": "...", "token": "...", "new_password": "..." }
+# ---------------------------------------------------------
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def auth_password_reset_confirm(request):
+    uidb64 = request.data.get("uid") or ""
+    token = request.data.get("token") or ""
+    new_password = request.data.get("new_password") or ""
+
+    if not uidb64 or not token or not new_password:
+        return Response(
+            {"ok": False, "error": "uid, token y new_password son obligatorios"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if len(new_password) < 8:
+        return Response({"ok": False, "error": "Contraseña muy corta (mín 8)"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        uid = force_str(urlsafe_base64_decode(uidb64))
+        user = User.objects.get(pk=uid)
+    except Exception:
+        return Response({"ok": False, "error": "Link inválido"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not default_token_generator.check_token(user, token):
+        return Response({"ok": False, "error": "Token inválido o expirado"}, status=status.HTTP_400_BAD_REQUEST)
+
+    user.set_password(new_password)
+    user.save()
+
+    return Response({"ok": True})
+
+
+def _build_external_headers() -> dict:
+    headers = {"Accept": "application/json"}
+    api_key = getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
+    if not api_key:
+        return headers
+
+    auth_header = getattr(settings, "COURSES_EXTERNAL_AUTH_HEADER", "x-api-key")
+    auth_prefix = getattr(settings, "COURSES_EXTERNAL_AUTH_PREFIX", "")
+
+    # Si el header es Authorization, puede llevar prefix Bearer
+    if auth_header.lower() == "authorization":
+        prefix = auth_prefix or "Bearer "
+        headers["Authorization"] = f"{prefix}{api_key}".strip()
+        return headers
+
+    # Para x-api-key u otros, NO le pongas Bearer
+    headers[auth_header] = f"{auth_prefix}{api_key}".strip()
+    return headers
+
+
+
+def _is_allowed_external_url(url: str) -> bool:
+    """
+    Muy recomendado: whitelist por dominio para que tu proxy no sea open-proxy.
+    Ajusta el host permitido al tuyo real.
+    """
+    try:
+        host = urlparse(url).netloc.lower()
+    except Exception:
+        return False
+
+    allowed = getattr(settings, "COURSES_EXTERNAL_ALLOWED_HOSTS", [])
+    if not allowed:
+        # si no configuras whitelist, por lo menos bloquea vacío
+        return bool(host)
+
+    return host in [h.lower() for h in allowed]
+
+
+@require_GET
+def api_proxy_courses(request):
+    url = (request.GET.get("url") or "").strip()
+    if not url:
+        return HttpResponseBadRequest("Missing url")
+    if not _is_allowed_external_url(url):
+        return HttpResponseBadRequest("URL not allowed")
+
+    try:
+        r = requests.get(url, headers=_build_external_headers(), timeout=60)
+        return JsonResponse(r.json(), status=r.status_code, safe=isinstance(r.json(), dict))
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+
+def _build_external_headers() -> dict:
+    headers = {"Accept": "application/json"}
+    api_key = getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
+    if not api_key:
+        return headers
+
+    auth_header = getattr(settings, "COURSES_EXTERNAL_AUTH_HEADER", "Authorization")
+    auth_prefix = getattr(settings, "COURSES_EXTERNAL_AUTH_PREFIX", "Bearer ")
+
+    if auth_header.lower() == "authorization":
+        headers["Authorization"] = f"{auth_prefix}{api_key}".strip()
+    else:
+        headers[auth_header] = str(api_key).strip()
+    return headers
+
+
+def _is_allowed_external_url(url: str) -> bool:
+    try:
+        host = urlparse(url).netloc.lower()
+    except Exception:
+        return False
+
+    allowed = getattr(settings, "COURSES_EXTERNAL_ALLOWED_HOSTS", [])
+    if not allowed:
+        return bool(host)
+    return host in [h.lower() for h in allowed]
+
+
+@staff_member_required
+@require_GET
+def api_proxy_courses(request):
+    url = (request.GET.get("url") or "").strip()
+    if not url:
+        return HttpResponseBadRequest("Missing url")
+    if not _is_allowed_external_url(url):
+        return HttpResponseBadRequest("URL not allowed")
+
+    try:
+        r = requests.get(url, headers=_build_external_headers(), timeout=60)
+        # devolvemos el JSON del externo
+        return JsonResponse(r.json(), status=r.status_code, safe=isinstance(r.json(), dict))
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@staff_member_required
+@require_POST
+def api_run_courses_sync(request):
+    endpoint = getattr(settings, "COURSES_EXTERNAL_ENDPOINT", None)
+    if not endpoint:
+        return JsonResponse({"error": "Missing COURSES_EXTERNAL_ENDPOINT"}, status=400)
+
+    page_size = 50
+    state_key = "courses_sync"
+
+    state, _ = ExternalSyncState.objects.get_or_create(
+        key=state_key,
+        defaults={"cursor_value": "1"},
+    )
+
+    try:
+        page = max(1, int(state.cursor_value or "1"))
+    except Exception:
+        page = 1
+
+    courses = fetch_and_parse_page(endpoint, page=page, page_size=page_size, timeout=90)
+
+    next_page = 1 if len(courses) < page_size else (page + 1)
+    state.cursor_value = str(next_page)
+    state.save(update_fields=["cursor_value", "updated_at"])
+
+    sample = None
+    if courses:
+        c = courses[0]
+        sample = {
+            "external_id": c.external_id,
+            "nombre": c.nombre,
+            "imagen": c.imagen,
+            "skills_count": len(c.skills),
+        }
+
+    return JsonResponse({
+        "ok": True,
+        "page": page,
+        "page_size": page_size,
+        "received": len(courses),
+        "next_page": next_page,
+        "sample": sample,
+    })

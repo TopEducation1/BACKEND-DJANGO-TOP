@@ -2,16 +2,19 @@
 
 {% block title %} Categorias {% endblock %}
 {% block header %} Categorias {% endblock %}
-
-
+{% block botons %}
+<a class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full" href="{% url 'createUniversity' %}">Crear universidad</a>
+<a class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full" href="{% url 'createTopic' %}">Crear tema o habilidad</a>
+<a class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full" href="{% url 'createTag' %}">Crear tag</a>
+{% endblock %}
 
 {% block content %} 
-    <div class="grid grid-cols-3 gap-4 h-50mt-6">
-        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
+    <div class="grid grid-cols-4 gap-4 h-50mt-6">
+        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
             <div class="flex flex-row -mx-3">
                 <div class="flex-none w-2/3 max-w-full px-3">
                     <div>
-                        <p class="mb-0 font-sans font-semibold text-[2rem] text-white leading-[1em]">Universidades</p>
+                        <p class="mb-0 font-sans font-semibold text-[1.5rem] text-white leading-[1em]">Universidades</p>
                         <h5 class="mb-0 font-bold text-[4rem] text-white">
                         {{ universities |length }} 
                         </h5>
@@ -25,11 +28,11 @@
                 </div>
             </div>
         </div>
-        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
+        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
           <div class="flex flex-row -mx-3">
                 <div class="flex-none w-2/3 max-w-full px-3">
                     <div>
-                        <p class="mb-0 font-sans font-semibold text-[2rem] text-white leading-[1em]">Empresas</p>
+                        <p class="mb-0 font-sans font-semibold text-[1.5rem] text-white leading-[1em]">Empresas</p>
                         <h5 class="mb-0 font-bold text-[4rem] text-white">
                         {{ companies |length }}
                         </h5>
@@ -43,11 +46,11 @@
                 </div>
             </div>
         </div>
-        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
+        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
             <div class="flex flex-row -mx-3">
                 <div class="flex-none w-2/3 max-w-full px-3">
                     <div>
-                        <p class="mb-0 font-sans font-semibold text-[1.8rem] text-white leading-[1em]">Temas / Habilidades</p>
+                        <p class="mb-0 font-sans font-semibold text-[1.5rem] text-white leading-[1em]">Tema / Habilidad</p>
                         <h5 class="mb-0 font-bold text-[4rem] text-white">
                         {{ topics|length }}
                         </h5>
@@ -61,11 +64,11 @@
                 </div>
             </div>
         </div>
-        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
+        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
             <div class="flex flex-row -mx-3">
                 <div class="flex-none w-2/3 max-w-full px-3">
                     <div>
-                        <p class="mb-0 font-sans font-semibold leading-normal text-[2rem] text-white">Categorias blog</p>
+                        <p class="mb-0 font-sans font-semibold leading-normal text-[1.5rem] text-white">Categorias blog</p>
                         <h5 class="mb-0 font-bold text-7xl text-white">
                         {{ cat_blog|length }}
                         </h5>
@@ -79,11 +82,11 @@
                 </div>
             </div>
         </div>
-        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
+        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
             <div class="flex flex-row -mx-3">
                 <div class="flex-none w-2/3 max-w-full px-3">
                     <div>
-                        <p class="mb-0 font-sans font-semibold leading-normal text-[2rem] text-white">Originals</p>
+                        <p class="mb-0 font-sans font-semibold leading-normal text-[1.5rem] text-white">Originals</p>
                         <h5 class="mb-0 font-bold text-7xl text-white">
                         {{ originals|length }}
                         </h5>
@@ -97,11 +100,11 @@
                 </div>
             </div>
         </div>
-        <div class="bg-neutral-950 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
+        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
             <div class="flex flex-row -mx-3">
                 <div class="flex-none w-2/3 max-w-full px-3">
                     <div>
-                        <p class="mb-0 font-sans font-semibold leading-normal text-[2rem] text-white">Rankings</p>
+                        <p class="mb-0 font-sans font-semibold leading-normal text-[1.5rem] text-white">Rankings</p>
                         <h5 class="mb-0 font-bold text-7xl text-white">
                         {{ rankings |length }}
                         </h5>

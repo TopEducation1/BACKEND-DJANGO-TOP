@@ -27,10 +27,39 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 
 SECURE_SSL_REDIRECT = False
 
-# Whitelist del proxy: agrega el host exacto de tu URL externa
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "") 
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")    # whsec_...
+
+STRIPE_PRICE_YEARLY = os.getenv("STRIPE_PRICE_YEARLY", "")
+STRIPE_PRICE_MONTHLY = os.getenv("STRIPE_PRICE_MONTHLY", "")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "http://localhost:3000/success?session_id={CHECKOUT_SESSION_ID}")
+STRIPE_CANCEL_URL  = os.getenv("STRIPE_CANCEL_URL", "http://localhost:3000/cancel")
+
 PROXY_WHITELIST = {
     "erucsg6yrj.execute-api.us-east-1.amazonaws.com",
 }
+
+COURSES_EXTERNAL_ENDPOINT = os.getenv("COURSES_EXTERNAL_ENDPOINT")
+COURSES_EXTERNAL_API_KEY = os.getenv("COURSES_EXTERNAL_API_KEY", default=None)
+COURSES_EXTERNAL_AUTH_HEADER = "x-api-key"
+
+COURSES_EXTERNAL_ALLOWED_HOSTS = [
+    "erucsg6yrj.execute-api.us-east-1.amazonaws.com",
+]
+
+
+AWS_COURSES_API_KEY = os.environ.get("AWS_COURSES_API_KEY", "")
+
+PROXY_HEADERS = {
+    "erucsg6yrj.execute-api.us-east-1.amazonaws.com": {
+        "x-api-key": AWS_COURSES_API_KEY,
+    }
+}
+
+PROXY_TIMEOUT = 30
+
 
 # (opcional) headers por host si algún día los necesitas
 PROXY_HEADERS = {}
@@ -56,9 +85,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware', 
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware', 
+    #'whitenoise.middleware.WhiteNoiseMiddleware', 
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -134,11 +163,11 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': str(os.getenv('MYSQL_DATABASE')),
-        'USER': str(os.getenv('MYSQLUSER')),
-        'PASSWORD': str(os.getenv('MYSQLPASSWORD')),
-        'HOST': str(os.getenv('DATABASE_HOST')),
-        'PORT': str(os.getenv('MYSQLPORT'))
+        'NAME': 'railway',
+        'USER': 'root',
+        'PASSWORD': 'root',
+        'HOST': 'localhost',
+        'PORT': ''
     }
 }
 
@@ -190,3 +219,16 @@ CKEDITOR_UPLOAD_PATH = "uploads/"
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend"  # 👈 default seguro
+)
+
+# ⚠️ SOLO define SMTP si NO estás usando console backend
+if EMAIL_BACKEND == "django.core.mail.backends.smtp.EmailBackend":
+    EMAIL_HOST = os.getenv("EMAIL_HOST")
+    EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+    EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
+    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
+    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")

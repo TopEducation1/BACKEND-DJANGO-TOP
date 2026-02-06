@@ -1,0 +1,325 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Historial de Compras | Top Education{% endblock %}
+{% block header %}Historial de Compras{% endblock %}
+
+{% block botons %}
+  <button
+    type="button"
+    onclick="loadData(1)"
+    class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full"
+  >
+    Actualizar
+  </button>
+{% endblock %}
+{% block content %}
+<div class="mx-auto text-slate-100">
+
+
+  <!-- Filtros -->
+  <div class="rounded-xl border border-neutral-700 bg-neutral-700 p-4">
+    <div class="flex flex-col md:flex-row gap-3 md:items-center">
+      <input
+        id="searchInput"
+        type="text"
+        placeholder="Buscar por email, nombre, invoice, session…"
+        class="w-full md:w-[360px] px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-500 text-nuetral-100 placeholder:text-nuetral-500 focus:outline-none focus:ring-2 focus:ring-nuetral-700"
+      />
+
+      <select
+        id="statusSelect"
+        class="w-full md:w-[220px] px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-500 text-nuetral-100 focus:outline-none focus:ring-2 focus:ring-nuetral-700"
+      >
+        <option value="">Todos los estados</option>
+        <option value="paid">paid</option>
+        <option value="open">open</option>
+        <option value="void">void</option>
+        <option value="uncollectible">uncollectible</option>
+        <option value="failed">failed</option>
+      </select>
+
+      <button
+        type="button"
+        onclick="loadData(1)"
+        class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full"
+      >
+        Buscar resultados
+      </button>
+
+      <div class="ml-auto text-sm text-neutral-200">
+        <span id="countInfo">—</span>
+      </div>
+    </div>
+
+    <!-- Error visible -->
+    <div id="errorBox" class="hidden mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-red-200 text-sm">
+      <div class="font-semibold mb-1">No se pudo cargar</div>
+      <pre id="errorText" class="text-xs whitespace-pre-wrap break-words"></pre>
+    </div>
+  </div>
+
+  <!-- Tabla -->
+  <div class="mt-6 rounded-xl border border-neutral-700 bg-neutral-700 overflow-hidden">
+    <div class="overflow-auto">
+      <table class="min-w-full text-sm">
+        <thead class="text-neutral-300 bg-neutral-600">
+          <tr class="border-b border-neutral-800">
+            <th class="text-left py-3 px-4">Fecha</th>
+            <th class="text-left py-3 px-4">Usuario</th>
+            <th class="text-left py-3 px-4">Email</th>
+            <th class="text-left py-3 px-4">Monto</th>
+            <th class="text-left py-3 px-4">Estado</th>
+            <th class="text-left py-3 px-4">Referencia</th>
+            <th class="text-left py-3 px-4">Detalle</th>
+          </tr>
+        </thead>
+
+        <tbody id="tableBody">
+          <tr class="border-b border-neutral-800">
+            <td colspan="7" class="py-6 px-4 text-neutral-400">
+              Cargando…
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Paginación -->
+    <div class="flex items-center justify-between gap-3 px-4 py-4 border-t border-neutral-800">
+      <button
+        id="prevBtn"
+        type="button"
+        onclick="prevPage()"
+        class="px-3 py-2 rounded-lg border border-neutral-700 hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        ← Anterior
+      </button>
+
+      <div class="text-sm text-neutral-400" id="pageInfo">—</div>
+
+      <button
+        id="nextBtn"
+        type="button"
+        onclick="nextPage()"
+        class="px-3 py-2 rounded-lg border border-neutral-700 hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        Siguiente →
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ✅ Usa SIEMPRE el reverse de Django (evita rutas rotas)
+  // Debes tener en urls.py: name="admin_purchases_api"
+  const API_URL = "{% url 'admin_purchases_api' %}";
+
+  let currentPage = 1;
+  let pageSize = 25;
+  let totalItems = 0;
+
+  const ZERO_DECIMAL = new Set(["bif","clp","djf","gnf","jpy","kmf","krw","mga","pyg","rwf","ugx","vnd","vuv","xaf","xof","xpf","cop"]);
+
+  function money(amount, currency) {
+    if (amount == null) return "—";
+    const cur = (currency || "usd").toLowerCase();
+    const n = Number(amount);
+    if (Number.isNaN(n)) return String(amount);
+    const value = ZERO_DECIMAL.has(cur) ? n : n / 100;
+
+    try {
+      return new Intl.NumberFormat("es-CO", {
+        style: "currency",
+        currency: cur.toUpperCase(),
+        maximumFractionDigits: ZERO_DECIMAL.has(cur) ? 0 : 2
+      }).format(value);
+    } catch {
+      return `${value} ${cur.toUpperCase()}`;
+    }
+  }
+
+  function fmtDate(d) {
+    if (!d) return "—";
+    const x = new Date(d);
+    if (Number.isNaN(x.getTime())) return String(d);
+    return x.toLocaleString();
+  }
+
+  function showError(msg, extra) {
+    const box = document.getElementById("errorBox");
+    const pre = document.getElementById("errorText");
+    box.classList.remove("hidden");
+    pre.textContent = (msg || "Error") + (extra ? ("\n\n" + extra) : "");
+  }
+
+  function hideError() {
+    document.getElementById("errorBox").classList.add("hidden");
+    document.getElementById("errorText").textContent = "";
+  }
+
+  function setLoadingRow() {
+    document.getElementById("tableBody").innerHTML = `
+      <tr class="border-b border-neutral-800">
+        <td colspan="7" class="py-6 px-4 text-neutral-400">Cargando…</td>
+      </tr>
+    `;
+  }
+
+  function normalizeResponse(payload) {
+    // soporta: {total, items}, {ok:true, items}, {ok:true, data}, {items}, {data}, []
+    if (Array.isArray(payload)) return { total: payload.length, items: payload };
+    const items = payload?.items || payload?.data || payload?.results || [];
+    const total = payload?.total ?? payload?.count ?? (Array.isArray(items) ? items.length : 0);
+    return { total, items: Array.isArray(items) ? items : [] };
+  }
+
+  async function loadData(page = 1) {
+    currentPage = page;
+    hideError();
+    setLoadingRow();
+
+    const q = document.getElementById("searchInput").value.trim();
+    const status = document.getElementById("statusSelect").value.trim();
+
+    const params = new URLSearchParams({ page, page_size: pageSize });
+    if (q) params.append("q", q);
+    if (status) params.append("status", status);
+
+    const url = `${API_URL}?${params.toString()}`;
+
+    try {
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: { "Accept": "application/json" }
+      });
+
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      const text = await res.text();
+
+      // ✅ Si no es JSON, muéstralo (login HTML/redirect/500)
+      if (!ct.includes("application/json")) {
+        showError(
+          `Respuesta no-JSON (probable redirect/login/500). HTTP ${res.status}`,
+          text.slice(0, 900)
+        );
+        document.getElementById("tableBody").innerHTML = `
+          <tr class="border-b border-neutral-800">
+            <td colspan="7" class="py-6 px-4 text-neutral-400">No se pudo cargar.</td>
+          </tr>
+        `;
+        updatePager();
+        return;
+      }
+
+      const raw = text ? JSON.parse(text) : {};
+      if (!res.ok) {
+        showError(`HTTP ${res.status}`, JSON.stringify(raw, null, 2).slice(0, 1200));
+        document.getElementById("tableBody").innerHTML = `
+          <tr class="border-b border-neutral-800">
+            <td colspan="7" class="py-6 px-4 text-neutral-400">No se pudo cargar.</td>
+          </tr>
+        `;
+        updatePager();
+        return;
+      }
+
+      const norm = normalizeResponse(raw);
+      totalItems = norm.total || 0;
+
+      renderTable(norm.items);
+      renderPagination();
+
+      document.getElementById("countInfo").textContent = `${totalItems} registro(s)`;
+      updatePager();
+    } catch (e) {
+      showError("Error de red/JS", (e?.stack || e?.message || String(e)));
+      document.getElementById("tableBody").innerHTML = `
+        <tr class="border-b border-neutral-800">
+          <td colspan="7" class="py-6 px-4 text-neutral-400">No se pudo cargar.</td>
+        </tr>
+      `;
+      updatePager();
+    }
+  }
+
+  function badge(status) {
+    const s = (status || "").toLowerCase();
+    let cls = "bg-neutral-700/40 text-neutral-200 border-neutral-600/50";
+    if (s === "paid" || s === "succeeded") cls = "bg-emerald-500/15 text-emerald-200 border-emerald-500/30";
+    if (s === "failed" || s === "void" || s === "uncollectible") cls = "bg-red-500/15 text-red-200 border-red-500/30";
+    if (s === "open") cls = "bg-amber-500/15 text-amber-200 border-amber-500/30";
+    return `<span class="inline-flex items-center px-2 py-1 rounded-md border ${cls} text-xs font-semibold">${status || "—"}</span>`;
+  }
+
+  function renderTable(items) {
+    const tbody = document.getElementById("tableBody");
+    tbody.innerHTML = "";
+
+    if (!items.length) {
+      tbody.innerHTML = `
+        <tr class="border-b border-neutral-800">
+          <td colspan="7" class="py-6 px-4 text-neutral-400">No hay resultados.</td>
+        </tr>
+      `;
+      return;
+    }
+
+    for (const p of items) {
+      const ref = p.invoice_id || p.session_id || p.payment_intent || "—";
+      const user = p.user || {};
+      const fullName = user.full_name || user.username || "—";
+      const email = user.email || "—";
+
+      const detailLinks = `
+        <div class="flex gap-3 text-xs">
+          ${p.hosted_invoice_url ? `<a class="text-emerald-300 hover:text-emerald-200 underline" href="${p.hosted_invoice_url}" target="_blank" rel="noreferrer">Factura</a>` : ""}
+          ${p.invoice_pdf ? `<a class="text-sky-300 hover:text-sky-200 underline" href="${p.invoice_pdf}" target="_blank" rel="noreferrer">PDF</a>` : ""}
+        </div>
+      `;
+
+      tbody.innerHTML += `
+        <tr class="border-b border-neutral-800 hover:bg-neutral-950/40">
+          <td class="py-3 px-4 text-neutral-200">${fmtDate(p.created_at)}</td>
+          <td class="py-3 px-4 text-neutral-200">${fullName}</td>
+          <td class="py-3 px-4 text-neutral-300">${email}</td>
+          <td class="py-3 px-4 text-neutral-200">${money((p.amount_total ?? p.amount), p.currency)}</td>
+          <td class="py-3 px-4">${badge(p.status)}</td>
+          <td class="py-3 px-4 text-neutral-400 font-mono text-xs break-all">${ref}</td>
+          <td class="py-3 px-4">${detailLinks}</td>
+        </tr>
+      `;
+    }
+  }
+
+  function renderPagination() {
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    document.getElementById("pageInfo").textContent = `Página ${currentPage} de ${totalPages}`;
+  }
+
+  function updatePager() {
+    const prev = document.getElementById("prevBtn");
+    const next = document.getElementById("nextBtn");
+    prev.disabled = currentPage <= 1;
+    next.disabled = (currentPage * pageSize) >= totalItems;
+  }
+
+  function nextPage() {
+    if ((currentPage * pageSize) < totalItems) loadData(currentPage + 1);
+  }
+  function prevPage() {
+    if (currentPage > 1) loadData(currentPage - 1);
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    // Enter = filtrar
+    const s = document.getElementById("searchInput");
+    s.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") loadData(1);
+    });
+
+    loadData(1);
+  });
+</script>
+{% endblock %}

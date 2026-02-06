@@ -11,6 +11,9 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from .sitemaps import CertificacionSitemap, BlogSitemap
+from .views import sync_courses_from_external
+from .account_views import account_me, account_purchases
+
 
 sitemaps_dict = {
     'certificaciones': CertificacionSitemap,
@@ -85,8 +88,22 @@ urlpatterns = [
     path('sitemap.xml', sitemap, {'sitemaps': sitemaps_dict}, name='sitemap'),
     path("ckeditor/", include("ckeditor_uploader.urls")),
     path("inspector/catalog/", views.catalog_inspector, name="catalog_inspector"),
+    path("bussines/purchases/", login_required(views.admin_purchases_page, login_url="/signin/"),name="admin_purchases_page"),
     path("api/proxy", views.proxy_json, name="proxy_json"),
-    
+    path("api/sync/courses/", sync_courses_from_external, name="sync_courses_from_external"),
+    path("api/stripe/create-checkout-session/", views.create_checkout_session, name="create_checkout_session"),
+    path('api/stripe/webhook/', views.stripe_webhook, name='stripe_webhook'),
+    path("api/stripe/sync-session/", views.stripe_sync_session, name="stripe_sync_session"),
+    path("api/account/purchases/", account_purchases, name="account_purchases"),
+    path("api/auth/register/", views.auth_register, name="auth_register"),
+    path("api/auth/login/", views.auth_login, name="auth_login"),
+    path("api/auth/logout/", views.auth_logout, name="auth_logout"),
+    path("api/account/me/", views.account_me, name="account_me"),
+    path("api/auth/password/reset/", views.auth_password_reset_request, name="auth_password_reset_request"),
+    path("api/auth/password/reset/confirm/", views.auth_password_reset_confirm, name="auth_password_reset_confirm"),
+    path("api/admin/purchases/",login_required(views.admin_purchases_api, login_url="/signin/"),name="admin_purchases_api"),
+    path("api/proxy/courses",views.api_proxy_courses, name="api_proxy_courses",),
+    path("api/sync/courses/run", views.api_run_courses_sync,  name="api_run_courses_sync",),
 
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 if settings.DEBUG:

@@ -3,34 +3,31 @@
 
 {% block title %} Marca blanca {% endblock %}
 {% block header %} Marca blanca 
-  <p class="text-[16px] text-gray-200">
+  <p class="text-[13px] weight-200 text-neutral-200 mt-[-5px]">
     Gestiona las marcas blancas y su configuración de secciones.
   </p> 
 {% endblock %}
 
 {% block botons %}
 <a href="{% url 'brand_create' %}"
-       class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-blue-700">
+       class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full">
       + Crear marca
     </a>
 {% endblock %}
 
 {% block content %}
-<div class="p-6 space-y-6">
-  <section class="bg-neutral-900 shadow-sm rounded-lg border border-gray-200">
-    <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-      <h2 class="text-sm font-semibold text-gray-100">Marcas registradas</h2>
-    </div>
+<div class="space-y-6">
+  <section class="bg-neutral-900 shadow-sm rounded-lg border border-gray-200 overflow-hidden">
     <div class="overflow-x-auto">
       {% if marcas %}
-        <table class="min-w-full divide-y divide-gray-200 text-sm">
-          <thead class="bg-gray-900">
+        <table class="min-w-full divide-y divide-gray-200 text-sm !rounded-lg">
+          <thead class="bg-neutral-100">
             <tr>
-              <th class="px-4 py-2 text-left font-medium text-gray-200">ID</th>
-              <th class="px-4 py-2 text-left font-medium text-gray-200">Nombre</th>
-              <th class="px-4 py-2 text-left font-medium text-gray-200">Slug</th>
-              <th class="px-4 py-2 text-left font-medium text-gray-200">Estado</th>
-              <th class="px-4 py-2 text-right font-medium text-gray-200">Acciones</th>
+              <th class="px-4 py-2 text-left font-medium text-neutral-900">ID</th>
+              <th class="px-4 py-2 text-left font-medium text-neutral-900">Nombre</th>
+              <th class="px-4 py-2 text-left font-medium text-neutral-900">Slug</th>
+              <th class="px-4 py-2 text-left font-medium text-neutral-900">Estado</th>
+              <th class="px-4 py-2 text-right font-medium text-neutral-900">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-200 bg-neutral-700">
@@ -51,11 +48,11 @@
                 </td>
                 <td class="px-4 py-2 text-right space-x-2">
                   <a href="{% url 'brand_settings' marca.id %}"
-                     class="inline-flex items-center rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-gray-100 hover:bg-blue-700">
+                     class="inline-flex items-center rounded-full bg-blue-600 px-3 py-1 text-xs font-medium text-gray-100 hover:bg-blue-700">
                     Configurar secciones
                   </a>
                   <a href="{% url 'brand_update' marca.id %}"
-                     class="inline-flex items-center rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-350">
+                     class="inline-flex items-center rounded-full border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-350">
                     Editar
                   </a>
                 </td>

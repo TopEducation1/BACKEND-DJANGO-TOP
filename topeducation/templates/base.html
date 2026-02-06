@@ -73,13 +73,15 @@
                 </div>
                 <div class="hidden md:block">
                 <div class="ml-10 flex items-baseline space-x-4">
+                    
                     <!-- Current: "bg-gray-900 text-white", Default: "text-gray-300 hover:bg-gray-700 hover:text-white" -->
-                    <a href="{% url 'dashboard' %}" class="rounded-md {% if request.path == '/dashboard/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-white" aria-current="page">Escritorio</a>
-                    <a href="{% url 'certifications' %}" class="rounded-md {% if request.path == '/certifications/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Certificaciones</a>
-                    <a href="{% url 'posts' %}" class="rounded-md {% if request.path == '/posts/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Blogs</a>
-                    <a href="{% url 'categories' %}" class="rounded-md {% if request.path == '/category/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Categorias</a>
-                    <a href="{% url 'brand_list' %}" class="rounded-md {% if request.path == '/brand/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Marca blanca</a>
-                    <a href="{% url 'catalog_inspector' %}" class="rounded-md {% if request.path == '/inspector/catalog/' %}bg-gray-900 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Inspector</a>
+                    <a href="{% url 'dashboard' %}" class="rounded-3xl {% if request.path == '/dashboard/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-white" aria-current="page">Escritorio</a>
+                    <a href="{% url 'certifications' %}" class="rounded-3xl {% if request.path == '/certifications/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Certificaciones</a>
+                    <a href="{% url 'posts' %}" class="rounded-3xl {% if request.path == '/posts/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Blogs</a>
+                    <a href="{% url 'categories' %}" class="rounded-3xl {% if request.path == '/category/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Categorias</a>
+                    <a href="{% url 'brand_list' %}" class="rounded-3xl {% if request.path == '/brand/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Marca blanca</a>
+                    <a href="{% url 'admin_purchases_page' %}" class="rounded-3xl {% if request.path == '/bussines/purchases' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Historial de compras</a>
+                    <a href="{% url 'catalog_inspector' %}" class="rounded-3xl {% if request.path == '/inspector/catalog/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Sincronizar</a>
                 </div>
                 </div>
             </div>
@@ -173,19 +175,19 @@
         </div>
         </nav>
     
-        <header class="bg-blue-950 shadow-sm">
-            <div class="mx-auto container px-4 flex items-center justify-between">
-                <div class="max-w-5xl px-1 py-6 sm:px-1 lg:px-1">
-                    <h1 class="text-3xl font-bold tracking-tight text-gray-100">{% block header %}  {% endblock %}</h1>
+        <header class="bg-neutral-700 shadow-sm">
+            <div class="mx-auto container px-5 flex items-center justify-between">
+                <div class="max-w-5xl px-1 py-3 sm:px-1 lg:px-1">
+                    <h1 class="text-[20px] font-bold tracking-tight text-gray-100">{% block header %}  {% endblock %}</h1>
                 </div>
-                <div class="max-w-2xl px-1 py-6 sm:px-1 lg:px-1 flex items-center gap-x-3">
+                <div class="max-w-2xl px-1 py-3 sm:px-1 lg:px-1 flex items-center gap-x-3">
                     {% block botons %} {% endblock %}
                 </div>
             </div>
         </header>
         {% endif %}
         <main>  
-        <div class="mx-auto container px-4 py-6 sm:px-6 lg:px-8">
+        <div class="mx-auto container px-4 py-6 sm:px-3 lg:px-3">
             {% if messages %}        
                 {% for message in messages %}
                     {% if message.tags == "success" %}
