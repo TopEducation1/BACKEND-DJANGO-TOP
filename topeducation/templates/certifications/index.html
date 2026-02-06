@@ -4,7 +4,7 @@
 {% block header %} Certificaciones {% endblock %}
 
 {% block botons %}
-<p class="text-white">Total de certificaciones: {{ certifications|length }}</p>
+<p class="text-white w-full md:w-auto">Total de certificaciones: {{ certifications|length }}</p>
 <a class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full" href="{% url 'upload' %}">Cargar certificaciones</a>
 <a class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full" href="{% url 'createCertification' %}">Crear nueva</a> {% endblock %}
 
@@ -15,6 +15,7 @@
       $('#example').DataTable();
     })
   </script>
+  <div class="overflow-x-auto">
     <table class="w-full text-left table-auto max-w-max text-neutral-200" id="example">
       <thead>
         <tr class="text-neutral-300 border-b border-neutral-500 bg-neutral-500">
@@ -112,6 +113,7 @@
         
       </tbody>
     </table>
+  </div>
   </div>
   <!-- Modal de confirmación -->
 <div id="deleteModal" class="fixed inset-0 bg-neutral-800/60 backdrop-blur-sm bg-opacity-50 flex items-center justify-center hidden z-50">

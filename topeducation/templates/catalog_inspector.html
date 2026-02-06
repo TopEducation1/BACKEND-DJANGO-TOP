@@ -88,11 +88,11 @@
   // ⚠️ No usamos x-api-key en el front. El backend toma la key del .env.
   // Recomendado: usa un proxy dedicado para cursos, para no chocar con tu proxy_json existente.
   // Si tu ruta es /api/proxy/courses, déjalo así:
-  const PROXY_PATH = "/api/proxy/courses/run";
+  const PROXY_PATH = "/api/proxy/courses";
 
   // Endpoint interno que ejecuta "1 página" tipo cron job manual.
   // Si ya lo migraste a /api/sync/courses/run, puedes cambiarlo aquí.
-  const SYNC_URL = "{% url 'sync_courses_from_external' %}";
+  const SYNC_URL = "/api/sync/courses/run";
 
   const COURSE_COLUMNS = [
     "nombre",
