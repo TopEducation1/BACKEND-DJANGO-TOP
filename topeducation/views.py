@@ -6,6 +6,9 @@ from topeducation.models import ExternalSyncState
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 import re
+import time
+import traceback
+import logging
 
 from django.contrib.admin.views.decorators import staff_member_required
 
@@ -2167,48 +2170,59 @@ def api_proxy_courses(request):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
+logger = logging.getLogger(__name__)
 
-@staff_member_required
 @require_POST
 def api_run_courses_sync(request):
-    endpoint = getattr(settings, "COURSES_EXTERNAL_ENDPOINT", None)
-    if not endpoint:
-        return JsonResponse({"error": "Missing COURSES_EXTERNAL_ENDPOINT"}, status=400)
-
-    page_size = 50
-    state_key = "courses_sync"
-
-    state, _ = ExternalSyncState.objects.get_or_create(
-        key=state_key,
-        defaults={"cursor_value": "1"},
-    )
-
+    t0 = time.time()
     try:
-        page = max(1, int(state.cursor_value or "1"))
-    except Exception:
-        page = 1
+        endpoint = getattr(settings, "COURSES_EXTERNAL_ENDPOINT", None)
+        if not endpoint:
+            return JsonResponse({"ok": False, "error": "Missing COURSES_EXTERNAL_ENDPOINT"}, status=400)
 
-    courses = fetch_and_parse_page(endpoint, page=page, page_size=page_size, timeout=90)
+        page_size = 50
+        state_key = "courses_sync"
 
-    next_page = 1 if len(courses) < page_size else (page + 1)
-    state.cursor_value = str(next_page)
-    state.save(update_fields=["cursor_value", "updated_at"])
+        state, _ = ExternalSyncState.objects.get_or_create(
+            key=state_key,
+            defaults={"cursor_value": "1"},
+        )
 
-    sample = None
-    if courses:
-        c = courses[0]
-        sample = {
-            "external_id": c.external_id,
-            "nombre": c.nombre,
-            "imagen": c.imagen,
-            "skills_count": len(c.skills),
-        }
+        try:
+            page = max(1, int(state.cursor_value or "1"))
+        except Exception:
+            page = 1
 
-    return JsonResponse({
-        "ok": True,
-        "page": page,
-        "page_size": page_size,
-        "received": len(courses),
-        "next_page": next_page,
-        "sample": sample,
-    })
+        courses = fetch_and_parse_page(endpoint, page=page, page_size=page_size, timeout=90)
+
+        next_page = 1 if len(courses) < page_size else (page + 1)
+        state.cursor_value = str(next_page)
+        state.save(update_fields=["cursor_value", "updated_at"])
+
+        sample = None
+        if courses:
+            c = courses[0]
+            sample = {
+                "external_id": c.external_id,
+                "nombre": c.nombre,
+                "imagen": c.imagen,
+                "skills_count": len(c.skills),
+            }
+
+        return JsonResponse({
+            "ok": True,
+            "page": page,
+            "page_size": page_size,
+            "received": len(courses),
+            "next_page": next_page,
+            "sample": sample,
+            "took_ms": int((time.time() - t0) * 1000),
+        })
+
+    except Exception as e:
+        logger.exception("api_run_courses_sync failed")
+        return JsonResponse({
+            "ok": False,
+            "error": str(e),
+            "trace": traceback.format_exc()[:3000],
+        }, status=500)
