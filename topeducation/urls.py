@@ -103,7 +103,7 @@ urlpatterns = [
     path("api/auth/password/reset/confirm/", views.auth_password_reset_confirm, name="auth_password_reset_confirm"),
     path("api/admin/purchases/",login_required(views.admin_purchases_api, login_url="/signin/"),name="admin_purchases_api"),
     path("api/proxy/courses",views.api_proxy_courses, name="api_proxy_courses",),
-    path("api/sync/courses/run/", views.api_run_courses_sync,  name="api_run_courses_sync",),
+    path("api/sync/courses/run", views.api_run_courses_sync,  name="api_run_courses_sync",),
 
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 if settings.DEBUG:
