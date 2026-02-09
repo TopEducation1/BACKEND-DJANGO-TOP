@@ -381,11 +381,43 @@ class StripePurchase(models.Model):
         ordering = ["-created_at"]
 
 
+
 class ExternalSyncState(models.Model):
     key = models.CharField(max_length=100, unique=True)
     cursor_value = models.CharField(max_length=200, blank=True, default="1")
     updated_at = models.DateTimeField(auto_now=True)
 
+    # ✅ lock para cron
+    running = models.BooleanField(default=False)
+    locked_at = models.DateTimeField(null=True, blank=True)
+
+    # ✅ tracking útil
+    last_ok_at = models.DateTimeField(null=True, blank=True)
+    last_error_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+
     def __str__(self):
         return f"{self.key} -> {self.cursor_value}"
 
+# models.py
+class ExternalSyncLog(models.Model):
+    key = models.CharField(max_length=100, db_index=True)  # "courses_sync"
+    run_id = models.CharField(max_length=64, db_index=True)
+
+    page = models.IntegerField(default=1)
+    page_size = models.IntegerField(default=50)
+
+    ok = models.BooleanField(default=False)
+    received = models.IntegerField(default=0)
+    items_len = models.IntegerField(default=0)
+
+    took_ms = models.IntegerField(default=0)
+
+    error = models.CharField(max_length=200, blank=True, default="")
+    detail = models.TextField(blank=True, default="")
+    trace = models.TextField(blank=True, default="")
+
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f"[{self.key}] page={self.page} ok={self.ok} at={self.created_at}"

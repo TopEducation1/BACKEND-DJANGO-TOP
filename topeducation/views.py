@@ -63,7 +63,6 @@ from .models import Marca, MarcaPermisos
 from .forms import MarcaForm, MarcaPermisosFormSet
 from .serializers import MarcaPublicSerializer
 
-from django.views.decorators.csrf import csrf_exempt
 
 from topeducation.services.import_courses import ingest_course_payload
 
@@ -90,6 +89,12 @@ from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 
+import json, time, uuid, traceback
+
+from django.utils import timezone
+from datetime import timedelta
+
+from topeducation.services.import_courses import ingest_course_payload
 
 
 @staff_member_required(login_url="/signin/")
@@ -1268,93 +1273,50 @@ class MarcaPublicBySlugView(generics.RetrieveAPIView):
 @csrf_exempt
 @require_POST
 def sync_courses_from_external(request):
-    """
-    Sincroniza cursos desde el endpoint externo (AWS)
-    Body opcional:
-    {
-      "page": 1,
-      "pageSize": 25
-    }
-    """
-
     try:
         body = json.loads(request.body or "{}")
     except ValueError:
         body = {}
 
-    page = body.get("page", 1)
-    page_size = body.get("pageSize", 25)
+    page = int(body.get("page", 1) or 1)
+    page_size = int(body.get("pageSize", 25) or 25)
 
-    # Endpoint externo
     base_url = "https://erucsg6yrj.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information/courses"
 
-    params = {
-        "page": page,
-        "pageSize": page_size,
-    }
+    api_key = getattr(settings, "AWS_COURSES_API_KEY", None) or getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
+    if not api_key:
+        return JsonResponse(
+            {"ok": False, "error": "missing_api_key", "detail": "Define AWS_COURSES_API_KEY o COURSES_EXTERNAL_API_KEY en Railway"},
+            status=500,
+        )
 
-    headers = {
-        "Accept": "application/json",
-        "x-api-key": settings.AWS_COURSES_API_KEY,
-    }
+    params = {"page": page, "pageSize": page_size}
+    headers = {"Accept": "application/json", "x-api-key": api_key}
 
     try:
-        resp = requests.get(
-            base_url,
-            headers=headers,
-            params=params,
-            timeout=20,
-        )
+        resp = requests.get(base_url, headers=headers, params=params, timeout=20)
     except requests.RequestException as e:
-        return JsonResponse(
-            {"ok": False, "error": "upstream_unreachable", "detail": str(e)},
-            status=502,
-        )
+        return JsonResponse({"ok": False, "error": "upstream_unreachable", "detail": str(e)}, status=502)
 
     if resp.status_code != 200:
         return JsonResponse(
-            {
-                "ok": False,
-                "error": "upstream_error",
-                "status": resp.status_code,
-                "response": resp.text,
-            },
+            {"ok": False, "error": "upstream_error", "status": resp.status_code, "response": resp.text[:2000]},
             status=502,
         )
 
     try:
         payload = resp.json()
-        print("PAYLOAD KEYS:", payload.keys())
-        print("ITEMS LEN:", len(payload.get("items", [])))
-        if payload.get("items"):
-            print("FIRST ITEM KEYS:", payload["items"][0].keys())
     except ValueError:
-        return JsonResponse(
-            {"ok": False, "error": "invalid_json_from_upstream"},
-            status=502,
-        )
+        return JsonResponse({"ok": False, "error": "invalid_json_from_upstream", "response": resp.text[:2000]}, status=502)
 
-    # 🔄 Ingestión en BD
     try:
         result = ingest_course_payload(payload)
     except Exception as e:
-        return JsonResponse(
-            {
-                "ok": False,
-                "error": "ingestion_failed",
-                "detail": str(e),
-            },
-            status=500,
-        )
+        return JsonResponse({"ok": False, "error": "ingestion_failed", "detail": str(e)}, status=500)
 
     items_len = len(payload.get("items", [])) if isinstance(payload.get("items"), list) else None
-    return JsonResponse({
-        "ok": True,
-        "page": page,
-        "pageSize": page_size,
-        "items_len": items_len,
-        "summary": result,
-    })
+    return JsonResponse({"ok": True, "page": page, "pageSize": page_size, "items_len": items_len, "summary": result})
+
 
 ## Integración de Stripe
 User = get_user_model()
@@ -2170,59 +2132,193 @@ def api_proxy_courses(request):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
-logger = logging.getLogger(__name__)
 
+LOCK_TTL_SECONDS = 14 * 60  # ~14 min para cron de 15 min
+
+def _get_courses_endpoint():
+    # puedes moverlo a settings si quieres
+    return getattr(settings, "COURSES_EXTERNAL_ENDPOINT", None) or \
+           "https://erucsg6yrj.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information/courses"
+
+def _get_courses_api_key():
+    return getattr(settings, "AWS_COURSES_API_KEY", None) or getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
+
+@csrf_exempt
 @require_POST
 def api_run_courses_sync(request):
     t0 = time.time()
+    run_id = uuid.uuid4().hex[:16]
+    state_key = "courses_sync"
+
+    endpoint = _get_courses_endpoint()
+    api_key = _get_courses_api_key()
+
+    if not api_key:
+        return JsonResponse({"ok": False, "error": "missing_api_key"}, status=500)
+
+    # body opcional: pageSize, maxPagesPerRun, timeout
     try:
-        endpoint = getattr(settings, "COURSES_EXTERNAL_ENDPOINT", None)
-        if not endpoint:
-            return JsonResponse({"ok": False, "error": "Missing COURSES_EXTERNAL_ENDPOINT"}, status=400)
+        body = json.loads(request.body or "{}")
+    except Exception:
+        body = {}
 
-        page_size = 50
-        state_key = "courses_sync"
+    page_size = int(body.get("pageSize", 50) or 50)
+    timeout = int(body.get("timeout", 30) or 30)
 
-        state, _ = ExternalSyncState.objects.get_or_create(
-            key=state_key,
-            defaults={"cursor_value": "1"},
-        )
+    # 🔥 si quieres que en un solo cron procese más de una página:
+    max_pages_per_run = int(body.get("maxPagesPerRun", 1) or 1)
+    max_pages_per_run = max(1, min(max_pages_per_run, 10))  # cap de seguridad
 
+    # 1) asegurar state
+    state, _ = ExternalSyncState.objects.get_or_create(
+        key=state_key,
+        defaults={"cursor_value": "1", "running": False},
+    )
+
+    # 2) adquirir lock con TTL
+    now = timezone.now()
+    stale_before = now - timedelta(seconds=LOCK_TTL_SECONDS)
+
+    # si está corriendo y el lock no está stale: salimos OK sin hacer nada
+    if state.running and state.locked_at and state.locked_at > stale_before:
+        return JsonResponse({
+            "ok": True,
+            "message": "Lock activo, ya hay una ejecución en curso",
+            "run_id": run_id,
+            "locked": False,
+            "state_key": state_key,
+        }, status=200)
+
+    # tomar lock
+    state.running = True
+    state.locked_at = now
+    state.updated_at = now
+    state.save(update_fields=["running", "locked_at", "updated_at"])
+
+    processed_pages = 0
+    last_result = None
+
+    try:
+        # cursor actual
         try:
             page = max(1, int(state.cursor_value or "1"))
         except Exception:
             page = 1
 
-        courses = fetch_and_parse_page(endpoint, page=page, page_size=page_size, timeout=90)
+        headers = {"Accept": "application/json", "x-api-key": api_key}
 
-        next_page = 1 if len(courses) < page_size else (page + 1)
-        state.cursor_value = str(next_page)
-        state.save(update_fields=["cursor_value", "updated_at"])
+        for _ in range(max_pages_per_run):
+            params = {"page": page, "pageSize": page_size}
 
-        sample = None
-        if courses:
-            c = courses[0]
-            sample = {
-                "external_id": c.external_id,
-                "nombre": c.nombre,
-                "imagen": c.imagen,
-                "skills_count": len(c.skills),
+            # 3) pedir payload al externo (igual que tu sync manual)
+            try:
+                resp = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
+            except requests.RequestException as e:
+                took_ms = int((time.time() - t0) * 1000)
+                ExternalSyncLog.objects.create(
+                    key=state_key, run_id=run_id, page=page, page_size=page_size,
+                    ok=False, took_ms=took_ms,
+                    error="upstream_unreachable", detail=str(e), trace=traceback.format_exc()[:8000],
+                )
+                state.last_error_at = timezone.now()
+                state.last_error = f"upstream_unreachable: {e}"
+                state.save(update_fields=["last_error_at", "last_error"])
+                return JsonResponse({"ok": False, "error": "upstream_unreachable", "detail": str(e)}, status=502)
+
+            if resp.status_code != 200:
+                took_ms = int((time.time() - t0) * 1000)
+                ExternalSyncLog.objects.create(
+                    key=state_key, run_id=run_id, page=page, page_size=page_size,
+                    ok=False, took_ms=took_ms,
+                    error="upstream_error",
+                    detail=f"HTTP {resp.status_code}: {resp.text[:2000]}",
+                )
+                state.last_error_at = timezone.now()
+                state.last_error = f"upstream_error HTTP {resp.status_code}"
+                state.save(update_fields=["last_error_at", "last_error"])
+                return JsonResponse({"ok": False, "error": "upstream_error", "status": resp.status_code}, status=502)
+
+            try:
+                payload = resp.json()
+            except Exception:
+                took_ms = int((time.time() - t0) * 1000)
+                ExternalSyncLog.objects.create(
+                    key=state_key, run_id=run_id, page=page, page_size=page_size,
+                    ok=False, took_ms=took_ms,
+                    error="invalid_json_from_upstream",
+                    detail=resp.text[:2000],
+                )
+                state.last_error_at = timezone.now()
+                state.last_error = "invalid_json_from_upstream"
+                state.save(update_fields=["last_error_at", "last_error"])
+                return JsonResponse({"ok": False, "error": "invalid_json_from_upstream"}, status=502)
+
+            items = payload.get("items", [])
+            items_len = len(items) if isinstance(items, list) else 0
+
+            # 4) ingestar a BD
+            try:
+                summary = ingest_course_payload(payload)
+            except Exception as e:
+                took_ms = int((time.time() - t0) * 1000)
+                ExternalSyncLog.objects.create(
+                    key=state_key, run_id=run_id, page=page, page_size=page_size,
+                    ok=False, items_len=items_len, took_ms=took_ms,
+                    error="ingestion_failed", detail=str(e), trace=traceback.format_exc()[:8000],
+                )
+                state.last_error_at = timezone.now()
+                state.last_error = f"ingestion_failed: {e}"
+                state.save(update_fields=["last_error_at", "last_error"])
+                return JsonResponse({"ok": False, "error": "ingestion_failed", "detail": str(e)}, status=500)
+
+            # 5) avanzar cursor
+            next_page = 1 if items_len < page_size else (page + 1)
+            state.cursor_value = str(next_page)
+            state.last_ok_at = timezone.now()
+            state.last_error = ""
+            state.save(update_fields=["cursor_value", "last_ok_at", "last_error", "updated_at"])
+
+            processed_pages += 1
+            last_result = {
+                "page": page,
+                "page_size": page_size,
+                "items_len": items_len,
+                "next_page": next_page,
+                "summary": summary,
             }
+
+            # log ok
+            ExternalSyncLog.objects.create(
+                key=state_key, run_id=run_id, page=page, page_size=page_size,
+                ok=True, items_len=items_len, received=items_len,
+                took_ms=int((time.time() - t0) * 1000),
+            )
+
+            page = next_page
+
+            # si llegamos al final (reinició a 1), cortamos
+            if next_page == 1:
+                break
 
         return JsonResponse({
             "ok": True,
-            "page": page,
-            "page_size": page_size,
-            "received": len(courses),
-            "next_page": next_page,
-            "sample": sample,
+            "run_id": run_id,
+            "state_key": state_key,
+            "processed_pages": processed_pages,
+            "cursor_next": state.cursor_value,
             "took_ms": int((time.time() - t0) * 1000),
-        })
+            "last": last_result,
+        }, status=200)
 
-    except Exception as e:
-        logger.exception("api_run_courses_sync failed")
-        return JsonResponse({
-            "ok": False,
-            "error": str(e),
-            "trace": traceback.format_exc()[:3000],
-        }, status=500)
+    finally:
+        # liberar lock siempre
+        try:
+            ExternalSyncState.objects.filter(key=state_key).update(
+                running=False,
+                locked_at=None,
+                updated_at=timezone.now(),
+            )
+        except Exception:
+            pass
+
+
