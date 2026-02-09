@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple, Optional
-
+import time
 import requests
 from django.conf import settings
 
@@ -19,9 +19,7 @@ class MappedCourse:
 
 
 def _has_name_like(obj: Any) -> bool:
-    if not isinstance(obj, dict):
-        return False
-    return any(isinstance(obj.get(k), str) for k in NAME_KEYS)
+    return isinstance(obj, dict) and any(isinstance(obj.get(k), str) for k in NAME_KEYS)
 
 
 def _has_skills(obj: Any) -> bool:
@@ -32,10 +30,7 @@ def _has_skills(obj: Any) -> bool:
 
 
 def find_courses_array(node: Any) -> List[Dict[str, Any]]:
-    """
-    Busca recursivamente un arreglo que parezca "lista de cursos".
-    Prioriza arrays grandes con objetos que tengan skills.
-    """
+    """Busca recursivamente un arreglo que parezca lista de cursos."""
     candidates: List[Tuple[int, List[Dict[str, Any]]]] = []
 
     def walk(n: Any):
@@ -103,21 +98,16 @@ def map_course(item: Dict[str, Any]) -> MappedCourse:
         or ""
     ).strip()
     skills = extract_skill_names(item.get("skills"))
-    return MappedCourse(
-        external_id=external_id,
-        nombre=nombre,
-        imagen=imagen,
-        skills=skills,
-        raw=item,
-    )
+    return MappedCourse(external_id=external_id, nombre=nombre, imagen=imagen, skills=skills, raw=item)
 
 
 def _build_headers() -> Dict[str, str]:
     """
-    Settings esperados (define los que necesites):
-      - COURSES_EXTERNAL_API_KEY: str | None
-      - COURSES_EXTERNAL_AUTH_HEADER: str (default: "Authorization")  # o "x-api-key"
-      - COURSES_EXTERNAL_AUTH_PREFIX: str (default: "Bearer ")
+    ✅ Para API Gateway lo normal es x-api-key.
+    Settings opcionales:
+      - COURSES_EXTERNAL_API_KEY
+      - COURSES_EXTERNAL_AUTH_HEADER (default: "x-api-key")
+      - COURSES_EXTERNAL_AUTH_PREFIX (default: "Bearer ")  # solo si usas Authorization
     """
     headers: Dict[str, str] = {"Accept": "application/json"}
 
@@ -125,7 +115,7 @@ def _build_headers() -> Dict[str, str]:
     if not api_key:
         return headers
 
-    auth_header = getattr(settings, "COURSES_EXTERNAL_AUTH_HEADER", "Authorization")
+    auth_header = getattr(settings, "COURSES_EXTERNAL_AUTH_HEADER", "x-api-key")
     auth_prefix = getattr(settings, "COURSES_EXTERNAL_AUTH_PREFIX", "Bearer ")
 
     if auth_header.lower() == "authorization":
@@ -137,25 +127,35 @@ def _build_headers() -> Dict[str, str]:
 
 
 def _extract_courses_array_from_payload(data: Any) -> List[Dict[str, Any]]:
-    """
-    Reusa la misma lógica de tu inspector:
-    - intenta rutas comunes
-    - si no, hace búsqueda recursiva
-    """
-    arr: List[Dict[str, Any]] = []
-
+    # rutas comunes
     if (
         isinstance(data, dict)
         and isinstance(data.get("data"), dict)
         and isinstance(data["data"].get("coursParsed"), list)
     ):
-        arr = data["data"]["coursParsed"]
-    elif isinstance(data, dict) and isinstance(data.get("coursParsed"), list):
-        arr = data["coursParsed"]
-    else:
-        arr = find_courses_array(data)
+        return data["data"]["coursParsed"]
 
+    if isinstance(data, dict) and isinstance(data.get("coursParsed"), list):
+        return data["coursParsed"]
+
+    # fallback recursivo
+    arr = find_courses_array(data)
     return arr if isinstance(arr, list) else []
+
+
+def _request_json(session: requests.Session, endpoint: str, headers: Dict[str, str], params: Dict[str, Any], timeout: int) -> Any:
+    r = session.get(endpoint, headers=headers, params=params, timeout=timeout)
+
+    # Para debug en logs (si falla)
+    if r.status_code >= 400:
+        # recorta body para no reventar logs
+        body = (r.text or "")[:800]
+        raise requests.HTTPError(
+            f"External HTTP {r.status_code} {r.reason}. Body: {body}",
+            response=r,
+        )
+
+    return r.json()
 
 
 def fetch_and_parse_page(
@@ -166,40 +166,55 @@ def fetch_and_parse_page(
     extra_params: Optional[Dict[str, Any]] = None,
 ) -> List[MappedCourse]:
     """
-    Trae y parsea UNA página del endpoint (page + page_size).
+    Trae y parsea UNA página del endpoint.
+    ✅ Tu endpoint usa page + pageSize (camelCase).
     """
     session = requests.Session()
     headers = _build_headers()
 
-    params: Dict[str, Any] = {"page": page, "page_size": page_size}
+    # ✅ IMPORTANTE: pageSize (no page_size)
+    params: Dict[str, Any] = {"page": int(page), "pageSize": int(page_size)}
     if extra_params:
         params.update(extra_params)
 
-    r = session.get(endpoint, headers=headers, params=params, timeout=timeout)
-    r.raise_for_status()
-    data = r.json()
+    # Reintento ligero para 429/5xx (opcional pero útil en prod)
+    retries = 2
+    last_err: Exception | None = None
+    for attempt in range(1, retries + 2):
+        try:
+            data = _request_json(session, endpoint, headers, params, timeout)
+            arr = _extract_courses_array_from_payload(data)
 
-    arr = _extract_courses_array_from_payload(data)
+            mapped: List[MappedCourse] = []
+            for it in arr:
+                if isinstance(it, dict):
+                    mapped.append(map_course(it))
+            return mapped
 
-    mapped: List[MappedCourse] = []
-    for it in arr:
-        if isinstance(it, dict):
-            mapped.append(map_course(it))
-    return mapped
+        except requests.HTTPError as e:
+            last_err = e
+            status = getattr(e.response, "status_code", None)
+            if status in (429, 500, 502, 503, 504) and attempt <= retries:
+                time.sleep(0.8 * attempt)
+                continue
+            raise
+
+        except Exception as e:
+            last_err = e
+            raise
+
+    # no debería llegar acá
+    if last_err:
+        raise last_err
+    return []
 
 
 def fetch_and_parse(endpoint: str, timeout: int = 60) -> List[MappedCourse]:
-    """
-    Compatibilidad con tu versión anterior (sin paginar).
-    Si tu endpoint siempre pagina, úsalo solo para debug.
-    """
+    """Compat (sin paginar)."""
     session = requests.Session()
     headers = _build_headers()
 
-    r = session.get(endpoint, headers=headers, timeout=timeout)
-    r.raise_for_status()
-    data = r.json()
-
+    data = _request_json(session, endpoint, headers, params={}, timeout=timeout)
     arr = _extract_courses_array_from_payload(data)
 
     mapped: List[MappedCourse] = []
