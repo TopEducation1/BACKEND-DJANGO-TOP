@@ -216,6 +216,24 @@ class CertificationSerializer(serializers.ModelSerializer):
                 if aprendizaje and aprendizaje.strip()
             ]
 
+        # Procesamiento de instructores (string -> lista)
+        instructores_raw = data.get('instructores_certificacion', '')
+        if isinstance(instructores_raw, str):
+            t = instructores_raw.strip()
+            if not t or t.lower() in ['none', 'null']:
+                data['instructores_certificacion'] = instructores_raw
+            else:
+                import re
+                # convierte "&", "and", "y" en coma y separa por coma
+                t = re.sub(r'\s*(?:&| and | y )\s*', ',', t, flags=re.IGNORECASE)
+
+                parts = [p.strip() for p in t.split(',') if p and p.strip()]
+
+                data['instructores_certificacion'] = [
+                    {"id": idx + 1, "name": name}
+                    for idx, name in enumerate(parts)
+                ]
+
         # Procesamiento del video
         video_url_raw = data.get('video_certificacion')
         video_url = video_url_raw.strip() if isinstance(video_url_raw, str) else ''

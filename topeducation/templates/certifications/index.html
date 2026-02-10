@@ -103,7 +103,7 @@
           </td>
           <td class="p-2">
             <div class="flex gap-2">
-              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="https://app.top.education/certificacion/{% if certification.plataforma_certificacion %}{{ certification.plataforma_certificacion.nombre|lower }}{% else %}{% endif %}/{{ certification.slug }}" target="_blank" title="Ver en página"><i class="fa-regular fa-eye"></i></a>
+              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="https://top.education/certificacion/{% if certification.plataforma_certificacion %}{{ certification.plataforma_certificacion.nombre|lower }}{% else %}{% endif %}/{{ certification.slug }}" target="_blank" title="Ver en página"><i class="fa-regular fa-eye"></i></a>
               <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'updateCertification' certification.id %}" title="Editar"><i class="fa-regular fa-pen-to-square"></i></a>
               <button onclick="openDeleteModal({{ certification.id }})" class="bg-red-500 hover:bg-red-700 text-white cursor-pointer font-bold py-2 px-4 rounded-full" title="Eliminar" > <i class="fa-regular fa-trash-can"></i> </button>
             </div>

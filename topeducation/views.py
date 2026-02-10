@@ -981,7 +981,6 @@ class CertificationDetailView(APIView):
             serializer = CertificationSerializer(certification)
             data = serializer.data
             
-            data['instructores_certificacion'] = instructor_links
         
             return Response(data) 
         except Certificaciones.DoesNotExist:
