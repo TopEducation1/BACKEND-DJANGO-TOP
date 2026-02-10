@@ -1,7 +1,9 @@
+# topeducation/inspectors/courses_inspector.py
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple, Optional
+
 import time
 import requests
 from django.conf import settings
@@ -104,10 +106,10 @@ def map_course(item: Dict[str, Any]) -> MappedCourse:
 def _build_headers() -> Dict[str, str]:
     """
     ✅ Para API Gateway lo normal es x-api-key.
-    Settings opcionales:
+    Settings:
       - COURSES_EXTERNAL_API_KEY
       - COURSES_EXTERNAL_AUTH_HEADER (default: "x-api-key")
-      - COURSES_EXTERNAL_AUTH_PREFIX (default: "Bearer ")  # solo si usas Authorization
+      - COURSES_EXTERNAL_AUTH_PREFIX (default: "")  # solo si Authorization
     """
     headers: Dict[str, str] = {"Accept": "application/json"}
 
@@ -116,18 +118,27 @@ def _build_headers() -> Dict[str, str]:
         return headers
 
     auth_header = getattr(settings, "COURSES_EXTERNAL_AUTH_HEADER", "x-api-key")
-    auth_prefix = getattr(settings, "COURSES_EXTERNAL_AUTH_PREFIX", "Bearer ")
+    auth_prefix = getattr(settings, "COURSES_EXTERNAL_AUTH_PREFIX", "")
 
     if auth_header.lower() == "authorization":
-        headers["Authorization"] = f"{auth_prefix}{api_key}".strip()
+        prefix = auth_prefix or "Bearer "
+        headers["Authorization"] = f"{prefix}{api_key}".strip()
     else:
-        headers[auth_header] = str(api_key).strip()
+        headers[auth_header] = f"{auth_prefix}{api_key}".strip()
 
     return headers
 
 
-def _extract_courses_array_from_payload(data: Any) -> List[Dict[str, Any]]:
-    # rutas comunes
+def _extract_items_from_payload(data: Any) -> List[Dict[str, Any]]:
+    """
+    ✅ Soporta:
+    - payload["items"] (tu endpoint nuevo)
+    - data->coursParsed (tu inspector anterior)
+    - fallback recursivo
+    """
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        return data["items"]
+
     if (
         isinstance(data, dict)
         and isinstance(data.get("data"), dict)
@@ -138,24 +149,87 @@ def _extract_courses_array_from_payload(data: Any) -> List[Dict[str, Any]]:
     if isinstance(data, dict) and isinstance(data.get("coursParsed"), list):
         return data["coursParsed"]
 
-    # fallback recursivo
     arr = find_courses_array(data)
     return arr if isinstance(arr, list) else []
 
 
-def _request_json(session: requests.Session, endpoint: str, headers: Dict[str, str], params: Dict[str, Any], timeout: int) -> Any:
-    r = session.get(endpoint, headers=headers, params=params, timeout=timeout)
+def _extract_total_pages(payload: Any) -> Optional[int]:
+    if not isinstance(payload, dict):
+        return None
 
-    # Para debug en logs (si falla)
+    for k in ("totalPages", "total_pages", "totalPage", "pages", "total_pages_count"):
+        v = payload.get(k)
+        if isinstance(v, int) and v > 0:
+            return v
+        if isinstance(v, str) and v.isdigit():
+            vv = int(v)
+            if vv > 0:
+                return vv
+
+    # a veces viene dentro de meta/pagination
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else None
+    if meta:
+        for k in ("totalPages", "total_pages", "pages"):
+            v = meta.get(k)
+            if isinstance(v, int) and v > 0:
+                return v
+            if isinstance(v, str) and v.isdigit():
+                vv = int(v)
+                if vv > 0:
+                    return vv
+
+    return None
+
+
+def _request_json(
+    session: requests.Session,
+    endpoint: str,
+    headers: Dict[str, str],
+    params: Dict[str, Any],
+    timeout: int,
+) -> Any:
+    r = session.get(endpoint, headers=headers, params=params, timeout=timeout)
     if r.status_code >= 400:
-        # recorta body para no reventar logs
         body = (r.text or "")[:800]
         raise requests.HTTPError(
             f"External HTTP {r.status_code} {r.reason}. Body: {body}",
             response=r,
         )
-
     return r.json()
+
+
+def fetch_payload_page(
+    endpoint: str,
+    page: int,
+    page_size: int,
+    timeout: int = 60,
+    extra_params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Trae el payload completo del endpoint.
+    ✅ Usa page + pageSize (camelCase).
+    """
+    session = requests.Session()
+    headers = _build_headers()
+
+    params: Dict[str, Any] = {"page": int(page), "pageSize": int(page_size)}
+    if extra_params:
+        params.update(extra_params)
+
+    retries = 2
+    for attempt in range(1, retries + 2):
+        try:
+            data = _request_json(session, endpoint, headers, params, timeout)
+            if not isinstance(data, dict):
+                # normalizamos a dict para que el caller no explote
+                return {"data": data}
+            return data
+        except requests.HTTPError as e:
+            status = getattr(e.response, "status_code", None)
+            if status in (429, 500, 502, 503, 504) and attempt <= retries:
+                time.sleep(0.8 * attempt)
+                continue
+            raise
 
 
 def fetch_and_parse_page(
@@ -166,59 +240,25 @@ def fetch_and_parse_page(
     extra_params: Optional[Dict[str, Any]] = None,
 ) -> List[MappedCourse]:
     """
-    Trae y parsea UNA página del endpoint.
-    ✅ Tu endpoint usa page + pageSize (camelCase).
+    Trae y parsea UNA página del endpoint a lista de MappedCourse.
     """
-    session = requests.Session()
-    headers = _build_headers()
-
-    # ✅ IMPORTANTE: pageSize (no page_size)
-    params: Dict[str, Any] = {"page": int(page), "pageSize": int(page_size)}
-    if extra_params:
-        params.update(extra_params)
-
-    # Reintento ligero para 429/5xx (opcional pero útil en prod)
-    retries = 2
-    last_err: Exception | None = None
-    for attempt in range(1, retries + 2):
-        try:
-            data = _request_json(session, endpoint, headers, params, timeout)
-            arr = _extract_courses_array_from_payload(data)
-
-            mapped: List[MappedCourse] = []
-            for it in arr:
-                if isinstance(it, dict):
-                    mapped.append(map_course(it))
-            return mapped
-
-        except requests.HTTPError as e:
-            last_err = e
-            status = getattr(e.response, "status_code", None)
-            if status in (429, 500, 502, 503, 504) and attempt <= retries:
-                time.sleep(0.8 * attempt)
-                continue
-            raise
-
-        except Exception as e:
-            last_err = e
-            raise
-
-    # no debería llegar acá
-    if last_err:
-        raise last_err
-    return []
-
-
-def fetch_and_parse(endpoint: str, timeout: int = 60) -> List[MappedCourse]:
-    """Compat (sin paginar)."""
-    session = requests.Session()
-    headers = _build_headers()
-
-    data = _request_json(session, endpoint, headers, params={}, timeout=timeout)
-    arr = _extract_courses_array_from_payload(data)
+    payload = fetch_payload_page(endpoint, page, page_size, timeout, extra_params=extra_params)
+    items = _extract_items_from_payload(payload)
 
     mapped: List[MappedCourse] = []
-    for it in arr:
+    for it in items:
         if isinstance(it, dict):
             mapped.append(map_course(it))
     return mapped
+
+
+def get_pagination_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Devuelve meta útil para decidir next_page.
+    """
+    items = _extract_items_from_payload(payload)
+    total_pages = _extract_total_pages(payload)
+    return {
+        "items_len": len(items) if isinstance(items, list) else 0,
+        "total_pages": total_pages,
+    }

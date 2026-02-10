@@ -2033,77 +2033,83 @@ def auth_password_reset_confirm(request):
     return Response({"ok": True})
 
 
+
+logger = logging.getLogger(__name__)
+
+LOCK_TTL_SECONDS = 14 * 60  # ~14 min para cron de 15 min
+
+
+def _get_courses_endpoint() -> str:
+    return getattr(settings, "COURSES_EXTERNAL_ENDPOINT", None) or \
+           "https://erucsg6yrj.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information/courses"
+
+
 def _build_external_headers() -> dict:
+    """
+    Usa settings:
+      - COURSES_EXTERNAL_API_KEY  (recomendado)
+      - COURSES_EXTERNAL_AUTH_HEADER (default x-api-key)
+      - COURSES_EXTERNAL_AUTH_PREFIX (default "")
+    """
     headers = {"Accept": "application/json"}
-    api_key = getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
+
+    api_key = getattr(settings, "COURSES_EXTERNAL_API_KEY", None) or getattr(settings, "AWS_COURSES_API_KEY", None)
     if not api_key:
         return headers
 
     auth_header = getattr(settings, "COURSES_EXTERNAL_AUTH_HEADER", "x-api-key")
     auth_prefix = getattr(settings, "COURSES_EXTERNAL_AUTH_PREFIX", "")
 
-    # Si el header es Authorization, puede llevar prefix Bearer
     if auth_header.lower() == "authorization":
         prefix = auth_prefix or "Bearer "
         headers["Authorization"] = f"{prefix}{api_key}".strip()
-        return headers
-
-    # Para x-api-key u otros, NO le pongas Bearer
-    headers[auth_header] = f"{auth_prefix}{api_key}".strip()
-    return headers
-
-
-
-def _is_allowed_external_url(url: str) -> bool:
-    """
-    Muy recomendado: whitelist por dominio para que tu proxy no sea open-proxy.
-    Ajusta el host permitido al tuyo real.
-    """
-    try:
-        host = urlparse(url).netloc.lower()
-    except Exception:
-        return False
-
-    allowed = getattr(settings, "COURSES_EXTERNAL_ALLOWED_HOSTS", [])
-    if not allowed:
-        # si no configuras whitelist, por lo menos bloquea vacío
-        return bool(host)
-
-    return host in [h.lower() for h in allowed]
-
-
-@require_GET
-def api_proxy_courses(request):
-    url = (request.GET.get("url") or "").strip()
-    if not url:
-        return HttpResponseBadRequest("Missing url")
-    if not _is_allowed_external_url(url):
-        return HttpResponseBadRequest("URL not allowed")
-
-    try:
-        r = requests.get(url, headers=_build_external_headers(), timeout=60)
-        return JsonResponse(r.json(), status=r.status_code, safe=isinstance(r.json(), dict))
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-
-
-
-def _build_external_headers() -> dict:
-    headers = {"Accept": "application/json"}
-    api_key = getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
-    if not api_key:
-        return headers
-
-    auth_header = getattr(settings, "COURSES_EXTERNAL_AUTH_HEADER", "Authorization")
-    auth_prefix = getattr(settings, "COURSES_EXTERNAL_AUTH_PREFIX", "Bearer ")
-
-    if auth_header.lower() == "authorization":
-        headers["Authorization"] = f"{auth_prefix}{api_key}".strip()
     else:
-        headers[auth_header] = str(api_key).strip()
+        headers[auth_header] = f"{auth_prefix}{api_key}".strip()
+
     return headers
 
 
+def _extract_total_pages(payload: dict) -> int | None:
+    for k in ("totalPages", "total_pages", "totalPage", "pages"):
+        v = payload.get(k)
+        if isinstance(v, int) and v > 0:
+            return v
+        if isinstance(v, str) and v.isdigit():
+            vv = int(v)
+            if vv > 0:
+                return vv
+
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else None
+    if meta:
+        for k in ("totalPages", "total_pages", "pages"):
+            v = meta.get(k)
+            if isinstance(v, int) and v > 0:
+                return v
+            if isinstance(v, str) and v.isdigit():
+                vv = int(v)
+                if vv > 0:
+                    return vv
+
+    return None
+
+
+def _compute_next_page(page: int, page_size: int, payload: dict) -> int:
+    items = payload.get("items", [])
+    items_len = len(items) if isinstance(items, list) else 0
+    total_pages = _extract_total_pages(payload)
+
+    # ✅ Regla robusta:
+    # - si hay total_pages, reinicia al terminar
+    # - si NO hay total_pages, reinicia solo cuando items_len == 0
+    if isinstance(total_pages, int) and total_pages > 0:
+        return 1 if page >= total_pages else (page + 1)
+
+    return 1 if items_len == 0 else (page + 1)
+
+
+# =========================
+# PROXY (opcional / inspector)
+# =========================
 def _is_allowed_external_url(url: str) -> bool:
     try:
         host = urlparse(url).netloc.lower()
@@ -2127,36 +2133,40 @@ def api_proxy_courses(request):
 
     try:
         r = requests.get(url, headers=_build_external_headers(), timeout=60)
-        # devolvemos el JSON del externo
-        return JsonResponse(r.json(), status=r.status_code, safe=isinstance(r.json(), dict))
+        # ⚠️ safe debe ser False si es lista
+        data = r.json()
+        return JsonResponse(data, status=r.status_code, safe=isinstance(data, dict))
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
 
-LOCK_TTL_SECONDS = 14 * 60  # ~14 min para cron de 15 min
-
-def _get_courses_endpoint():
-    # puedes moverlo a settings si quieres
-    return getattr(settings, "COURSES_EXTERNAL_ENDPOINT", None) or \
-           "https://erucsg6yrj.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information/courses"
-
-def _get_courses_api_key():
-    return getattr(settings, "AWS_COURSES_API_KEY", None) or getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
-
+# =========================
+# CRON SYNC
+# =========================
 @csrf_exempt
 @require_POST
 def api_run_courses_sync(request):
+    """
+    POST /api/sync/courses/run/
+    Body opcional:
+    {
+      "pageSize": 50,
+      "timeout": 30,
+      "maxPagesPerRun": 1
+    }
+    """
     t0 = time.time()
     run_id = uuid.uuid4().hex[:16]
     state_key = "courses_sync"
 
     endpoint = _get_courses_endpoint()
-    api_key = _get_courses_api_key()
+    headers = _build_external_headers()
 
-    if not api_key:
+    if "Authorization" not in headers and "x-api-key" not in {k.lower(): v for k, v in headers.items()}:
+        # no hay credencial
         return JsonResponse({"ok": False, "error": "missing_api_key"}, status=500)
 
-    # body opcional: pageSize, maxPagesPerRun, timeout
+    # body opcional
     try:
         body = json.loads(request.body or "{}")
     except Exception:
@@ -2165,9 +2175,8 @@ def api_run_courses_sync(request):
     page_size = int(body.get("pageSize", 50) or 50)
     timeout = int(body.get("timeout", 30) or 30)
 
-    # 🔥 si quieres que en un solo cron procese más de una página:
     max_pages_per_run = int(body.get("maxPagesPerRun", 1) or 1)
-    max_pages_per_run = max(1, min(max_pages_per_run, 10))  # cap de seguridad
+    max_pages_per_run = max(1, min(max_pages_per_run, 10))  # cap seguridad
 
     # 1) asegurar state
     state, _ = ExternalSyncState.objects.get_or_create(
@@ -2175,11 +2184,11 @@ def api_run_courses_sync(request):
         defaults={"cursor_value": "1", "running": False},
     )
 
-    # 2) adquirir lock con TTL
+    # 2) adquirir lock con TTL (robusto + no pisar otro run)
     now = timezone.now()
     stale_before = now - timedelta(seconds=LOCK_TTL_SECONDS)
 
-    # si está corriendo y el lock no está stale: salimos OK sin hacer nada
+    # Si está corriendo y NO está stale => no hacemos nada
     if state.running and state.locked_at and state.locked_at > stale_before:
         return JsonResponse({
             "ok": True,
@@ -2189,28 +2198,29 @@ def api_run_courses_sync(request):
             "state_key": state_key,
         }, status=200)
 
-    # tomar lock
-    state.running = True
-    state.locked_at = now
-    state.updated_at = now
-    state.save(update_fields=["running", "locked_at", "updated_at"])
+    # Tomar lock (guardamos el locked_at que vamos a usar para liberar luego)
+    locked_at_value = now
+    ExternalSyncState.objects.filter(key=state_key).update(
+        running=True,
+        locked_at=locked_at_value,
+        updated_at=now,
+    )
 
     processed_pages = 0
     last_result = None
 
     try:
         # cursor actual
+        state = ExternalSyncState.objects.get(key=state_key)
         try:
             page = max(1, int(state.cursor_value or "1"))
         except Exception:
             page = 1
 
-        headers = {"Accept": "application/json", "x-api-key": api_key}
-
         for _ in range(max_pages_per_run):
             params = {"page": page, "pageSize": page_size}
 
-            # 3) pedir payload al externo (igual que tu sync manual)
+            # 3) pedir payload
             try:
                 resp = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
             except requests.RequestException as e:
@@ -2220,9 +2230,10 @@ def api_run_courses_sync(request):
                     ok=False, took_ms=took_ms,
                     error="upstream_unreachable", detail=str(e), trace=traceback.format_exc()[:8000],
                 )
-                state.last_error_at = timezone.now()
-                state.last_error = f"upstream_unreachable: {e}"
-                state.save(update_fields=["last_error_at", "last_error"])
+                ExternalSyncState.objects.filter(key=state_key).update(
+                    last_error_at=timezone.now(),
+                    last_error=f"upstream_unreachable: {e}",
+                )
                 return JsonResponse({"ok": False, "error": "upstream_unreachable", "detail": str(e)}, status=502)
 
             if resp.status_code != 200:
@@ -2233,72 +2244,86 @@ def api_run_courses_sync(request):
                     error="upstream_error",
                     detail=f"HTTP {resp.status_code}: {resp.text[:2000]}",
                 )
-                state.last_error_at = timezone.now()
-                state.last_error = f"upstream_error HTTP {resp.status_code}"
-                state.save(update_fields=["last_error_at", "last_error"])
+                ExternalSyncState.objects.filter(key=state_key).update(
+                    last_error_at=timezone.now(),
+                    last_error=f"upstream_error HTTP {resp.status_code}",
+                )
                 return JsonResponse({"ok": False, "error": "upstream_error", "status": resp.status_code}, status=502)
 
             try:
                 payload = resp.json()
+                if not isinstance(payload, dict):
+                    payload = {"data": payload}
             except Exception:
                 took_ms = int((time.time() - t0) * 1000)
                 ExternalSyncLog.objects.create(
                     key=state_key, run_id=run_id, page=page, page_size=page_size,
                     ok=False, took_ms=took_ms,
                     error="invalid_json_from_upstream",
-                    detail=resp.text[:2000],
+                    detail=(resp.text or "")[:2000],
                 )
-                state.last_error_at = timezone.now()
-                state.last_error = "invalid_json_from_upstream"
-                state.save(update_fields=["last_error_at", "last_error"])
+                ExternalSyncState.objects.filter(key=state_key).update(
+                    last_error_at=timezone.now(),
+                    last_error="invalid_json_from_upstream",
+                )
                 return JsonResponse({"ok": False, "error": "invalid_json_from_upstream"}, status=502)
 
             items = payload.get("items", [])
             items_len = len(items) if isinstance(items, list) else 0
+            total_pages = _extract_total_pages(payload)
 
-            # 4) ingestar a BD
+            # 4) ingestar
             try:
                 summary = ingest_course_payload(payload)
             except Exception as e:
                 took_ms = int((time.time() - t0) * 1000)
                 ExternalSyncLog.objects.create(
                     key=state_key, run_id=run_id, page=page, page_size=page_size,
-                    ok=False, items_len=items_len, took_ms=took_ms,
+                    ok=False, items_len=items_len, received=items_len, took_ms=took_ms,
                     error="ingestion_failed", detail=str(e), trace=traceback.format_exc()[:8000],
                 )
-                state.last_error_at = timezone.now()
-                state.last_error = f"ingestion_failed: {e}"
-                state.save(update_fields=["last_error_at", "last_error"])
+                ExternalSyncState.objects.filter(key=state_key).update(
+                    last_error_at=timezone.now(),
+                    last_error=f"ingestion_failed: {e}",
+                )
                 return JsonResponse({"ok": False, "error": "ingestion_failed", "detail": str(e)}, status=500)
 
-            # 5) avanzar cursor
-            next_page = 1 if items_len < page_size else (page + 1)
-            state.cursor_value = str(next_page)
-            state.last_ok_at = timezone.now()
-            state.last_error = ""
-            state.save(update_fields=["cursor_value", "last_ok_at", "last_error", "updated_at"])
+            # 5) avanzar cursor (✅ robusto)
+            next_page = _compute_next_page(page, page_size, payload)
+
+            ExternalSyncState.objects.filter(key=state_key).update(
+                cursor_value=str(next_page),
+                last_ok_at=timezone.now(),
+                last_error="",
+                updated_at=timezone.now(),
+            )
 
             processed_pages += 1
             last_result = {
                 "page": page,
-                "page_size": page_size,
+                "page_size_requested": page_size,
                 "items_len": items_len,
+                "total_pages": total_pages,
                 "next_page": next_page,
                 "summary": summary,
             }
 
-            # log ok
             ExternalSyncLog.objects.create(
                 key=state_key, run_id=run_id, page=page, page_size=page_size,
                 ok=True, items_len=items_len, received=items_len,
                 took_ms=int((time.time() - t0) * 1000),
+                detail=f"items_len={items_len} total_pages={total_pages} next_page={next_page}",
             )
 
+            # actualizar loop
             page = next_page
 
-            # si llegamos al final (reinició a 1), cortamos
-            if next_page == 1:
+            # si reinició a 1 por fin real => cortamos
+            if next_page == 1 and processed_pages >= 1:
                 break
+
+        # recargar cursor actual para responder
+        state = ExternalSyncState.objects.get(key=state_key)
 
         return JsonResponse({
             "ok": True,
@@ -2311,14 +2336,16 @@ def api_run_courses_sync(request):
         }, status=200)
 
     finally:
-        # liberar lock siempre
+        # liberar lock SOLO si locked_at coincide con el que pusimos
         try:
-            ExternalSyncState.objects.filter(key=state_key).update(
+            ExternalSyncState.objects.filter(
+                key=state_key,
+                running=True,
+                locked_at=locked_at_value,
+            ).update(
                 running=False,
                 locked_at=None,
                 updated_at=timezone.now(),
             )
         except Exception:
             pass
-
-
