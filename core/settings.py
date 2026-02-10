@@ -40,6 +40,7 @@ STRIPE_CANCEL_URL  = os.getenv("STRIPE_CANCEL_URL", "http://localhost:3000/cance
 PROXY_WHITELIST = {
     "erucsg6yrj.execute-api.us-east-1.amazonaws.com",
 }
+APPEND_SLASH = True
 
 COURSES_EXTERNAL_ENDPOINT = os.getenv("COURSES_EXTERNAL_ENDPOINT")
 COURSES_EXTERNAL_API_KEY = os.getenv("COURSES_EXTERNAL_API_KEY", default=None)
@@ -59,10 +60,6 @@ PROXY_HEADERS = {
 }
 
 PROXY_TIMEOUT = 30
-
-
-# (opcional) headers por host si algún día los necesitas
-PROXY_HEADERS = {}
 
 # (opcional) timeout
 PROXY_TIMEOUT = 15

@@ -89,7 +89,9 @@ urlpatterns = [
     path("ckeditor/", include("ckeditor_uploader.urls")),
     path("inspector/catalog/", views.catalog_inspector, name="catalog_inspector"),
     path("bussines/purchases/", login_required(views.admin_purchases_page, login_url="/signin/"),name="admin_purchases_page"),
-    path("api/proxy", views.proxy_json, name="proxy_json"),
+    path("api/proxy/", views.proxy_json, name="proxy_json"),
+    path("api/proxy/courses/", views.proxy_json, name="proxy_courses"),
+    path("api/sync/courses/run/", views.api_run_courses_sync, name="api_run_courses_sync"),
     path("api/sync/courses/", views.sync_courses_from_external, name="sync_courses_from_external"),
     path("api/stripe/create-checkout-session/", views.create_checkout_session, name="create_checkout_session"),
     path('api/stripe/webhook/', views.stripe_webhook, name='stripe_webhook'),
@@ -102,7 +104,7 @@ urlpatterns = [
     path("api/auth/password/reset/", views.auth_password_reset_request, name="auth_password_reset_request"),
     path("api/auth/password/reset/confirm/", views.auth_password_reset_confirm, name="auth_password_reset_confirm"),
     path("api/admin/purchases/",login_required(views.admin_purchases_api, login_url="/signin/"),name="admin_purchases_api"),
-    path("api/sync/courses/run/", views.api_run_courses_sync, name="api_run_courses_sync"),
+    
 
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 if settings.DEBUG:

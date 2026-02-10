@@ -88,7 +88,8 @@
   // ⚠️ No usamos x-api-key en el front. El backend toma la key del .env.
   // Recomendado: usa un proxy dedicado para cursos, para no chocar con tu proxy_json existente.
   // Si tu ruta es /api/proxy/courses, déjalo así:
-  const PROXY_PATH = "/api/proxy/courses";
+  const PROXY_PATH = "/api/proxy/courses/";
+
 
   // Endpoint interno que ejecuta "1 página" tipo cron job manual.
   // Si ya lo migraste a /api/sync/courses/run, puedes cambiarlo aquí.
@@ -191,6 +192,7 @@
         `${PROXY_PATH}?url=${encodeURIComponent(url)}`,
         { headers: { "Accept": "application/json" } }
       );
+
 
       const text = await res.text();
       let data = {};

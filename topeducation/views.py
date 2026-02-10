@@ -647,61 +647,59 @@ def catalog_inspector(request):
         },
     )
 
+
 @require_GET
 def proxy_json(request):
-    raw_url = request.GET.get("url", "").strip()
-    if not raw_url:
-        return HttpResponseBadRequest("Missing 'url' param.")
+    url = (request.GET.get("url") or "").strip()
+    if not url:
+        return HttpResponseBadRequest("Missing url")
 
-    parsed = urlparse(raw_url)
-    if parsed.scheme not in ("http", "https"):
-        return HttpResponseBadRequest("Invalid scheme. Only http/https allowed.")
-
-    host = parsed.netloc
-    if host not in getattr(settings, "PROXY_WHITELIST", set()):
-        return HttpResponseForbidden("Upstream host not allowed.")
-
-    # Combinar query original + params del cliente (excepto 'url')
-    upstream_qs = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    for k in request.GET.keys():
-        if k == "url":
-            continue
-        vals = request.GET.getlist(k)
-        upstream_qs[k] = vals if len(vals) > 1 else vals[0]
-
-    final_query = urlencode(upstream_qs, doseq=True)
-    final_url = urlunparse(parsed._replace(query=final_query))
-
-    # ✅ Headers upstream
-    headers = {"Accept": "application/json"}
-
-    # 1) headers fijos desde settings (por host)
-    headers.update(getattr(settings, "PROXY_HEADERS", {}).get(host, {}))
-
-    # 2) ✅ reenviar x-api-key del navegador si viene (case-insensitive)
-    api_key = request.headers.get("x-api-key") or request.META.get("HTTP_X_API_KEY")
-    if api_key:
-        headers["x-api-key"] = api_key
-
+    # Parse host
     try:
-        resp = requests.get(final_url, headers=headers, timeout=getattr(settings, "PROXY_TIMEOUT", 20))
-    except requests.RequestException as e:
-        return JsonResponse({"error": "upstream_unreachable", "detail": str(e)}, status=502)
+        parsed = urlparse(url)
+        host = (parsed.netloc or "").lower()
+        host = host.split(":")[0]  # ✅ quita :443, :80, etc.
+    except Exception:
+        return HttpResponseBadRequest("Invalid url")
 
-    # si upstream devuelve error real, pásalo tal cual
-    if resp.status_code >= 400:
+    # ✅ Whitelist por seguridad (opcional pero recomendado)
+    allowed_hosts = set((getattr(settings, "PROXY_HEADERS", {}) or {}).keys())
+    if host not in allowed_hosts:
+        return HttpResponseBadRequest("URL not allowed")
+
+    # Headers base + headers del host
+    headers = {"Accept": "application/json"}
+    extra = (getattr(settings, "PROXY_HEADERS", {}) or {}).get(host, {}) or {}
+    headers.update(extra)
+
+    # ✅ Si la key está vacía, mejor falla claro (evita 403 confuso)
+    if "x-api-key" in headers and not headers["x-api-key"]:
         return JsonResponse(
-            {"error": "upstream_error", "status": resp.status_code, "url": final_url, "response": resp.text},
-            status=502
+            {"error": "missing_api_key_env", "detail": "AWS_COURSES_API_KEY is empty in this environment"},
+            status=500,
         )
 
     try:
-        data = resp.json()
-    except ValueError:
-        return JsonResponse({"error": "invalid_json_from_upstream", "response": resp.text[:4000]}, status=502)
+        r = requests.get(url, headers=headers, timeout=60)
+        content_type = (r.headers.get("content-type") or "").lower()
 
-    return JsonResponse(data, safe=not isinstance(data, list))
+        # Si no es JSON, devolvemos el raw para debug
+        if "application/json" not in content_type:
+            return JsonResponse(
+                {
+                    "error": "upstream_not_json",
+                    "status": r.status_code,
+                    "url": url,
+                    "raw": (r.text or "")[:4000],
+                },
+                status=502 if r.status_code >= 400 else 200,
+            )
 
+        data = r.json()
+        return JsonResponse(data, status=r.status_code, safe=isinstance(data, dict))
+
+    except Exception as e:
+        return JsonResponse({"error": "proxy_failed", "detail": str(e)}, status=500)
 
 
 class CustomPagination(PageNumberPagination):
