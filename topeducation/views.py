@@ -2033,6 +2033,7 @@ def auth_password_reset_confirm(request):
 
 logger = logging.getLogger(__name__)
 
+
 LOCK_TTL_SECONDS = 14 * 60  # ~14 min para cron de 15 min
 
 
@@ -2092,27 +2093,6 @@ def _acquire_lock(state_key: str, run_id: str) -> ExternalSyncState | None:
     now = timezone.now()
     stale_before = now - timedelta(seconds=LOCK_TTL_SECONDS)
 
-    qs = ExternalSyncState.objects.filter(key=state_key).filter(
-        # disponible si no está corriendo
-        # o si está corriendo pero stale
-    )
-
-    # NOTA: para ser realmente atómico, hacemos update condicional y luego re-fetch
-    updated = ExternalSyncState.objects.filter(
-        key=state_key
-    ).filter(
-        # puede tomar lock si:
-        # - running != True
-        # - o locked_at es null
-        # - o locked_at < stale_before
-        # - o locked_at no existe (por si acaso)
-        # (en MySQL, locked_at NULL lo cubre)
-        # y evitamos depender de "updated_at"
-        # ------------------------------------------------
-        # Django: Q(...) requerido
-    )
-    from django.db.models import Q
-
     updated = ExternalSyncState.objects.filter(key=state_key).filter(
         Q(running=False) |
         Q(locked_at__isnull=True) |
@@ -2156,6 +2136,15 @@ def api_run_courses_sync(request):
     endpoint = _get_courses_endpoint()
     api_key = _get_courses_api_key()
     if not api_key:
+        # ✅ log para que no sea 500 "mudo"
+        ExternalSyncLog.objects.create(
+            key=state_key, run_id=run_id,
+            page=0, page_size=0,
+            ok=False, took_ms=0,
+            error="missing_api_key",
+            detail="AWS_COURSES_API_KEY / COURSES_EXTERNAL_API_KEY no configurada",
+            trace="",
+        )
         return JsonResponse({"ok": False, "error": "missing_api_key"}, status=500)
 
     try:
@@ -2189,6 +2178,9 @@ def api_run_courses_sync(request):
 
     processed_pages = 0
     last_result = None
+
+    # ✅ variables para poder loguear aunque falle inesperadamente
+    page = 1
 
     try:
         # cursor actual
@@ -2266,6 +2258,10 @@ def api_run_courses_sync(request):
 
                 return JsonResponse({"ok": False, "error": "invalid_json_from_upstream"}, status=502)
 
+            # ✅ FIX CRÍTICO: si el upstream devuelve list/str/etc, normalizamos a dict
+            if not isinstance(payload, dict):
+                payload = {"data": payload}
+
             items_len = _safe_items_len(payload)
 
             # 4) ingestar
@@ -2339,6 +2335,24 @@ def api_run_courses_sync(request):
             "took_ms": int((time.time() - t0) * 1000),
             "last": last_result,
         }, status=200)
+
+    except Exception as e:
+        # ✅ catch-all: evita 500 "sin rastro" y deja log con trace
+        took_ms = int((time.time() - t0) * 1000)
+        ExternalSyncLog.objects.create(
+            key=state_key, run_id=run_id,
+            page=page, page_size=page_size,
+            ok=False, took_ms=took_ms,
+            error="unexpected_exception",
+            detail=str(e),
+            trace=traceback.format_exc()[:8000],
+        )
+        ExternalSyncState.objects.filter(key=state_key).update(
+            last_error_at=timezone.now(),
+            last_error=f"unexpected_exception: {e}",
+            updated_at=timezone.now(),
+        )
+        return JsonResponse({"ok": False, "error": "unexpected_exception"}, status=500)
 
     finally:
         # liberar lock siempre (si este proceso lo tomó)

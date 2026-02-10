@@ -1,19 +1,52 @@
 from django.db import transaction
 from django.utils.text import slugify
+from django.utils import timezone
 
 import re
 import json
+import traceback
 from unidecode import unidecode
 
 from topeducation.models import Temas, Universidades, Empresas, Plataformas, Certificaciones
 
+
 def _norm(s: str) -> str:
     return (s or "").strip()
 
+
+def _pick_one(qs, order_by="id"):
+    """
+    Devuelve 1 objeto de un queryset (o None) de forma determinística.
+    """
+    return qs.order_by(order_by).first()
+
+
+def _safe_get_or_create_unique(model, lookup: dict, defaults: dict, *, order_by="id"):
+    """
+    Alternativa segura a get_or_create cuando puede haber duplicados.
+    - Si existe 1: retorna (obj, False)
+    - Si existen varios: retorna (obj_elegido, False) sin reventar
+    - Si no existe: crea y retorna (obj, True)
+    """
+    qs = model.objects.filter(**lookup)
+    obj = _pick_one(qs, order_by=order_by)
+    if obj:
+        return obj, False
+    # crear
+    obj = model.objects.create(**lookup, **defaults)
+    return obj, True
+
+
 def upsert_tema(item: dict) -> Temas:
     nombre = _norm(item.get("nombre"))
-    obj, _ = Temas.objects.get_or_create(
-        nombre=nombre,
+    if not nombre:
+        # si te llega vacío, evita crear registros raros
+        # (puedes decidir otro comportamiento)
+        return Temas.objects.filter(nombre="").first()  # type: ignore[return-value]
+
+    obj, created = _safe_get_or_create_unique(
+        Temas,
+        lookup={"nombre": nombre},
         defaults={
             "tem_type": item.get("tem_type"),
             "tem_img": item.get("tem_img"),
@@ -21,7 +54,7 @@ def upsert_tema(item: dict) -> Temas:
             "tem_col": None,
         },
     )
-    # update ligero
+
     changed = False
     for field, val in {
         "tem_type": item.get("tem_type"),
@@ -36,10 +69,15 @@ def upsert_tema(item: dict) -> Temas:
         obj.save(update_fields=["tem_type", "tem_img", "tem_est"])
     return obj
 
+
 def upsert_universidad(item: dict) -> Universidades:
     nombre = _norm(item.get("nombre"))
-    obj, _ = Universidades.objects.get_or_create(
-        nombre=nombre,
+    if not nombre:
+        return Universidades.objects.filter(nombre="").first()  # type: ignore[return-value]
+
+    obj, created = _safe_get_or_create_unique(
+        Universidades,
+        lookup={"nombre": nombre},
         defaults={
             "univ_img": item.get("univ_img"),
             "univ_est": item.get("univ_est") or "enabled",
@@ -49,44 +87,55 @@ def upsert_universidad(item: dict) -> Universidades:
             "univ_top": None,
         },
     )
-    # update ligero
+
     new_img = item.get("univ_img")
-    new_est = item.get("univ_est") or obj.univ_est
+    new_est = item.get("univ_est") or getattr(obj, "univ_est", "enabled")
     changed = False
-    if new_img and obj.univ_img != new_img:
+    if new_img and getattr(obj, "univ_img", None) != new_img:
         obj.univ_img = new_img
         changed = True
-    if new_est and obj.univ_est != new_est:
+    if new_est and getattr(obj, "univ_est", None) != new_est:
         obj.univ_est = new_est
         changed = True
     if changed:
         obj.save(update_fields=["univ_img", "univ_est"])
     return obj
 
+
 def upsert_plataforma(item: dict) -> Plataformas:
     nombre = _norm(item.get("nombre"))
-    obj, _ = Plataformas.objects.get_or_create(
-        nombre=nombre,
+    if not nombre:
+        return Plataformas.objects.filter(nombre="").first()  # type: ignore[return-value]
+
+    obj, created = _safe_get_or_create_unique(
+        Plataformas,
+        lookup={"nombre": nombre},
         defaults={
             "plat_img": item.get("plat_img"),
             "plat_ico": None,
         },
     )
+
     new_img = item.get("plat_img")
-    if new_img and obj.plat_img != new_img:
+    if new_img and getattr(obj, "plat_img", None) != new_img:
         obj.plat_img = new_img
         obj.save(update_fields=["plat_img"])
     return obj
+
 
 def upsert_empresa_por_nombre(nombre: str) -> Empresas | None:
     nombre = _norm(nombre)
     if not nombre:
         return None
-    obj, _ = Empresas.objects.get_or_create(
-        nombre=nombre,
+
+    # también tolerante a duplicados
+    obj, _ = _safe_get_or_create_unique(
+        Empresas,
+        lookup={"nombre": nombre},
         defaults={"empr_est": "enabled"},
     )
     return obj
+
 
 def upsert_certificacion(cert: dict, temas_map: dict, univ_map: dict, plat_map: dict) -> Certificaciones:
     # FKs por nombre
@@ -108,11 +157,12 @@ def upsert_certificacion(cert: dict, temas_map: dict, univ_map: dict, plat_map: 
         obj = Certificaciones.objects.filter(url_certificacion_original=url_original).first()
 
     if not obj:
-        # fallback por combinación
         obj = (Certificaciones.objects
-               .filter(nombre=_norm(cert.get("nombre")),
-                       plataforma_certificacion=plat_fk,
-                       universidad_certificacion=univ_fk)
+               .filter(
+                    nombre=_norm(cert.get("nombre")),
+                    plataforma_certificacion=plat_fk,
+                    universidad_certificacion=univ_fk
+                )
                .first())
 
     defaults = {
@@ -143,7 +193,6 @@ def upsert_certificacion(cert: dict, temas_map: dict, univ_map: dict, plat_map: 
         obj = Certificaciones.objects.create(**defaults)
         return obj
 
-    # update (solo campos relevantes)
     changed_fields = []
     for k, v in defaults.items():
         if getattr(obj, k) != v:
@@ -154,8 +203,10 @@ def upsert_certificacion(cert: dict, temas_map: dict, univ_map: dict, plat_map: 
         obj.save(update_fields=changed_fields)
     return obj
 
+
 def _safe_str(v):
     return (v or "").strip() if isinstance(v, str) else ("" if v is None else str(v))
+
 
 @transaction.atomic
 def ingest_course_payload(payload: dict) -> dict:
@@ -171,22 +222,24 @@ def ingest_course_payload(payload: dict) -> dict:
     processed = 0
     skipped_existing = 0
     skipped_invalid = 0
+    duplicates_detected = 0
 
     for item in items:
-        # 1) upsert temas / universidades / plataformas por nombre (opcional)
-        #    (si tu lógica actual los crea en otra parte, puedes dejarlo)
         temas_map = {}
         for t in (item.get("temas") or []):
             nombre = (t.get("nombre") or "").strip()
             if not nombre:
                 continue
-            obj, created = Temas.objects.get_or_create(
-                nombre=nombre,
+
+            # ✅ tolerante a duplicados
+            obj, created = _safe_get_or_create_unique(
+                Temas,
+                lookup={"nombre": nombre},
                 defaults={
                     "tem_img": t.get("tem_img"),
                     "tem_type": t.get("tem_type"),
-                    "tem_est": "Active",
-                }
+                    "tem_est": "disabled",
+                },
             )
             if created:
                 created_temas += 1
@@ -197,16 +250,40 @@ def ingest_course_payload(payload: dict) -> dict:
             nombre = (u.get("nombre") or "").strip()
             if not nombre:
                 continue
-            obj, created = Universidades.objects.get_or_create(
-                nombre=nombre,
-                defaults={
-                    "univ_img": u.get("univ_img"),
-                    "univ_est": u.get("univ_est") or "Active",
-                    "region_universidad": None,
-                }
-            )
+
+            # ✅ tolerante a duplicados
+            qs = Universidades.objects.filter(nombre=nombre)
+            if qs.count() > 1:
+                duplicates_detected += 1
+
+            obj = _pick_one(qs, "id")
+            if obj:
+                created = False
+            else:
+                obj = Universidades.objects.create(
+                    nombre=nombre,
+                    univ_img=u.get("univ_img"),
+                    univ_est=u.get("univ_est") or "disabled",
+                    region_universidad=None,
+                )
+                created = True
+
             if created:
                 created_unis += 1
+
+            # update ligero (si quieres)
+            new_img = u.get("univ_img")
+            new_est = u.get("univ_est")
+            to_update = []
+            if new_img and getattr(obj, "univ_img", None) != new_img:
+                obj.univ_img = new_img
+                to_update.append("univ_img")
+            if new_est and getattr(obj, "univ_est", None) != new_est:
+                obj.univ_est = new_est
+                to_update.append("univ_est")
+            if to_update:
+                obj.save(update_fields=to_update)
+
             unis_map[nombre.lower()] = obj
 
         plats_map = {}
@@ -214,9 +291,11 @@ def ingest_course_payload(payload: dict) -> dict:
             nombre = (p.get("nombre") or "").strip()
             if not nombre:
                 continue
-            obj, created = Plataformas.objects.get_or_create(
-                nombre=nombre,
-                defaults={"plat_img": p.get("plat_img")}
+
+            obj, created = _safe_get_or_create_unique(
+                Plataformas,
+                lookup={"nombre": nombre},
+                defaults={"plat_img": p.get("plat_img")},
             )
             if created:
                 created_plats += 1
@@ -229,18 +308,15 @@ def ingest_course_payload(payload: dict) -> dict:
                 skipped_invalid += 1
                 continue
 
-            # ✅ SLUG PROPIO (NO usar el del endpoint)
             slug = safe_slug_from_name(nombre)
             if not slug:
                 skipped_invalid += 1
                 continue
 
-            # ✅ NO DUPLICAR: si existe por slug, no crear
             if Certificaciones.objects.filter(slug=slug).exists():
                 skipped_existing += 1
                 continue
 
-            # relaciones por nombre
             tema_name = (c.get("tema_certificacion") or "").strip().lower()
             tema_obj = temas_map.get(tema_name) if tema_name else None
 
@@ -250,13 +326,16 @@ def ingest_course_payload(payload: dict) -> dict:
             plat_name = (c.get("plataforma_certificacion") or "").strip().lower()
             plat_obj = plats_map.get(plat_name) if plat_name else None
 
-            # empresa (si llega)
             empresa_obj = None
             emp_name = (c.get("empresa_certificacion") or "").strip()
             if emp_name:
-                empresa_obj, _ = Empresas.objects.get_or_create(nombre=emp_name)
+                # ✅ tolerante a duplicados
+                empresa_obj, _ = _safe_get_or_create_unique(
+                    Empresas,
+                    lookup={"nombre": emp_name},
+                    defaults={"empr_est": "enabled"},
+                )
 
-            # ✅ limpiar habilidades
             habilidades_limpias = clean_habilidades(c.get("habilidades_certificacion"))
 
             Certificaciones.objects.create(
@@ -281,8 +360,6 @@ def ingest_course_payload(payload: dict) -> dict:
                 empresa_certificacion=empresa_obj,
                 plataforma_certificacion=plat_obj,
 
-                # si quieres respetar la fecha del endpoint, tendrías que cambiar el field
-                # (tu modelo ahora es auto_now_add). Por ahora dejamos que se guarde “hoy”.
                 url_certificacion_original=c.get("url_certificacion_original") or "Null",
                 video_certificacion=c.get("video_certificacion") or "Null",
                 imagen_final=c.get("imagen_final") or "",
@@ -297,41 +374,27 @@ def ingest_course_payload(payload: dict) -> dict:
         "certificaciones_procesadas": processed,
         "skipped_existing": skipped_existing,
         "skipped_invalid": skipped_invalid,
+        "duplicates_detected": duplicates_detected,  # útil para monitorear
     }
 
+
 def safe_slug_from_name(name: str) -> str:
-    """
-    Convierte el nombre a slug:
-    - quita acentos (ñ->n, á->a, etc.)
-    - baja a minúscula
-    - reemplaza espacios por -
-    - elimina símbolos raros
-    - colapsa guiones repetidos
-    """
     if not name:
         return ""
 
-    s = unidecode(str(name))          # ñ -> n, á -> a
+    s = unidecode(str(name))
     s = s.lower().strip()
-    s = re.sub(r"[^a-z0-9\s-]", "", s) # solo letras/números/espacios/guiones
-    s = re.sub(r"\s+", "-", s)        # espacios -> -
-    s = re.sub(r"-{2,}", "-", s)      # --- -> -
+    s = re.sub(r"[^a-z0-9\s-]", "", s)
+    s = re.sub(r"\s+", "-", s)
+    s = re.sub(r"-{2,}", "-", s)
     s = s.strip("-")
     return s
 
 
 def clean_habilidades(value) -> str:
-    """
-    Evita guardar "[object Object]" y normaliza habilidades a texto.
-    Soporta:
-    - list de strings
-    - list de dicts (elige 'nombre'/'name'/'label'/'skill')
-    - string con "[object Object]" mezclado
-    """
     if value is None:
         return "NONE"
 
-    # Si ya viene como lista/dict (ideal)
     if isinstance(value, list):
         out = []
         for item in value:
@@ -340,7 +403,6 @@ def clean_habilidades(value) -> str:
                 if t and t.lower() != "[object object]":
                     out.append(t)
             elif isinstance(item, dict):
-                # intenta sacar un nombre razonable
                 t = (
                     item.get("nombre")
                     or item.get("name")
@@ -350,7 +412,7 @@ def clean_habilidades(value) -> str:
                 )
                 if t:
                     out.append(str(t).strip())
-        # dedupe conservando orden
+
         seen = set()
         uniq = []
         for x in out:
@@ -360,23 +422,18 @@ def clean_habilidades(value) -> str:
         return ", ".join(uniq) if uniq else "NONE"
 
     if isinstance(value, dict):
-        # si viene un dict único
         return clean_habilidades([value])
 
-    # Si viene como string (caso típico del endpoint)
     s = str(value)
 
-    # Si parece JSON embebido, intentamos parsearlo
-    # (muchos endpoints envían strings con listas/dicts)
     try:
         maybe = json.loads(s)
         return clean_habilidades(maybe)
     except Exception:
         pass
 
-    # Eliminar tokens "[object Object]" y limpiar separadores
     s = s.replace("[object Object]", "").replace("[object object]", "")
-    s = re.sub(r"\s*,\s*", ", ", s)  # comas limpias
+    s = re.sub(r"\s*,\s*", ", ", s)
     s = re.sub(r"\s+", " ", s).strip(" ,")
 
     return s if s else "NONE"
