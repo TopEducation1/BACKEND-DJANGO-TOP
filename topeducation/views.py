@@ -766,7 +766,7 @@ class CertificationList(APIView):
         certifications_queryset = Certificaciones.objects.all().select_related(
             'tema_certificacion',
             'plataforma_certificacion'
-        )
+        ).order_by('-fecha_creado_cert')
         
         paginator = self.pagination_class()
         paginated_queryset = paginator.paginate_queryset(certifications_queryset, request)
