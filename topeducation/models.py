@@ -15,6 +15,7 @@ class Habilidades (models.Model):
 
 class Temas (models.Model):
     nombre = models.CharField(max_length=250,null=True)
+    translate = models.CharField(max_length=250,null=True)
     tem_type = models.CharField(max_length=50,null=True)
     tem_col = models.CharField(max_length=10,null=True)
     tem_img = models.CharField(max_length=200,null=True)

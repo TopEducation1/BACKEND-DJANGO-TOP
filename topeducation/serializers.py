@@ -95,7 +95,7 @@ class TopicsSerializer (serializers.ModelSerializer):
     class Meta:
         model = Temas
         
-        fields = ['id', 'nombre','tem_type','tem_col','tem_img','tem_est']
+        fields = ['id', 'nombre', 'translate', 'tem_type','tem_col','tem_img','tem_est']
 
 class PlataformaSerializer (serializers.ModelSerializer):
     
