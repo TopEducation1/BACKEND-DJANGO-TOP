@@ -4,144 +4,213 @@
 {% block header %} Certificaciones {% endblock %}
 
 {% block botons %}
-<p class="text-white w-full md:w-auto">Total de certificaciones: {{ certifications|length }}</p>
-<a class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full" href="{% url 'upload' %}">Cargar certificaciones</a>
-<a class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full" href="{% url 'createCertification' %}">Crear nueva</a> {% endblock %}
+  <p class="text-white w-full md:w-auto">Total de certificaciones: {{ paginator.count }}</p>
 
-{% block content %} 
-<div class="relative flex flex-col w-full h-full text-neutral-100 bg-neutral-800 shadow-md rounded-lg bg-clip-border">
-  <script>
-    $(document).ready(function(){
-      $('#example').DataTable();
-    })
-  </script>
-  <div class="overflow-x-auto">
-    <table class="w-full text-left table-auto max-w-max text-neutral-200" id="example">
-      <thead>
-        <tr class="text-neutral-300 border-b border-neutral-500 bg-neutral-500">
-            <th class="p-4">
-                <p class="text-sm leading-none">
-                  #
-                </p>
-              </th>
-          <th class="p-4">
-            <p class="text-sm leading-none">
-              Titulo
-            </p>
-          </th>
-          <th class="p-4">
-            <p class="text-sm leading-none">
-              Duración
-            </p>
-          </th>
-          <th class="p-4">
-            <p class="text-sm leading-none">
-              Nivel
-            </p>
-          </th>
-          <th class="p-4">
-            <p class="text-sm leading-none">
-              Idioma
-            </p>
-          </th>
-          <th class="p-4">
-            <p class="text-sm leading-none">
-              Plataforma
-            </p>
-          </th>
-          <th class="p-4">
-            <p class="text-sm leading-none ">
-              Fecha
-            </p>
-          </th>
-          <th class="p-4">
-            <p>Opciones</p>
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for certification in certifications %}
-        <tr class="hover:bg-neutral-500">
-            <td class="p-2">
-                <p class="text-sm font-bold">
-                 {{ certification.id }}
-                </p>
-            </td>
-          <td class="p-2">
-            <p class="text-sm font-bold">
-             {{ certification.nombre }}
-            </p>
-          </td>
-          <td class="p-2">
-            <p class="text-sm">
-                {{ certification.tiempo_certificacion }}
-            </p>
-          </td>
-          <td class="p-2">
-            <p class="text-sm">
-                {{ certification.nivel_certificacion }}
-            </p>
-          </td>
-          <td class="p-2">
-            <p class="text-sm">
-                {{ certification.lenguaje_certificacion }}
-            </p>
-          </td>
-          <td class="p-2">
-            <p class="text-sm">
-            {% if certification.plataforma_certificacion %}
-              {{ certification.plataforma_certificacion.nombre }}
+  <a class="bg-[#F6F4EF] transition duration-300 hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full"
+     href="{% url 'upload' %}">
+    Cargar certificaciones
+  </a>
+
+  <a class="bg-[#F6F4EF] transition duration-300 hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full"
+     href="{% url 'createCertification' %}">
+    Crear nueva
+  </a>
+{% endblock %}
+
+{% block content %}
+
+  {% if paginator.num_pages > 1 %}
+    <div class="flex items-center justify-between gap-4 mb-4 flex-wrap">
+      <div class="flex gap-3 items-center">
+        <div class="text-sm text-neutral-300">
+          Página {{ page_obj.number }} de {{ paginator.num_pages }} · {{ paginator.count }} items
+        </div>
+
+        <nav class="flex items-center gap-2 flex-wrap">
+          {% if show_inicio %}
+            <a class="px-3 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white"
+              title="Ir al inicio"
+              href="?page=1&per_page={{ per_page }}{% if q %}&q={{ q|urlencode }}{% endif %}">
+              <!-- ⏮ -->
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 19l-7-7 7-7"/>
+                <path d="M20 19l-7-7 7-7"/>
+              </svg>
+            </a>
+          {% endif %}
+
+          {% for p in page_numbers %}
+            {% if p == page_obj.number %}
+              <span class="px-3 py-1 rounded-full bg-white text-neutral-900 font-bold">
+                {{ p }}
+              </span>
             {% else %}
-              Sin plataforma
+              <a class="px-3 py-1 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white"
+                href="?page={{ p }}&per_page={{ per_page }}{% if q %}&q={{ q|urlencode }}{% endif %}">
+                {{ p }}
+              </a>
             {% endif %}
-            </p>
-          </td>
-          <td class="p-2">
-            <p class="text-sm">
-                {{ certification.fecha_creado_cert }}
-            </p>
-          </td>
-          <td class="p-2">
-            <div class="flex gap-2">
-              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="https://top.education/certificacion/{% if certification.plataforma_certificacion %}{{ certification.plataforma_certificacion.nombre|lower }}{% else %}{% endif %}/{{ certification.slug }}" target="_blank" title="Ver en página"><i class="fa-regular fa-eye"></i></a>
-              <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full" href="{% url 'updateCertification' certification.id %}" title="Editar"><i class="fa-regular fa-pen-to-square"></i></a>
-              <button onclick="openDeleteModal({{ certification.id }})" class="bg-red-500 hover:bg-red-700 text-white cursor-pointer font-bold py-2 px-4 rounded-full" title="Eliminar" > <i class="fa-regular fa-trash-can"></i> </button>
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-        
-      </tbody>
-    </table>
-  </div>
-  </div>
-  <!-- Modal de confirmación -->
-<div id="deleteModal" class="fixed inset-0 bg-neutral-800/60 backdrop-blur-sm bg-opacity-50 flex items-center justify-center hidden z-50">
-  <div class="bg-white p-6 rounded-lg shadow-lg text-center w-80">
-    <p class="text-lg font-semibold mb-4">¿Estás seguro de que deseas eliminar esta certificación?</p>
-    <div class="flex justify-center gap-4">
-      <button onclick="closeModal()" class="bg-gray-300 hover:bg-gray-400 px-4 py-2 rounded">Cancelar</button>
-      <form id="deleteForm" method="post" action="">
-        {% csrf_token %}
-        <button type="submit" class="bg-red-500 hover:bg-red-700 text-white px-4 py-2 rounded">Eliminar</button>
+          {% endfor %}
+
+          {% if show_final %}
+            <a class="px-3 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white"
+              title="Ir al final"
+              href="?page={{ paginator.num_pages }}&per_page={{ per_page }}{% if q %}&q={{ q|urlencode }}{% endif %}">
+              <!-- ⏭ -->
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M13 5l7 7-7 7"/>
+                <path d="M4 5l7 7-7 7"/>
+              </svg>
+            </a>
+          {% endif %}
+        </nav>
+
+        <!-- per_page -->
+        <form method="get" class="flex items-center gap-2">
+          <input type="hidden" name="page" value="1">
+          {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+          <label class="text-sm text-neutral-300">Por página</label>
+          <select name="per_page" onchange="this.form.submit()"
+                  class="bg-neutral-700 text-white rounded-full px-3 py-1">
+            {% for n in per_page_options %}
+              <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </div>
+
+      <!-- buscador -->
+      <form method="get" class="flex items-center gap-2">
+        <input type="hidden" name="per_page" value="{{ per_page }}">
+        <input type="hidden" name="page" value="1">
+
+        <div class="relative">
+          <input
+            name="q"
+            value="{{ q }}"
+            placeholder="Buscar certificaciones..."
+            class="w-64 bg-neutral-700 text-white rounded-full pl-10 pr-4 py-2 outline-none ring-1 ring-neutral-600 focus:ring-2 focus:ring-neutral-400"
+          />
+          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-300">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M12.9 14.32a8 8 0 111.414-1.414l3.387 3.387a1 1 0 01-1.414 1.414l-3.387-3.387zM14 8a6 6 0 11-12 0 6 6 0 0112 0z" clip-rule="evenodd" />
+            </svg>
+          </span>
+        </div>
+
+        <button type="submit" class="px-4 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white">
+          Buscar
+        </button>
+
+        {% if q %}
+          <a class="px-4 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white"
+            href="?page=1&per_page={{ per_page }}">
+            Limpiar
+          </a>
+        {% endif %}
       </form>
     </div>
+  {% endif %}
+
+  <div class="relative flex flex-col w-full h-full text-neutral-100 bg-neutral-800 shadow-md rounded-lg bg-clip-border">
+    <div class="overflow-x-auto">
+      <table class="!w-full text-left table-auto text-neutral-200">
+        <thead>
+          <tr class="text-neutral-300 border-b border-neutral-500 bg-neutral-500">
+            <th class="px-2 py-1"><p class="text-md leading-none">#</p></th>
+            <th class="px-2 py-1"><p class="text-md leading-none">Título</p></th>
+            <th class="px-2 py-1"><p class="text-md leading-none">Duración</p></th>
+            <th class="px-2 py-1"><p class="text-md leading-none">Nivel</p></th>
+            <th class="px-2 py-1"><p class="text-md leading-none">Idioma</p></th>
+            <th class="px-2 py-1"><p class="text-md leading-none">Plataforma</p></th>
+            <th class="px-2 py-1"><p class="text-md leading-none">Fecha</p></th>
+            <th class="px-2 py-1"><p>Opciones</p></th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {% for certification in certifications %}
+            <tr class="odd:bg-neutral-800 even:bg-neutral-700 hover:bg-neutral-600 transition-colors !rounded-xl overflow-hidden">
+              <td class="p-2"><p class="text-sm font-bold">{{ certification.id }}</p></td>
+
+              <td class="p-2">
+                <p class="text-sm font-bold">{{ certification.nombre }}</p>
+              </td>
+
+              <td class="p-2"><p class="text-sm">{{ certification.tiempo_certificacion }}</p></td>
+              <td class="p-2"><p class="text-sm">{{ certification.nivel_certificacion }}</p></td>
+              <td class="p-2"><p class="text-sm">{{ certification.lenguaje_certificacion }}</p></td>
+
+              <td class="p-2">
+                <p class="text-sm">
+                  {% if certification.plataforma_certificacion %}
+                    {{ certification.plataforma_certificacion.nombre }}
+                  {% else %}
+                    Sin plataforma
+                  {% endif %}
+                </p>
+              </td>
+
+              <td class="p-2"><p class="text-sm">{{ certification.fecha_creado_cert }}</p></td>
+
+              <td class="p-2">
+                <div class="flex gap-2">
+                  <a class="bg-[#F6F4EF] transition duration-300 hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-2 px-4 rounded-full"
+                     href="https://top.education/certificacion/{% if certification.plataforma_certificacion %}{{ certification.plataforma_certificacion.nombre|lower }}{% endif %}/{{ certification.slug }}"
+                     target="_blank" title="Ver en página">
+                    <i class="fa-regular fa-eye"></i>
+                  </a>
+
+                  <a class="bg-[#F6F4EF] transition duration-300 hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-2 px-4 rounded-full"
+                     href="{% url 'updateCertification' certification.id %}" title="Editar">
+                    <i class="fa-regular fa-pen-to-square"></i>
+                  </a>
+
+                  <button onclick="openDeleteModal({{ certification.id }})"
+                          class="bg-red-500 hover:bg-red-700 text-white cursor-pointer font-bold py-2 px-4 rounded-full"
+                          title="Eliminar">
+                    <i class="fa-regular fa-trash-can"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="8" class="p-4 text-neutral-300">
+                No hay certificaciones para mostrar.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+
+      </table>
+    </div>
   </div>
-</div>
 
-<script>
-  function openDeleteModal(certificationId) {
-    const modal = document.getElementById("deleteModal");
-    const form = document.getElementById("deleteForm");
+  <!-- Modal de confirmación -->
+  <div id="deleteModal" class="fixed inset-0 bg-neutral-800/60 backdrop-blur-sm bg-opacity-50 flex items-center justify-center hidden z-50">
+    <div class="bg-white p-6 rounded-lg shadow-lg text-center w-80">
+      <p class="text-lg font-semibold mb-4">¿Estás seguro de que deseas eliminar esta certificación?</p>
+      <div class="flex justify-center gap-4">
+        <button onclick="closeModal()" class="bg-gray-300 hover:bg-gray-400 px-4 py-2 rounded">Cancelar</button>
+        <form id="deleteForm" method="post" action="">
+          {% csrf_token %}
+          <button type="submit" class="bg-red-500 hover:bg-red-700 text-white px-4 py-2 rounded">Eliminar</button>
+        </form>
+      </div>
+    </div>
+  </div>
 
-    // Setea la URL del form
-    form.action = `/certifications/${certificationId}/delete/`;  // Asegúrate de que coincida con tu URL
-    modal.classList.remove("hidden");
-  }
-
-  function closeModal() {
-    document.getElementById("deleteModal").classList.add("hidden");
-  }
-</script>
+  <script>
+    function openDeleteModal(certificationId) {
+      const modal = document.getElementById("deleteModal");
+      const form = document.getElementById("deleteForm");
+      form.action = `/certifications/${certificationId}/delete/`;
+      modal.classList.remove("hidden");
+    }
+    function closeModal() {
+      document.getElementById("deleteModal").classList.add("hidden");
+    }
+  </script>
 
 {% endblock %}

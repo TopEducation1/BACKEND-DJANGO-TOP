@@ -13,20 +13,29 @@ class Habilidades (models.Model):
         db_table = 'Habilidades'
         
 
-class Temas (models.Model):
-    nombre = models.CharField(max_length=250,null=True)
-    translate = models.CharField(max_length=250,null=True)
-    tem_type = models.CharField(max_length=50,null=True)
-    tem_col = models.CharField(max_length=10,null=True)
-    tem_img = models.CharField(max_length=200,null=True)
-    tem_est = models.CharField(max_length=20,null=True)
-    
+class Temas(models.Model):
+    nombre = models.CharField(max_length=250, null=True)
+    translate = models.CharField(max_length=250, null=True)
+    tem_type = models.CharField(max_length=50, null=True)
+    tem_col = models.CharField(max_length=10, null=True)
+    tem_img = models.CharField(max_length=200, null=True)
+    tem_est = models.CharField(max_length=20, null=True)
+
+    # ✅ NUEVO: relación a sí mismo (padre)
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="children",
+        db_column="parent_id",  # opcional (si quieres que la columna se llame así)
+    )
+
     def __str__(self):
-        return self.nombre
-    
-    
+        return self.nombre or f"Tema {self.pk}"
+
     class Meta:
-        db_table = 'Temas'
+        db_table = "Temas"
         
 
 class Regiones (models.Model):

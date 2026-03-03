@@ -96,6 +96,8 @@ from datetime import timedelta
 
 from topeducation.services.import_courses import ingest_course_payload
 
+from django.core.paginator import Paginator
+from django.shortcuts import render
 
 @staff_member_required(login_url="/signin/")
 def admin_purchases_page(request):
@@ -138,9 +140,64 @@ def signin(request):
             return redirect('dashboard')
 
 def posts(request):
-    posts = Blog.objects.all()
-    print(posts)
-    return render(request,'posts/index.html',{'posts':posts})
+    q = (request.GET.get("q") or "").strip()
+
+    # per_page
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    per_page = max(1, min(per_page, 200))
+
+    # page
+    try:
+        page_number = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    qs = Blog.objects.select_related("categoria_blog", "autor_blog")
+
+    # 🔎 búsqueda
+    if q:
+        qs = qs.filter(
+            Q(nombre_blog__icontains=q)
+            | Q(slug__icontains=q)
+            | Q(categoria_blog__nombre_categoria_blog__icontains=q)
+            | Q(autor_blog__nombre_autor__icontains=q)
+        )
+
+    # ⚡ optimiza campos usados
+    qs = qs.only(
+        "id",
+        "nombre_blog",
+        "slug",
+        "fecha_redaccion_blog",
+        "categoria_blog_id",
+        "autor_blog_id",
+        "categoria_blog__nombre_categoria_blog",
+        "autor_blog__nombre_autor",
+    ).order_by("-id")
+
+    paginator = Paginator(qs, per_page)
+    page_obj = paginator.get_page(page_number)
+
+    current = page_obj.number
+    start_page = max(1, current - 3)
+    end_page = min(paginator.num_pages, current + 3)
+    page_numbers = range(start_page, end_page + 1)
+
+    context = {
+        "posts": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "page_numbers": page_numbers,
+        "show_inicio": start_page > 1,
+        "show_final": end_page < paginator.num_pages,
+        "per_page_options": [25, 50, 100, 200],
+        "q": q,
+    }
+    return render(request, "posts/index.html", context)
 
 def createPost(request):
     if request.method == 'GET':
@@ -187,8 +244,70 @@ def deletePost(request,post_id):
     return redirect('posts') 
 
 def certifications(request):
-    certifications = Certificaciones.objects.select_related('plataforma_certificacion', 'tema_certificacion').all()
-    return render(request,'certifications/index.html',{'certifications':certifications})
+    q = (request.GET.get("q") or "").strip()
+
+    # per_page
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    per_page = max(1, min(per_page, 200))
+
+    # page
+    try:
+        page_number = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    qs = Certificaciones.objects.select_related("plataforma_certificacion", "tema_certificacion")
+
+    # 🔎 búsqueda (ajusta campos si alguno es FK/choice)
+    if q:
+        qs = qs.filter(
+            Q(nombre__icontains=q)
+            | Q(slug__icontains=q)
+            | Q(plataforma_certificacion__nombre__icontains=q)
+            | Q(tema_certificacion__nombre__icontains=q)
+            # si estos campos son texto:
+            | Q(nivel_certificacion__icontains=q)
+            | Q(lenguaje_certificacion__icontains=q)
+        )
+
+    # ⚡ optimiza campos usados en el template (incluye los FK ids)
+    qs = qs.only(
+        "id",
+        "nombre",
+        "slug",
+        "tiempo_certificacion",
+        "nivel_certificacion",
+        "lenguaje_certificacion",
+        "fecha_creado_cert",
+        "plataforma_certificacion_id",
+        "tema_certificacion_id",
+        "plataforma_certificacion__nombre",
+        "tema_certificacion__nombre",
+    ).order_by("-id")
+
+    paginator = Paginator(qs, per_page)
+    page_obj = paginator.get_page(page_number)
+
+    current = page_obj.number
+    start_page = max(1, current - 3)
+    end_page = min(paginator.num_pages, current + 3)
+    page_numbers = range(start_page, end_page + 1)
+
+    context = {
+        "certifications": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "page_numbers": page_numbers,
+        "show_inicio": start_page > 1,
+        "show_final": end_page < paginator.num_pages,
+        "per_page_options": [25, 50, 100, 200],
+        "q": q,
+    }
+    return render(request, "certifications/index.html", context)
 
 def createCertification(request):
     if request.method == 'GET':
@@ -370,8 +489,61 @@ def categories(request):
     return render(request,'category/index.html',{'universities':universities,'companies':companies,'topics':topics,'cat_blog':cat_blog,'originals':originals,'rankings':rankings})
 
 def universities(request):
-    universities = Universidades.objects.all()
-    return render(request,'category/universities/index.html',{'universities':universities})
+    # ✅ búsqueda
+    q = (request.GET.get("q") or "").strip()
+
+    # ✅ per_page
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    per_page = max(1, min(per_page, 200))
+
+    # ✅ page
+    try:
+        page_number = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    qs = Universidades.objects.all()
+
+    # ✅ filtro por búsqueda (server-side)
+    if q:
+        qs = qs.filter(
+            Q(nombre__icontains=q)
+            # Si región es FK y tienes campo "nombre" en Region, usa esto:
+            # | Q(region_universidad__nombre__icontains=q)
+            # Si región es texto directo:
+            # | Q(region__icontains=q)
+            # Estado / top si son texto:
+            # | Q(univ_est__icontains=q)
+        )
+
+    # ✅ optimiza campos
+    qs = qs.only("id", "nombre", "region_universidad_id", "univ_img", "univ_ico", "univ_est", "univ_top").order_by("id")
+
+    paginator = Paginator(qs, per_page)
+    page_obj = paginator.get_page(page_number)
+
+    current = page_obj.number
+    start_page = max(1, current - 3)
+    end_page = min(paginator.num_pages, current + 3)
+    page_numbers = range(start_page, end_page + 1)
+
+    context = {
+        "universities": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "page_numbers": page_numbers,
+        "show_inicio": start_page > 1,
+        "show_final": end_page < paginator.num_pages,
+        "per_page_options": [25, 50, 100, 200],
+
+        # ✅ para el buscador y mantener estado
+        "q": q,
+    }
+    return render(request, "category/universities/index.html", context)
 
 
 def updateUniversity(request,university_id):
@@ -405,8 +577,52 @@ def createUniversity(request):
             messages.warning(request,f"{str(e)}")
 
 def companies(request):
-    companies = Empresas.objects.all()
-    return render(request,'category/companies/index.html',{'companies':companies})
+    q = (request.GET.get("q") or "").strip()
+
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    per_page = max(1, min(per_page, 200))
+
+    try:
+        page_number = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    qs = Empresas.objects.all()
+
+    if q:
+        qs = qs.filter(
+            Q(nombre__icontains=q)
+            | Q(empr_est__icontains=q)
+        )
+
+    qs = (
+        qs.only("id", "nombre", "empr_img", "empr_ico", "empr_est", "empr_top")
+        .order_by("id")
+    )
+
+    paginator = Paginator(qs, per_page)
+    page_obj = paginator.get_page(page_number)
+
+    current = page_obj.number
+    start_page = max(1, current - 3)
+    end_page = min(paginator.num_pages, current + 3)
+    page_numbers = range(start_page, end_page + 1)
+
+    context = {
+        "companies": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "page_numbers": page_numbers,
+        "show_inicio": start_page > 1,
+        "show_final": end_page < paginator.num_pages,
+        "per_page_options": [25, 50, 100, 200],
+        "q": q,
+    }
+    return render(request, "category/companies/index.html", context)
 
 def updateCompany(request,company_id):
     if request.method == 'GET':
@@ -438,8 +654,56 @@ def createCompany(request):
             messages.warning(request,f"{str(e)}")
 
 def topics(request):
-    topics = Temas.objects.all()
-    return render(request,'category/topics/index.html',{'topics':topics})
+    q = (request.GET.get("q") or "").strip()
+
+    # per_page
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    per_page = max(1, min(per_page, 200))
+
+    # page
+    try:
+        page_number = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    qs = Temas.objects.all()
+
+    if q:
+        qs = qs.filter(
+            Q(nombre__icontains=q)
+            | Q(tem_type__icontains=q)
+            | Q(tem_est__icontains=q)
+            | Q(tem_col__icontains=q)
+        )
+
+    qs = (
+        qs.only("id", "nombre", "tem_type", "tem_img", "tem_col", "tem_est")
+        .order_by("id")
+    )
+
+    paginator = Paginator(qs, per_page)
+    page_obj = paginator.get_page(page_number)
+
+    current = page_obj.number
+    start_page = max(1, current - 3)
+    end_page = min(paginator.num_pages, current + 3)
+    page_numbers = range(start_page, end_page + 1)
+
+    context = {
+        "topics": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "page_numbers": page_numbers,
+        "show_inicio": start_page > 1,
+        "show_final": end_page < paginator.num_pages,
+        "per_page_options": [25, 50, 100, 200],
+        "q": q,
+    }
+    return render(request, "category/topics/index.html", context)
 
 def updateTopic(request,topic_id):
     if request.method == 'GET':
@@ -471,8 +735,51 @@ def createTopic(request):
             messages.warning(request,f"{str(e)}")
 
 def tags(request):
-    tags = CategoriaBlog.objects.all()
-    return render(request,'category/tags/index.html',{'tags':tags})
+    q = (request.GET.get("q") or "").strip()
+
+    # per_page
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    per_page = max(1, min(per_page, 200))
+
+    # page
+    try:
+        page_number = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    qs = CategoriaBlog.objects.all()
+
+    if q:
+        qs = qs.filter(
+            Q(nombre_categoria_blog__icontains=q)
+            | Q(tem_est__icontains=q)
+        )
+
+    qs = qs.only("id", "nombre_categoria_blog").order_by("id")
+
+    paginator = Paginator(qs, per_page)
+    page_obj = paginator.get_page(page_number)
+
+    current = page_obj.number
+    start_page = max(1, current - 3)
+    end_page = min(paginator.num_pages, current + 3)
+    page_numbers = range(start_page, end_page + 1)
+
+    context = {
+        "tags": page_obj.object_list,  # 👈 mantengo el nombre 'tags' para no tocar tu template mucho
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "page_numbers": page_numbers,
+        "show_inicio": start_page > 1,
+        "show_final": end_page < paginator.num_pages,
+        "per_page_options": [25, 50, 100, 200],
+        "q": q,
+    }
+    return render(request, "category/tags/index.html", context)
 
 
 def updateTag(request,tag_id):
@@ -505,8 +812,52 @@ def createTag(request):
             messages.warning(request,f"{str(e)}")
 
 def originals(request):
-    originals = Original.objects.all()
-    return render(request,'category/originals/index.html',{'originals':originals})
+    q = (request.GET.get("q") or "").strip()
+
+    # per_page
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    per_page = max(1, min(per_page, 200))
+
+    # page
+    try:
+        page_number = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    qs = Original.objects.all()
+
+    if q:
+        qs = qs.filter(
+            Q(name__icontains=q)
+            | Q(slug__icontains=q)
+            | Q(esta__icontains=q)
+        )
+
+    qs = qs.only("id", "name", "slug", "image", "esta").order_by("id")
+
+    paginator = Paginator(qs, per_page)
+    page_obj = paginator.get_page(page_number)
+
+    current = page_obj.number
+    start_page = max(1, current - 3)
+    end_page = min(paginator.num_pages, current + 3)
+    page_numbers = range(start_page, end_page + 1)
+
+    context = {
+        "originals": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "page_numbers": page_numbers,
+        "show_inicio": start_page > 1,
+        "show_final": end_page < paginator.num_pages,
+        "per_page_options": [25, 50, 100, 200],
+        "q": q,
+    }
+    return render(request, "category/originals/index.html", context)
 
 def createOriginal(request):
     if request.method == 'POST':
@@ -560,8 +911,52 @@ def updateOriginal(request, original_id):
     })
 
 def rankings(request):
-    rankings = Ranking.objects.all()
-    return render(request,'category/rankings/index.html',{'rankings':rankings})
+    q = (request.GET.get("q") or "").strip()
+
+    # per_page
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    per_page = max(1, min(per_page, 200))
+
+    # page
+    try:
+        page_number = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    qs = Ranking.objects.all()
+
+    if q:
+        qs = qs.filter(
+            Q(nombre__icontains=q)
+            | Q(tipo__icontains=q)
+            | Q(estado__icontains=q)
+        )
+
+    qs = qs.only("id", "nombre", "tipo", "estado", "fecha").order_by("-id")
+
+    paginator = Paginator(qs, per_page)
+    page_obj = paginator.get_page(page_number)
+
+    current = page_obj.number
+    start_page = max(1, current - 3)
+    end_page = min(paginator.num_pages, current + 3)
+    page_numbers = range(start_page, end_page + 1)
+
+    context = {
+        "rankings": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "page_numbers": page_numbers,
+        "show_inicio": start_page > 1,
+        "show_final": end_page < paginator.num_pages,
+        "per_page_options": [25, 50, 100, 200],
+        "q": q,
+    }
+    return render(request, "category/rankings/index.html", context)
 
 def createRanking(request):
     if request.method == 'POST':
