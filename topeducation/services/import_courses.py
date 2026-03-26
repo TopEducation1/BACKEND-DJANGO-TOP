@@ -186,26 +186,63 @@ def _dedupe_keep_order(values: list[str]) -> list[str]:
     return out
 
 
-def extract_certification_skill_names(item: dict | None = None) -> list[str]:
+def extract_certification_skill_names(cert: dict | None = None, item: dict | None = None) -> list[str]:
     """
-    Los skills reales de la certificación salen del array `temas` del item.
+    Extrae los skills reales de una certificación.
+
+    Prioridad:
+    1) cert["temas"]
+    2) cert["habilidades_certificacion"]
+    3) item["temas"] como fallback
     """
     out = []
 
-    if item:
-        for row in (item.get("temas") or []):
-            if not isinstance(row, dict):
-                continue
+    def append_from_rows(rows):
+        nonlocal out
 
-            nombre = _norm(
-                row.get("nombre")
-                or row.get("name")
-                or row.get("label")
-                or row.get("skill")
-                or row.get("value")
-            )
-            if nombre:
-                out.append(nombre)
+        if not rows:
+            return
+
+        if isinstance(rows, dict):
+            rows = [rows]
+
+        if isinstance(rows, str):
+            raw = rows.strip()
+            try:
+                parsed = json.loads(raw)
+                rows = parsed if isinstance(parsed, list) else [parsed]
+            except Exception:
+                # Soporta texto plano separado por coma
+                rows = [part.strip() for part in raw.split(",") if part.strip()]
+
+        if not isinstance(rows, list):
+            return
+
+        for row in rows:
+            if isinstance(row, dict):
+                nombre = _norm(
+                    row.get("nombre")
+                    or row.get("name")
+                    or row.get("label")
+                    or row.get("skill")
+                    or row.get("value")
+                )
+                if nombre and nombre.lower() != "none":
+                    out.append(nombre)
+
+            elif isinstance(row, str):
+                nombre = _norm(row)
+                if nombre and nombre.lower() != "none":
+                    out.append(nombre)
+
+    # 1) Skills propios de la certificación
+    if cert:
+        append_from_rows(cert.get("temas"))
+        append_from_rows(cert.get("habilidades_certificacion"))
+
+    # 2) Fallback al catálogo del item solo si no encontró nada
+    if not out and item:
+        append_from_rows(item.get("temas"))
 
     return _dedupe_keep_order(out)
 
@@ -252,7 +289,6 @@ def extract_instructors_from_cert(cert: dict | None = None) -> list[dict]:
             "imagen": imagen or None,
         })
 
-    # dedupe por nombre
     seen = set()
     uniq = []
     for row in out:
@@ -572,7 +608,6 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict) -> tuple[Ce
         "testimonios_certificacion": cert.get("testimonios_certificacion") or "NONE",
         "contenido_certificacion": cert.get("contenido_certificacion") or "NONE",
         "modulos_certificacion": cert.get("modulos_certificacion") or "NONE",
-        "tipo_certificacion": _norm(cert.get("tipo_certificacion")) or "NONE",
         "vigente_certificacion": _to_bool(cert.get("vigente_certificacion"), True),
         "universidad_certificacion": univ_fk,
         "empresa_certificacion": empresa_fk,
@@ -581,6 +616,16 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict) -> tuple[Ce
         "video_certificacion": cert.get("video_certificacion") or "Null",
         "imagen_final": cert.get("imagen_final") or "",
     }
+
+    # ✅ tipo_certificacion:
+    # - si llega valor nuevo, se actualiza
+    # - si no llega y es nuevo, queda "NONE"
+    # - si no llega y ya existía, NO se pisa el valor actual
+    new_tipo = _norm(cert.get("tipo_certificacion"))
+    if new_tipo:
+        defaults["tipo_certificacion"] = new_tipo
+    elif obj is None:
+        defaults["tipo_certificacion"] = "NONE"
 
     if _has_field(Certificaciones, "tema_certificacion"):
         tema_val = cert.get("tema_certificacion")
@@ -776,6 +821,7 @@ def ingest_course_payload(payload: dict) -> dict:
     for item in items:
         skills_map = {}
 
+        # 1) Catálogo general de skills del item
         for s in (item.get("temas") or []):
             if not isinstance(s, dict):
                 continue
@@ -789,6 +835,7 @@ def ingest_course_payload(payload: dict) -> dict:
 
             skills_map[_norm(skill_obj.nombre).lower()] = skill_obj
 
+        # 2) Universidades
         unis_map = {}
         for u in (item.get("universidades") or []):
             nombre = _norm(u.get("nombre"))
@@ -808,6 +855,7 @@ def ingest_course_payload(payload: dict) -> dict:
 
             unis_map[nombre.lower()] = obj
 
+        # 3) Plataformas
         plats_map = {}
         for p in (item.get("plataformas") or []):
             nombre = _norm(p.get("nombre"))
@@ -823,8 +871,7 @@ def ingest_course_payload(payload: dict) -> dict:
 
             plats_map[nombre.lower()] = obj
 
-        item_skill_names = extract_certification_skill_names(item=item)
-
+        # 4) Certificaciones
         for c in (item.get("certificaciones") or []):
             nombre = _norm(c.get("nombre"))
             if not nombre:
@@ -862,8 +909,11 @@ def ingest_course_payload(payload: dict) -> dict:
                     companies_updated += inst_res["companies_updated"]
                     universities_updated += inst_res["universities_updated"]
 
+                    # ✅ skills por certificación, no por item
+                    cert_skill_names = extract_certification_skill_names(cert=c, item=item)
+
                     normalized_names = []
-                    for skill_name in item_skill_names:
+                    for skill_name in cert_skill_names:
                         skill_name = _norm(skill_name)
                         if not skill_name:
                             continue
@@ -898,6 +948,7 @@ def ingest_course_payload(payload: dict) -> dict:
                 print(f"ERROR en certificación '{nombre}': {str(e)}")
                 print(traceback.format_exc())
                 continue
+
     return {
         "created": created_certs,
         "updated": updated_certs,
