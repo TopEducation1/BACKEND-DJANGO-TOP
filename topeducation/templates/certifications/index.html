@@ -19,7 +19,7 @@
 
 {% block content %}
 
-  {% if paginator.num_pages > 1 %}
+  {% if paginator.num_pages > 0 %}
     <div class="flex items-center justify-between gap-4 mb-4 flex-wrap">
       <div class="flex gap-3 items-center">
         <div class="text-sm text-neutral-300">
@@ -123,6 +123,7 @@
             <th class="px-2 py-1"><p class="text-md leading-none">Nivel</p></th>
             <th class="px-2 py-1"><p class="text-md leading-none">Idioma</p></th>
             <th class="px-2 py-1"><p class="text-md leading-none">Plataforma</p></th>
+            <th class="px-2 py-1"><p class="text-md leading-none">Tipo</p></th>
             <th class="px-2 py-1"><p class="text-md leading-none">Fecha</p></th>
             <th class="px-2 py-1"><p>Opciones</p></th>
           </tr>
@@ -150,7 +151,7 @@
                   {% endif %}
                 </p>
               </td>
-
+              <td class="p-2"><p class="text-sm">{{ certification.tipo_certificacion }}</p></td>
               <td class="p-2"><p class="text-sm">{{ certification.fecha_creado_cert }}</p></td>
 
               <td class="p-2">

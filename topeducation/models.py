@@ -37,6 +37,53 @@ class Temas(models.Model):
     class Meta:
         db_table = "Temas"
         
+class Skills(models.Model):
+    nombre = models.CharField(max_length=250, null=True, blank=True)
+    translate = models.CharField(max_length=250, null=True, blank=True)
+    descripcion = models.TextField(null=True, blank=True)
+    slug = models.SlugField(max_length=300, null=True, blank=True, unique=True)
+    skill_col = models.CharField(max_length=10, null=True)
+    skill_type = models.CharField(max_length=50, null=True)
+    skill_img = models.ImageField(upload_to='skills/', null=True, blank=True)
+    skill_ico = models.CharField(max_length=200, null=True, blank=True)
+    estado = models.BooleanField(default=True)
+    # ✅ NUEVO: relación a sí mismo (padre)
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="children",
+        db_column="parent_id",
+    )
+
+    class Meta:
+        db_table = 'Skills'
+
+    def __str__(self):
+        return self.nombre or ''
+
+class SkillsCertification(models.Model):
+    certificacion = models.ForeignKey(
+        'Certificaciones',
+        on_delete=models.CASCADE,
+        related_name='skills_rel'
+    )
+    skill = models.ForeignKey(
+        'Skills',
+        on_delete=models.CASCADE,
+        related_name='certificaciones_rel'
+    )
+    orden = models.PositiveIntegerField(default=1, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'SkillsCertification'
+        unique_together = ('certificacion', 'skill')
+        ordering = ['orden', 'id']
+
+    def __str__(self):
+        return f"{self.certificacion_id} - {self.skill_id} ({self.orden})"
 
 class Regiones (models.Model):
     nombre = models.CharField(max_length=100,null=True)
@@ -56,7 +103,8 @@ class Universidades (models.Model):
     univ_ico = models.CharField(max_length=100,null=True,verbose_name='Icono')
     univ_est = models.CharField(max_length=50,null=True,verbose_name='Estado')
     univ_top = models.CharField(max_length=5,null=True,blank=True,verbose_name='Ranking global' )
-    
+    descripcion_institucion = models.TextField(null=True, blank=True)
+
     def __str__(self):
         return str(self.id) +" - "+ self.nombre
     
@@ -70,6 +118,7 @@ class Empresas (models.Model):
     empr_ico = models.CharField(max_length=100,null=True,verbose_name='Icono')
     empr_est = models.CharField(max_length=50,null=True,verbose_name='Estado')
     empr_top = models.CharField(max_length=5,blank=True,null=True,verbose_name='Ranking global')
+    descripcion_institucion = models.TextField(null=True, blank=True)
 
     def __str__(self):
         return str(self.id) +" - "+ self.nombre
@@ -93,45 +142,92 @@ class Certificaciones(models.Model):
     nombre = models.CharField(max_length=500)
     slug = models.SlugField(max_length=500, default="default-slug")
     tema_certificacion = models.ForeignKey(Temas, on_delete=models.SET_NULL, null=True)
-    
-    palabra_clave_certificacion = models.TextField()    
+
+    palabra_clave_certificacion = models.TextField()
     metadescripcion_certificacion = models.TextField(default="NONE")
     instructores_certificacion = models.TextField(default="NONE")
-    nivel_certificacion = models.CharField(max_length=255,default="NONE")
-    tiempo_certificacion = models.CharField(max_length=255,default="NONE")
-    lenguaje_certificacion = models.CharField(max_length=255,default="NONE")
+    nivel_certificacion = models.CharField(max_length=255, default="NONE")
+    tiempo_certificacion = models.CharField(max_length=255, default="NONE")
+    lenguaje_certificacion = models.CharField(max_length=255, default="NONE")
     aprendizaje_certificacion = models.TextField(default="NONE")
     habilidades_certificacion = models.TextField(default="NONE")
     experiencia_certificacion = models.TextField(default="NONE")
     testimonios_certificacion = models.TextField(default="NONE")
-    contenido_certificacion = models.TextField(blank=True,verbose_name='Contenido',default="NONE")
+    contenido_certificacion = models.TextField(blank=True, verbose_name='Contenido', default="NONE")
     modulos_certificacion = models.TextField(default="NONE")
-    
-    universidad_certificacion = models.ForeignKey(Universidades,related_name="certificaciones", on_delete=models.SET_NULL, null=True, blank=True)
-    empresa_certificacion = models.ForeignKey(Empresas,related_name="certificaciones", on_delete=models.SET_NULL, null=True, blank=True)
+
+    # ✅ nuevos campos
+    tipo_certificacion = models.CharField(max_length=100, null=True, blank=True, default="NONE")
+    vigente_certificacion = models.BooleanField(default=True, null=True, blank=True)
+
+    universidad_certificacion = models.ForeignKey(
+        Universidades,
+        related_name="certificaciones",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    empresa_certificacion = models.ForeignKey(
+        Empresas,
+        related_name="certificaciones",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
     plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.CASCADE, null=True, blank=True)
     fecha_creado_cert = models.DateField(auto_now_add=True, null=False)
     url_certificacion_original = models.CharField(max_length=300, default="Null")
-    video_certificacion = models.CharField(default='Null', null = True, blank=True, max_length=1000)
-    imagen_final = models.CharField(default='', null = True, blank=True, max_length=255)
-    cert_top = models.CharField(max_length=5,blank=True,null=True,verbose_name='Ranking global')
+    video_certificacion = models.CharField(default='Null', null=True, blank=True, max_length=1000)
+    imagen_final = models.CharField(default='', null=True, blank=True, max_length=255)
+    cert_top = models.CharField(max_length=5, blank=True, null=True, verbose_name='Ranking global')
+
+    skills = models.ManyToManyField(
+        'Skills',
+        through='SkillsCertification',
+        related_name='certificaciones',
+        blank=True
+    )
 
     def save(self, *args, **kwargs):
         if not self.slug or self.slug.startswith("slice"):
-            self.slug = slugify(self.nombre) 
+            self.slug = slugify(self.nombre)
             base_slug = self.slug
             counter = 1
             while Certificaciones.objects.filter(slug=self.slug).exists():
                 self.slug = f"{base_slug}-{counter}"
                 counter += 1
         super().save(*args, **kwargs)
-    
+
     def __str__(self):
-        return str(self.id) +" - "+ self.nombre
-    
+        return str(self.id) + " - " + self.nombre
+
     class Meta:
         db_table = 'Certificaciones'
-        
+
+
+class Instructores(models.Model):
+    nombre = models.CharField(max_length=250, null=True, blank=True)
+    imagen = models.TextField(null=True, blank=True)
+    estado = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.nombre or f"Instructor {self.pk}"
+
+
+class InstructorCertification(models.Model):
+    certificacion = models.ForeignKey(
+        'Certificaciones',
+        on_delete=models.CASCADE,
+        related_name='instructor_links'
+    )
+    instructor = models.ForeignKey(
+        'Instructores',
+        on_delete=models.CASCADE,
+        related_name='certification_links'
+    )
+
+    class Meta:
+        unique_together = ('certificacion', 'instructor')      
 
 class Autor(models.Model):
     nombre_autor = models.CharField(max_length=255)

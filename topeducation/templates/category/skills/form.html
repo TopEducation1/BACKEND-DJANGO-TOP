@@ -1,0 +1,131 @@
+<form enctype="multipart/form-data" method="POST">
+  {% csrf_token %}
+
+  <div class="mt-2 grid grid-cols-4 gap-x-6 cont-form bg-neutral-700 rounded-2xl p-4 md:p-8 max-w-7xl m-auto">
+
+    <!-- Primera columna: ocupa 3/4 -->
+    <div class="col-span-3 grid grid-cols-2 gap-2">
+      {% for field in form %}
+        {% if field.name == "nombre" or field.name == "translate" or field.name == "skill_img" or field.name == "skill_ico" or field.name == "descripcion" %}
+          <div class="{% if field.name == 'descripcion' %}col-span-full{% endif %}">
+            <label class="text-white font-bold" for="{{ field.id_for_label }}">
+              {{ field.label }}
+            </label>
+
+            {% if field.name == "skill_img" or field.name == "skill_ico" %}
+              {% if field.value %}
+                <img
+                  class="bg-white rounded-lg mb-2 max-h-[120px] object-contain p-2"
+                  src="{{ field.value.url|default:field.value }}"
+                  width="180"
+                  alt="{{ field.label }}"
+                />
+              {% endif %}
+              <input
+                class="w-full border border-white bg-neutral-800 text-white rounded-lg px-4 py-2"
+                type="text"
+                name="{{ field.name }}"
+                id="{{ field.id_for_label }}"
+                value="{{ field.value|default:'' }}"
+              />
+
+            {% elif field.name == "descripcion" %}
+              <textarea
+                class="w-full border border-white bg-neutral-800 text-white rounded-lg px-4 py-2 min-h-[180px]"
+                name="{{ field.name }}"
+                id="{{ field.id_for_label }}"
+              >{{ field.value|default:'' }}</textarea>
+
+            {% else %}
+              {{ field }}
+            {% endif %}
+
+            {% if field.help_text %}
+              <p class="text-xs text-neutral-300 mt-1">{{ field.help_text }}</p>
+            {% endif %}
+
+            {% if field.errors %}
+              <div class="text-danger text-white mt-1">{{ field.errors }}</div>
+            {% endif %}
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    <!-- Segunda columna: ocupa 1/4 -->
+    <div class="col-span-1 grid grid-cols-1 gap-4 pl-3 border-l border-neutral-600">
+      <div>
+        {% for field in form %}
+          {% if field.name != "nombre" and field.name != "translate" and field.name != "skill_img" and field.name != "skill_ico" and field.name != "descripcion" %}
+            <div class="col-span-1 mb-2">
+              <label class="text-white font-bold" for="{{ field.id_for_label }}">
+                {{ field.label }}
+              </label>
+
+              {% if field.name == "estado" %}
+                <select
+                  class="w-full border border-white bg-neutral-800 text-white rounded-lg px-4 py-2"
+                  name="{{ field.name }}"
+                  id="{{ field.id_for_label }}"
+                >
+                  <option value="True" {% if field.value == True or field.value == "True" or field.value == "on" or field.value == 1 %}selected{% endif %}>
+                    Activa
+                  </option>
+                  <option value="False" {% if field.value == False or field.value == "False" or field.value == 0 %}selected{% endif %}>
+                    Inactiva
+                  </option>
+                </select>
+                {% elif field.name == "skill_type" %}
+                <select class="w-full border-1 border-white rounded-lg px-4 py-1" name="{{ field.name }}" id="{{ field.id_for_label }}">
+                  <option value="Tema" {% if field.value == "Tema" %}selected{% endif %}>Tema</option>
+                  <option value="Habilidad" {% if field.value == "Habilidad" %}selected{% endif %}>Habilidad</option>
+                </select>
+                {% elif field.name == "skill_col" %}
+                <select class="w-full border-1 border-white rounded-lg px-4 py-1" name="{{ field.name }}" id="{{ field.id_for_label }}">
+                  <option value="tag-rojo" {% if field.value == "tag-rojo" %}selected{% endif %}>Rojo</option>
+                  <option value="tag-verde" {% if field.value == "tag-verde" %}selected{% endif %}>Verde</option>
+                  <option value="tag-azul" {% if field.value == "tag-azul" %}selected{% endif %}>Azul</option>
+                </select>
+              {% elif field.name == "slug" %}
+                <input
+                  class="w-full border border-white bg-neutral-800 text-white rounded-lg px-4 py-2"
+                  type="text"
+                  name="{{ field.name }}"
+                  id="{{ field.id_for_label }}"
+                  value="{{ field.value|default:'' }}"
+                />
+
+              {% else %}
+                {{ field }}
+              {% endif %}
+
+              {% if field.help_text %}
+                <p class="text-xs text-neutral-300 mt-1">{{ field.help_text }}</p>
+              {% endif %}
+
+              {% if field.errors %}
+                <div class="text-danger text-white mt-1">{{ field.errors }}</div>
+              {% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+
+        <div class="flex gap-3 w-full mt-8">
+          <input
+            class="bg-[#F6F4EF] transition duration-300 hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-2 px-4 rounded-full cursor-pointer"
+            value="Guardar"
+            type="submit"
+          />
+          <a
+            class="bg-neutral-400 hover:bg-neutral-300 text-neutral-950 font-bold py-2 px-4 rounded-full"
+            href="{% url 'skills' %}"
+          >
+            Cancelar
+          </a>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</form>

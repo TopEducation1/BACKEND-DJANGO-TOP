@@ -64,8 +64,6 @@ from .forms import MarcaForm, MarcaPermisosFormSet
 from .serializers import MarcaPublicSerializer
 
 
-from topeducation.services.import_courses import ingest_course_payload
-
 from django.contrib.auth.decorators import login_required
 import stripe
 from django.contrib.auth import get_user_model
@@ -99,6 +97,8 @@ from topeducation.services.import_courses import ingest_course_payload
 from django.core.paginator import Paginator
 from django.shortcuts import render
 
+from django.db.models import OuterRef, Subquery, Case, When, Value, IntegerField, Prefetch
+
 @staff_member_required(login_url="/signin/")
 def admin_purchases_page(request):
     # opcional: si quieres solo staff
@@ -116,8 +116,10 @@ def dashboard(request):
     edx = Certificaciones.objects.filter(plataforma_certificacion=1)
     coursera = Certificaciones.objects.filter(plataforma_certificacion=2)
     masterclass = Certificaciones.objects.filter(plataforma_certificacion=3)
+    cursos = Certificaciones.objects.filter(tipo_certificacion="Curso")
+    especializaciones = Certificaciones.objects.filter(tipo_certificacion="Especialización")
     posts = Blog.objects.all()
-    return render(request,'pages/dashboard.html',{'certifications':certifications,'edx':edx,'coursera':coursera,'masterclass':masterclass,'posts':posts})
+    return render(request,'pages/dashboard.html',{'certifications':certifications,'edx':edx,'coursera':coursera,'masterclass':masterclass,'posts':posts,'cursos':cursos,'especializaciones':especializaciones})
 
 def signout(request):
     logout(request)
@@ -270,6 +272,7 @@ def certifications(request):
             | Q(tema_certificacion__nombre__icontains=q)
             # si estos campos son texto:
             | Q(nivel_certificacion__icontains=q)
+            | Q(tipo_certificacion__icontains=q)
             | Q(lenguaje_certificacion__icontains=q)
         )
 
@@ -482,11 +485,12 @@ def categories(request):
     universities = Universidades.objects.all()
     companies = Empresas.objects.all()
     topics = Temas.objects.all()
+    skills = Skills.objects.all()
     cat_blog = CategoriaBlog.objects.all()
     originals = Original.objects.all()
     rankings = Ranking.objects.all()
     
-    return render(request,'category/index.html',{'universities':universities,'companies':companies,'topics':topics,'cat_blog':cat_blog,'originals':originals,'rankings':rankings})
+    return render(request,'category/index.html',{'universities':universities,'companies':companies,'topics':topics,'cat_blog':cat_blog,'originals':originals,'rankings':rankings,'skills':skills})
 
 def universities(request):
     # ✅ búsqueda
@@ -733,6 +737,127 @@ def createTopic(request):
             return redirect('topics')
         except Exception as e:
             messages.warning(request,f"{str(e)}")
+
+def skills(request):
+    q = (request.GET.get("q") or "").strip()
+
+    # per_page
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    per_page = max(1, min(per_page, 200))
+
+    # page
+    try:
+        page_number = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    qs = Skills.objects.all()
+
+    if q:
+        qs = qs.filter(
+            Q(nombre__icontains=q)
+            | Q(translate__icontains=q)
+            | Q(descripcion__icontains=q)
+            | Q(skill_type__icontains=q)
+            | Q(slug__icontains=q)
+        )
+
+    qs = (
+        qs.only("id", "nombre", "translate", "descripcion", "slug", "skill_img", "skill_ico", "skill_type", "estado")
+        .order_by("id")
+    )
+
+    paginator = Paginator(qs, per_page)
+    page_obj = paginator.get_page(page_number)
+
+    current = page_obj.number
+    start_page = max(1, current - 3)
+    end_page = min(paginator.num_pages, current + 3)
+    page_numbers = range(start_page, end_page + 1)
+
+    context = {
+        "skills": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "page_numbers": page_numbers,
+        "show_inicio": start_page > 1,
+        "show_final": end_page < paginator.num_pages,
+        "per_page_options": [25, 50, 100, 200],
+        "q": q,
+    }
+    return render(request, "category/skills/index.html", context)
+
+
+def updateSkill(request, skill_id):
+    skill = get_object_or_404(Skills, pk=skill_id)
+
+    if request.method == "GET":
+        form = SkillsForm(request.POST or None, request.FILES or None, instance=skill)
+        return render(
+            request,
+            "category/skills/update.html",
+            {
+                "skill": skill,
+                "form": form,
+            },
+        )
+
+    form = SkillsForm(request.POST or None, request.FILES or None, instance=skill)
+    if form.is_valid():
+        form.save()
+        messages.success(request, "Skill actualizada correctamente!")
+        return redirect("skills")
+
+    messages.warning(request, "No fue posible actualizar la skill.")
+    return render(
+        request,
+        "category/skills/update.html",
+        {
+            "skill": skill,
+            "form": form,
+        },
+    )
+
+
+def createSkill(request):
+    if request.method == "GET":
+        return render(
+            request,
+            "category/skills/create.html",
+            {
+                "form": SkillsForm,
+            },
+        )
+
+    try:
+        form = SkillsForm(request.POST or None, request.FILES or None)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Skill guardada correctamente")
+            return redirect("skills")
+
+        messages.warning(request, "No fue posible guardar la skill.")
+        return render(
+            request,
+            "category/skills/create.html",
+            {
+                "form": form,
+            },
+        )
+
+    except Exception as e:
+        messages.warning(request, f"{str(e)}")
+        return render(
+            request,
+            "category/skills/create.html",
+            {
+                "form": SkillsForm(request.POST or None, request.FILES or None),
+            },
+        )
 
 def tags(request):
     q = (request.GET.get("q") or "").strip()
@@ -1149,26 +1274,74 @@ class BlogList(APIView):
         return paginator.get_paginated_response(serializer.data)
 
 
-# EndPoint to get the certifications
 class CertificationList(APIView):
-    
     pagination_class = CustomPagination
-    
-    # DEFINIR EL METODO GET QUE SE REALIZA DESDE EL FRONT    
-    def get(self, request):
 
-        # Queryset de las certificaciones
-        certifications_queryset = Certificaciones.objects.all().select_related(
-            'tema_certificacion',
-            'plataforma_certificacion'
-        ).order_by('-fecha_creado_cert')
-        
+    def get(self, request):
+        tema_slugs = [s.strip() for s in request.GET.getlist("Tema") if s and s.strip()]
+        habilidad_slugs = [s.strip() for s in request.GET.getlist("Habilidad") if s and s.strip()]
+
+        # Compatibilidad opcional por si más adelante llega en minúscula
+        if not tema_slugs:
+            tema_slugs = [s.strip() for s in request.GET.getlist("temas") if s and s.strip()]
+
+        if not habilidad_slugs:
+            habilidad_slugs = [s.strip() for s in request.GET.getlist("habilidades") if s and s.strip()]
+
+        skill_slugs = tema_slugs + habilidad_slugs
+
+        # Primera skill de la certificación según el orden de la tabla intermedia
+        first_skill_slug_subquery = SkillsCertification.objects.filter(
+            certificacion_id=OuterRef("pk")
+        ).order_by("orden", "id").values("skill__slug")[:1]
+
+        certifications_queryset = (
+            Certificaciones.objects.all()
+            .select_related(
+                "tema_certificacion",
+                "plataforma_certificacion",
+                "universidad_certificacion",
+                "empresa_certificacion",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "skills_rel",
+                    queryset=SkillsCertification.objects.select_related("skill").order_by("orden", "id"),
+                    to_attr="skills_links_ordered",
+                )
+            )
+            .annotate(
+                first_skill_slug=Subquery(first_skill_slug_subquery)
+            )
+        )
+
+        if skill_slugs:
+            # Trae todas las certificaciones relacionadas con cualquiera de los slugs seleccionados
+            certifications_queryset = certifications_queryset.filter(
+                skills_rel__skill__slug__in=skill_slugs
+            ).distinct()
+
+            # Si solo viene una skill, priorizamos las que la tienen de primera
+            if len(skill_slugs) == 1:
+                priority_slug = skill_slugs[0]
+
+                certifications_queryset = certifications_queryset.annotate(
+                    skill_priority=Case(
+                        When(first_skill_slug=priority_slug, then=Value(0)),
+                        default=Value(1),
+                        output_field=IntegerField(),
+                    )
+                ).order_by("skill_priority", "-fecha_creado_cert", "-id")
+            else:
+                certifications_queryset = certifications_queryset.order_by("-fecha_creado_cert", "-id")
+        else:
+            certifications_queryset = certifications_queryset.order_by("-fecha_creado_cert", "-id")
+
         paginator = self.pagination_class()
         paginated_queryset = paginator.paginate_queryset(certifications_queryset, request)
-        serializer = CertificationSerializer(paginated_queryset, many = True)
+        serializer = CertificationSerializer(paginated_queryset, many=True)
 
-        return paginator.get_paginated_response(serializer.data) 
-    
+        return paginator.get_paginated_response(serializer.data)
     
 #This view is to send the Masterclass certifications to display a masterclasss slider in frontend    
 class MasterclassCertificationsGrids(APIView):
@@ -1217,17 +1390,6 @@ class CategoriesList (APIView):
         categories = CategoriaBlog.objects.all()
         categories_serializer = CategoriesSerializer(categories, many= True)
         return Response(CategoriesSerializer.data)
-
-#EndPoint to get the skills  
-class SkillsList (APIView):
-    
-    def get(self, request):
-        
-        #Queryset of the skills
-        skills = Habilidades.objects.all()
-        skills_serializer = SkillsSerializer(skills, many= True)
-        
-        return Response (skills_serializer.data)
     
 
 # EndPoint to get the Universities
@@ -1255,6 +1417,43 @@ class TopicsList (APIView):
         topics_serializer = TopicsSerializer(topics, many = True)
         
         return Response(topics_serializer.data)
+
+class SkillsList(APIView):
+
+    def get(self, request):
+        q = (request.GET.get("q") or "").strip()
+
+        skills_queryset = Skills.objects.all()
+
+        if q:
+            skills_queryset = skills_queryset.filter(
+                Q(nombre__icontains=q) |
+                Q(translate__icontains=q) |
+                Q(skill_type__icontains=q)
+            )
+
+        skills_queryset = skills_queryset.order_by("parent_id", "nombre")
+
+        data = list(
+            skills_queryset.values(
+                "id",
+                "nombre",
+                "translate",
+                "slug",
+                "skill_img",
+                "skill_ico",
+                "skill_col",
+                "skill_type",
+                "estado",
+                "parent_id",
+            )
+        )
+
+        # Renombrar parent_id -> parent para que el front lo consuma igual
+        for item in data:
+            item["parent"] = item.pop("parent_id", None)
+
+        return Response(data, status=status.HTTP_200_OK)
 
 class PlatformsList (APIView):
     
@@ -1300,6 +1499,7 @@ class UniversitiesByRegion(APIView):
             grouped[region_name].append({
                 'id': uni.id,
                 'nombre': uni.nombre,
+                'descripcion_institucion': uni.descripcion_institucion,
                 'univ_img': uni.univ_ico if uni.univ_ico else uni.univ_img,
             })
 
@@ -1390,52 +1590,140 @@ class CertificationDetailView(APIView):
             )
 
 
-
-
 class filter_by_tags(APIView):
     pagination_class = CustomPagination
 
     def get(self, request):
         try:
             params = request.query_params.copy()
-            page = params.pop('page', ['1'])[0]
-            page_size = params.pop('page_size', ['12'])[0]
 
-            queryset = Certificaciones.objects.all().order_by('id')
-
-            field_mapping = {
-                'plataforma': 'plataforma_certificacion__nombre__iexact',
-                'empresas': 'empresa_certificacion__nombre__iexact',
-                'universidades': 'universidad_certificacion__nombre__iexact',
-                'temas': 'tema_certificacion__nombre__iexact',
-                'habilidades': 'tema_certificacion__nombre__iexact',
-            }
+            # Compatibilidad con nombres viejos y nuevos
+            tema_slugs = []
+            habilidad_slugs = []
+            plataforma_values = []
+            empresa_values = []
+            universidad_values = []
 
             for key, value_list in params.lists():
-                if key in field_mapping:
-                    field_name = field_mapping[key]
-                    q_objects = Q()
+                if key in ["page", "page_size"]:
+                    continue
+
+                if key in ["Tema", "temas"]:
                     for value in value_list:
-                        print(f"DEBUG: key={key}, raw value={value} (type={type(value)})")
-                        if value is None:
-                            print("DEBUG: value is None, skipping")
-                            continue
                         if not isinstance(value, str):
-                            print("DEBUG: value is not string, skipping")
                             continue
-                        # Aquí ocurre el split y strip
-                        split_values = value.split(',') if value else []
-                        for val in split_values:
-                            print(f"DEBUG: val before strip: {val} (type={type(val)})")
-                            if val is None:
-                                print("DEBUG: val is None, skipping")
-                                continue
-                            cleaned_val = val.strip()
-                            print(f"DEBUG: cleaned_val: '{cleaned_val}'")
-                            if cleaned_val:
-                                q_objects |= Q(**{field_name: cleaned_val})
-                    if q_objects:
-                        queryset = queryset.filter(q_objects)
+                        for v in value.split(","):
+                            cleaned = v.strip()
+                            if cleaned:
+                                tema_slugs.append(cleaned)
+
+                elif key in ["Habilidad", "habilidades"]:
+                    for value in value_list:
+                        if not isinstance(value, str):
+                            continue
+                        for v in value.split(","):
+                            cleaned = v.strip()
+                            if cleaned:
+                                habilidad_slugs.append(cleaned)
+
+                elif key in ["Plataforma", "plataforma", "Aliados", "aliados"]:
+                    for value in value_list:
+                        if not isinstance(value, str):
+                            continue
+                        for v in value.split(","):
+                            cleaned = v.strip()
+                            if cleaned:
+                                plataforma_values.append(cleaned)
+
+                elif key in ["Empresa", "empresas", "Empresas"]:
+                    for value in value_list:
+                        if not isinstance(value, str):
+                            continue
+                        for v in value.split(","):
+                            cleaned = v.strip()
+                            if cleaned:
+                                empresa_values.append(cleaned)
+
+                elif key in ["Universidad", "universidades", "Universidades"]:
+                    for value in value_list:
+                        if not isinstance(value, str):
+                            continue
+                        for v in value.split(","):
+                            cleaned = v.strip()
+                            if cleaned:
+                                universidad_values.append(cleaned)
+
+            skill_slugs = tema_slugs + habilidad_slugs
+
+            # Primera skill real de la certificación
+            first_skill_slug_subquery = SkillsCertification.objects.filter(
+                certificacion_id=OuterRef("pk")
+            ).order_by("orden", "id").values("skill__slug")[:1]
+
+            queryset = (
+                Certificaciones.objects.all()
+                .select_related(
+                    "plataforma_certificacion",
+                    "empresa_certificacion",
+                    "universidad_certificacion",
+                    "tema_certificacion",
+                )
+                .prefetch_related(
+                    Prefetch(
+                        "skills_rel",
+                        queryset=SkillsCertification.objects.select_related("skill").order_by("orden", "id"),
+                        to_attr="skills_links_ordered",
+                    )
+                )
+                .annotate(
+                    first_skill_slug=Subquery(first_skill_slug_subquery)
+                )
+            )
+
+            # Filtro por plataforma
+            if plataforma_values:
+                q_plataforma = Q()
+                for value in plataforma_values:
+                    q_plataforma |= Q(plataforma_certificacion__nombre__iexact=value)
+                queryset = queryset.filter(q_plataforma)
+
+            # Filtro por empresa
+            if empresa_values:
+                q_empresa = Q()
+                for value in empresa_values:
+                    q_empresa |= Q(empresa_certificacion__nombre__iexact=value)
+                queryset = queryset.filter(q_empresa)
+
+            # Filtro por universidad
+            if universidad_values:
+                q_universidad = Q()
+                for value in universidad_values:
+                    q_universidad |= Q(universidad_certificacion__nombre__iexact=value)
+                queryset = queryset.filter(q_universidad)
+
+            # Filtro nuevo por skills usando slug
+            if skill_slugs:
+                queryset = queryset.filter(
+                    skills_rel__skill__slug__in=skill_slugs
+                ).distinct()
+
+                # Si solo hay una skill seleccionada, priorizamos las que la tienen primero
+                if len(skill_slugs) == 1:
+                    priority_slug = skill_slugs[0]
+
+                    queryset = queryset.annotate(
+                        skill_priority=Case(
+                            When(first_skill_slug=priority_slug, then=Value(0)),
+                            default=Value(1),
+                            output_field=IntegerField(),
+                        )
+                    ).order_by("skill_priority", "-fecha_creado_cert", "-id")
+                else:
+                    queryset = queryset.order_by("-fecha_creado_cert", "-id")
+            else:
+                queryset = queryset.order_by("-fecha_creado_cert", "-id")
+
+            queryset = queryset.distinct()
 
             paginator = self.pagination_class()
             paginated_queryset = paginator.paginate_queryset(queryset, request)
@@ -1446,12 +1734,10 @@ class filter_by_tags(APIView):
         except Exception as e:
             print(f"Error en filter_by_tags: {str(e)}")
             return Response(
-                {'error': 'Error al filtrar certificaciones'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": "Error al filtrar certificaciones"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
-
-
+        
 class filter_by_search(APIView):
     def post(self, request):
         query_string = request.data.get('data', "").strip()
@@ -2440,7 +2726,10 @@ def _get_courses_endpoint() -> str:
 
 def _get_courses_api_key() -> str | None:
     # soporte a ambos nombres
-    return getattr(settings, "AWS_COURSES_API_KEY", None) or getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
+    return (
+        getattr(settings, "AWS_COURSES_API_KEY", None)
+        or getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
+    )
 
 
 def _extract_total_pages(payload: dict) -> int | None:
@@ -2465,7 +2754,8 @@ def _compute_next_page(current_page: int, page_size: int, payload: dict) -> int:
     """
     Reglas:
     - Si totalPages es confiable (>0): reinicia cuando llegas al final.
-    - Si totalPages no sirve (0/None): NO uses items_len < page_size (porque tu API puede devolver menos).
+    - Si totalPages no sirve (0/None): NO uses items_len < page_size
+      porque la API puede devolver menos.
       En su lugar: reinicia solo cuando items_len == 0.
     """
     total_pages = _extract_total_pages(payload)
@@ -2474,27 +2764,31 @@ def _compute_next_page(current_page: int, page_size: int, payload: dict) -> int:
     if total_pages:
         return 1 if current_page >= total_pages else (current_page + 1)
 
-    # totalPages no confiable:
     return 1 if items_len == 0 else (current_page + 1)
 
 
 def _acquire_lock(state_key: str, run_id: str) -> ExternalSyncState | None:
     """
     Lock atómico:
-    - Toma lock si no está corriendo
+    - toma lock si no está corriendo
     - o si el lock está stale (TTL)
     """
     now = timezone.now()
     stale_before = now - timedelta(seconds=LOCK_TTL_SECONDS)
 
-    updated = ExternalSyncState.objects.filter(key=state_key).filter(
-        Q(running=False) |
-        Q(locked_at__isnull=True) |
-        Q(locked_at__lt=stale_before)
-    ).update(
-        running=True,
-        locked_at=now,
-        updated_at=now,
+    updated = (
+        ExternalSyncState.objects
+        .filter(key=state_key)
+        .filter(
+            Q(running=False) |
+            Q(locked_at__isnull=True) |
+            Q(locked_at__lt=stale_before)
+        )
+        .update(
+            running=True,
+            locked_at=now,
+            updated_at=now,
+        )
     )
 
     if updated == 0:
@@ -2511,16 +2805,61 @@ def _release_lock(state_key: str):
     )
 
 
+def _normalize_ingestion_summary(summary, items_len: int) -> dict:
+    """
+    Normaliza el resultado de ingest_course_payload para que el response
+    siempre tenga una estructura consistente aunque el ingestor cambie.
+    """
+    if not isinstance(summary, dict):
+        return {
+            "received_items": items_len,
+            "raw_summary": summary,
+        }
+
+    return {
+        "received_items": items_len,
+
+        "created": int(summary.get("created", 0) or 0),
+        "updated": int(summary.get("updated", 0) or 0),
+        "skipped": int(summary.get("skipped", 0) or 0),
+        "errors": int(summary.get("errors", 0) or 0),
+
+        # skills
+        "skills_catalog_created": int(summary.get("skills_catalog_created", 0) or 0),
+        "skills_created": int(summary.get("skills_created", 0) or 0),
+        "skills_linked": int(summary.get("skills_linked", 0) or 0),
+        "skills_unlinked": int(summary.get("skills_unlinked", 0) or 0),
+
+        # instituciones
+        "institutions_updated": int(summary.get("institutions_updated", 0) or 0),
+        "companies_updated": int(summary.get("companies_updated", 0) or 0),
+        "universities_updated": int(summary.get("universities_updated", 0) or 0),
+
+        # catálogos creados
+        "universities_created": int(summary.get("universities_created", 0) or 0),
+        "platforms_created": int(summary.get("platforms_created", 0) or 0),
+        "companies_created": int(summary.get("companies_created", 0) or 0),
+
+        # monitoreo
+        "certifications_without_skills": int(summary.get("certifications_without_skills", 0) or 0),
+        "duplicates_detected": int(summary.get("duplicates_detected", 0) or 0),
+
+        "raw": summary,
+    }
+
+
 @csrf_exempt
 @require_POST
 def api_run_courses_sync(request):
     """
     POST /api/sync/courses/run/
+
     Body opcional:
     {
       "pageSize": 50,
       "timeout": 30,
-      "maxPagesPerRun": 1
+      "maxPagesPerRun": 1,
+      "resetCursor": false
     }
     """
     t0 = time.time()
@@ -2529,12 +2868,15 @@ def api_run_courses_sync(request):
 
     endpoint = _get_courses_endpoint()
     api_key = _get_courses_api_key()
+
     if not api_key:
-        # ✅ log para que no sea 500 "mudo"
         ExternalSyncLog.objects.create(
-            key=state_key, run_id=run_id,
-            page=0, page_size=0,
-            ok=False, took_ms=0,
+            key=state_key,
+            run_id=run_id,
+            page=0,
+            page_size=0,
+            ok=False,
+            took_ms=0,
             error="missing_api_key",
             detail="AWS_COURSES_API_KEY / COURSES_EXTERNAL_API_KEY no configurada",
             trace="",
@@ -2543,22 +2885,34 @@ def api_run_courses_sync(request):
 
     try:
         body = json.loads(request.body or "{}")
+        if not isinstance(body, dict):
+            body = {}
     except Exception:
         body = {}
 
     page_size = int(body.get("pageSize", 50) or 50)
     timeout = int(body.get("timeout", 30) or 30)
-
     max_pages_per_run = int(body.get("maxPagesPerRun", 1) or 1)
-    max_pages_per_run = max(1, min(max_pages_per_run, 10))  # cap de seguridad
+    reset_cursor = bool(body.get("resetCursor", False))
+
+    max_pages_per_run = max(1, min(max_pages_per_run, 10))
+    page_size = max(1, min(page_size, 500))
+    timeout = max(5, min(timeout, 120))
 
     # 1) asegurar state existe
-    ExternalSyncState.objects.get_or_create(
+    state, _ = ExternalSyncState.objects.get_or_create(
         key=state_key,
         defaults={"cursor_value": "1", "running": False},
     )
 
-    # 2) adquirir lock atómico
+    # 2) reset opcional de cursor
+    if reset_cursor:
+        ExternalSyncState.objects.filter(key=state_key).update(
+            cursor_value="1",
+            updated_at=timezone.now(),
+        )
+
+    # 3) adquirir lock
     state = _acquire_lock(state_key, run_id)
     if not state:
         return JsonResponse({
@@ -2572,32 +2926,42 @@ def api_run_courses_sync(request):
 
     processed_pages = 0
     last_result = None
-
-    # ✅ variables para poder loguear aunque falle inesperadamente
     page = 1
 
     try:
-        # cursor actual
         try:
             page = max(1, int(state.cursor_value or "1"))
         except Exception:
             page = 1
 
-        headers = {"Accept": "application/json", "x-api-key": api_key}
+        headers = {
+            "Accept": "application/json",
+            "x-api-key": api_key,
+        }
 
         for _ in range(max_pages_per_run):
-            params = {"page": page, "pageSize": page_size}
+            params = {
+                "page": page,
+                "pageSize": page_size,
+            }
 
-            # 3) pedir payload
             try:
-                resp = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
+                resp = requests.get(
+                    endpoint,
+                    headers=headers,
+                    params=params,
+                    timeout=timeout,
+                )
             except requests.RequestException as e:
                 took_ms = int((time.time() - t0) * 1000)
 
                 ExternalSyncLog.objects.create(
-                    key=state_key, run_id=run_id,
-                    page=page, page_size=page_size,
-                    ok=False, took_ms=took_ms,
+                    key=state_key,
+                    run_id=run_id,
+                    page=page,
+                    page_size=page_size,
+                    ok=False,
+                    took_ms=took_ms,
                     error="upstream_unreachable",
                     detail=str(e),
                     trace=traceback.format_exc()[:8000],
@@ -2609,16 +2973,23 @@ def api_run_courses_sync(request):
                     updated_at=timezone.now(),
                 )
 
-                return JsonResponse({"ok": False, "error": "upstream_unreachable", "detail": str(e)}, status=502)
+                return JsonResponse({
+                    "ok": False,
+                    "error": "upstream_unreachable",
+                    "detail": str(e),
+                }, status=502)
 
             if resp.status_code != 200:
                 took_ms = int((time.time() - t0) * 1000)
                 detail = f"HTTP {resp.status_code}: {(resp.text or '')[:2000]}"
 
                 ExternalSyncLog.objects.create(
-                    key=state_key, run_id=run_id,
-                    page=page, page_size=page_size,
-                    ok=False, took_ms=took_ms,
+                    key=state_key,
+                    run_id=run_id,
+                    page=page,
+                    page_size=page_size,
+                    ok=False,
+                    took_ms=took_ms,
                     error="upstream_error",
                     detail=detail,
                 )
@@ -2629,7 +3000,12 @@ def api_run_courses_sync(request):
                     updated_at=timezone.now(),
                 )
 
-                return JsonResponse({"ok": False, "error": "upstream_error", "status": resp.status_code}, status=502)
+                return JsonResponse({
+                    "ok": False,
+                    "error": "upstream_error",
+                    "status": resp.status_code,
+                    "detail": detail,
+                }, status=502)
 
             try:
                 payload = resp.json()
@@ -2637,9 +3013,12 @@ def api_run_courses_sync(request):
                 took_ms = int((time.time() - t0) * 1000)
 
                 ExternalSyncLog.objects.create(
-                    key=state_key, run_id=run_id,
-                    page=page, page_size=page_size,
-                    ok=False, took_ms=took_ms,
+                    key=state_key,
+                    run_id=run_id,
+                    page=page,
+                    page_size=page_size,
+                    ok=False,
+                    took_ms=took_ms,
                     error="invalid_json_from_upstream",
                     detail=(resp.text or "")[:2000],
                 )
@@ -2650,24 +3029,29 @@ def api_run_courses_sync(request):
                     updated_at=timezone.now(),
                 )
 
-                return JsonResponse({"ok": False, "error": "invalid_json_from_upstream"}, status=502)
+                return JsonResponse({
+                    "ok": False,
+                    "error": "invalid_json_from_upstream",
+                }, status=502)
 
-            # ✅ FIX CRÍTICO: si el upstream devuelve list/str/etc, normalizamos a dict
             if not isinstance(payload, dict):
-                payload = {"data": payload}
+                payload = {"items": []}
 
             items_len = _safe_items_len(payload)
 
-            # 4) ingestar
             try:
                 summary = ingest_course_payload(payload)
+                normalized_summary = _normalize_ingestion_summary(summary, items_len)
             except Exception as e:
                 took_ms = int((time.time() - t0) * 1000)
 
                 ExternalSyncLog.objects.create(
-                    key=state_key, run_id=run_id,
-                    page=page, page_size=page_size,
-                    ok=False, took_ms=took_ms,
+                    key=state_key,
+                    run_id=run_id,
+                    page=page,
+                    page_size=page_size,
+                    ok=False,
+                    took_ms=took_ms,
                     error="ingestion_failed",
                     detail=str(e),
                     trace=traceback.format_exc()[:8000],
@@ -2681,9 +3065,12 @@ def api_run_courses_sync(request):
                     updated_at=timezone.now(),
                 )
 
-                return JsonResponse({"ok": False, "error": "ingestion_failed", "detail": str(e)}, status=500)
+                return JsonResponse({
+                    "ok": False,
+                    "error": "ingestion_failed",
+                    "detail": str(e),
+                }, status=500)
 
-            # 5) avanzar cursor (sin confiar en totalPages=0)
             next_page = _compute_next_page(page, page_size, payload)
 
             ExternalSyncState.objects.filter(key=state_key).update(
@@ -2694,28 +3081,32 @@ def api_run_courses_sync(request):
             )
 
             processed_pages += 1
+
             last_result = {
                 "page": page,
                 "pageSize": page_size,
                 "items_len": items_len,
                 "next_page": next_page,
                 "totalPages_raw": payload.get("totalPages", None),
-                "summary": summary,
+                "summary": normalized_summary,
             }
 
             ExternalSyncLog.objects.create(
-                key=state_key, run_id=run_id,
-                page=page, page_size=page_size,
+                key=state_key,
+                run_id=run_id,
+                page=page,
+                page_size=page_size,
                 ok=True,
                 items_len=items_len,
                 received=items_len,
                 took_ms=int((time.time() - t0) * 1000),
+                detail=json.dumps({
+                    "summary": normalized_summary
+                }, ensure_ascii=False)[:2000],
             )
 
-            # avanzar para siguiente iteración del mismo run
             page = next_page
 
-            # si reinició a 1 por items_len==0 o por totalPages real, cortamos
             if next_page == 1:
                 break
 
@@ -2731,25 +3122,33 @@ def api_run_courses_sync(request):
         }, status=200)
 
     except Exception as e:
-        # ✅ catch-all: evita 500 "sin rastro" y deja log con trace
         took_ms = int((time.time() - t0) * 1000)
+
         ExternalSyncLog.objects.create(
-            key=state_key, run_id=run_id,
-            page=page, page_size=page_size,
-            ok=False, took_ms=took_ms,
+            key=state_key,
+            run_id=run_id,
+            page=page,
+            page_size=page_size,
+            ok=False,
+            took_ms=took_ms,
             error="unexpected_exception",
             detail=str(e),
             trace=traceback.format_exc()[:8000],
         )
+
         ExternalSyncState.objects.filter(key=state_key).update(
             last_error_at=timezone.now(),
             last_error=f"unexpected_exception: {e}",
             updated_at=timezone.now(),
         )
-        return JsonResponse({"ok": False, "error": "unexpected_exception"}, status=500)
+
+        return JsonResponse({
+            "ok": False,
+            "error": "unexpected_exception",
+            "detail": str(e),
+        }, status=500)
 
     finally:
-        # liberar lock siempre (si este proceso lo tomó)
         try:
             _release_lock(state_key)
         except Exception:

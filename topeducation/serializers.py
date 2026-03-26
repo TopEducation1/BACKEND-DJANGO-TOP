@@ -84,7 +84,7 @@ class UniverisitiesSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Universidades
-        fields = ['id', 'nombre', 'region_universidad_id', 'univ_img','univ_ico','univ_fla','univ_est','univ_top', 'region_nombre', 'total_certificaciones']
+        fields = ['id', 'nombre', 'region_universidad_id','descripcion_institucion', 'univ_img','univ_ico','univ_fla','univ_est','univ_top', 'region_nombre', 'total_certificaciones']
 
     def get_region_nombre(self, obj):
         return obj.region_universidad.nombre if obj.region_universidad else "No"
@@ -111,14 +111,53 @@ class EmpresaSerializer (serializers.ModelSerializer):
     class Meta:
         model = Empresas
         
-        fields = ['id', 'nombre','empr_img','empr_ico','empr_est','empr_top','total_certificaciones']
+        fields = ['id', 'nombre','empr_img','empr_ico','empr_est','empr_top','total_certificaciones','descripcion_institucion']
 
+
+class SkillSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Skills
+        fields = "__all__"
 
 class CertificationSerializer(serializers.ModelSerializer):
-    
+    skills = serializers.SerializerMethodField()
+    primary_skill = serializers.SerializerMethodField()
+
     class Meta:
         model = Certificaciones
         fields = '__all__'
+
+    def _get_ordered_skills(self, instance):
+        """
+        Devuelve las skills ordenadas.
+        Prioridad:
+        1) si viene prefetch desde backend en skills_links_ordered
+        2) si no, usa instance.skills.all()
+        """
+        links = getattr(instance, 'skills_links_ordered', None)
+
+        if links is not None:
+            ordered_skills = []
+            for link in links:
+                skill = getattr(link, 'skill', None)
+                if skill:
+                    ordered_skills.append(skill)
+            return ordered_skills
+
+        if hasattr(instance, 'skills'):
+            return list(instance.skills.all())
+
+        return []
+
+    def get_skills(self, instance):
+        ordered_skills = self._get_ordered_skills(instance)
+        return SkillSerializer(ordered_skills, many=True).data
+
+    def get_primary_skill(self, instance):
+        ordered_skills = self._get_ordered_skills(instance)
+        if not ordered_skills:
+            return None
+        return SkillSerializer(ordered_skills[0]).data
 
     def get_fecha_certificacion(self, instance):
         fecha = instance.fecha_creado_cert
@@ -140,11 +179,34 @@ class CertificationSerializer(serializers.ModelSerializer):
             "contenido_certificacion": contenido_certificacion
         }
 
-        # Relaciones
-        data['tema_certificacion'] = TopicsSerializer(instance.tema_certificacion).data if instance.tema_certificacion else None
-        data['plataforma_certificacion'] = PlataformaSerializer(instance.plataforma_certificacion).data if instance.plataforma_certificacion else None
-        data['universidad_certificacion'] = UniverisitiesSerializer(instance.universidad_certificacion).data if instance.universidad_certificacion else None
-        data['empresa_certificacion'] = EmpresaSerializer(instance.empresa_certificacion).data if instance.empresa_certificacion else None
+        # Relaciones legacy/directas
+        data['plataforma_certificacion'] = (
+            PlataformaSerializer(instance.plataforma_certificacion).data
+            if instance.plataforma_certificacion else None
+        )
+        data['universidad_certificacion'] = (
+            UniverisitiesSerializer(instance.universidad_certificacion).data
+            if instance.universidad_certificacion else None
+        )
+        data['empresa_certificacion'] = (
+            EmpresaSerializer(instance.empresa_certificacion).data
+            if instance.empresa_certificacion else None
+        )
+
+        # mantener tema_certificacion solo si todavía existe el campo
+        if hasattr(instance, 'tema_certificacion'):
+            data['tema_certificacion'] = (
+                TopicsSerializer(instance.tema_certificacion).data
+                if instance.tema_certificacion else None
+            )
+        else:
+            data['tema_certificacion'] = None
+
+        # skills reales y ordenadas
+        data['skills'] = self.get_skills(instance)
+
+        # primera skill real
+        data['primary_skill'] = self.get_primary_skill(instance)
 
         # Procesamiento de módulos
         modulos_raw_str = data.get('modulos_certificacion', '')
@@ -192,7 +254,7 @@ class CertificationSerializer(serializers.ModelSerializer):
 
             data['modulos_certificacion'] = modulos_procesados
 
-        # Procesamiento de habilidades
+        # Procesamiento de habilidades texto legacy
         habilidades_raw = data.get('habilidades_certificacion', '')
         if isinstance(habilidades_raw, str):
             data['habilidades_certificacion'] = [
@@ -216,17 +278,14 @@ class CertificationSerializer(serializers.ModelSerializer):
                 if aprendizaje and aprendizaje.strip()
             ]
 
-        # Procesamiento de instructores (string -> lista)
+        # Procesamiento de instructores
         instructores_raw = data.get('instructores_certificacion', '')
         if isinstance(instructores_raw, str):
             t = instructores_raw.strip()
             if not t or t.lower() in ['none', 'null']:
                 data['instructores_certificacion'] = instructores_raw
             else:
-                import re
-                # convierte "&", "and", "y" en coma y separa por coma
                 t = re.sub(r'\s*(?:&| and | y )\s*', ',', t, flags=re.IGNORECASE)
-
                 parts = [p.strip() for p in t.split(',') if p and p.strip()]
 
                 data['instructores_certificacion'] = [
@@ -244,9 +303,6 @@ class CertificationSerializer(serializers.ModelSerializer):
         data['cert_top'] = instance.cert_top
 
         return data
-
-
-
 
 class CertificationSearchSerializer(serializers.ModelSerializer):
 

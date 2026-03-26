@@ -76,6 +76,11 @@ class TopicsForm(forms.ModelForm):
         model = Temas
         fields = '__all__'
 
+class SkillsForm(forms.ModelForm):
+    class Meta:
+        model = Skills
+        fields = "__all__"
+
 class TagsForm(forms.ModelForm):
     class Meta:
         model = CategoriaBlog
