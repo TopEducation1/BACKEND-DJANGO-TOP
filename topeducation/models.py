@@ -204,7 +204,7 @@ class Certificaciones(models.Model):
     class Meta:
         db_table = 'Certificaciones'
 
-
+    
 class Instructores(models.Model):
     nombre = models.CharField(max_length=250, null=True, blank=True)
     imagen = models.TextField(null=True, blank=True)
@@ -212,6 +212,9 @@ class Instructores(models.Model):
 
     def __str__(self):
         return self.nombre or f"Instructor {self.pk}"
+
+    class Meta:
+        db_table = 'Instructores'
 
 
 class InstructorCertification(models.Model):
@@ -227,7 +230,8 @@ class InstructorCertification(models.Model):
     )
 
     class Meta:
-        unique_together = ('certificacion', 'instructor')      
+        db_table = 'InstructorCertification'
+        unique_together = ('certificacion', 'instructor')   
 
 class Autor(models.Model):
     nombre_autor = models.CharField(max_length=255)
