@@ -336,8 +336,8 @@ def upsert_skill(item: dict) -> tuple[Skills | None, bool]:
 
     if _has_field(Skills, "skill_type"):
         new_type = _norm(item.get("skill_type") or item.get("tem_type"))
-        if new_type:
-            updates["skill_type"] = new_type
+        ##if new_type:
+        ##    updates["skill_type"] = new_type
 
     if _has_field(Skills, "skill_col"):
         new_col = _norm(item.get("skill_col"))
