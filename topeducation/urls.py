@@ -64,6 +64,7 @@ urlpatterns = [
     path('topics/', TopicsList.as_view(), name='topics_list'),
     path('api/searchTags/', receive_tags, name='receive_tags'),
     path('certificacion/<slug:slug>/', CertificationDetailView.as_view(), name='get-certification'),
+    path("certificaciones/languages/", CertificationLanguagesList.as_view(), name="certification-languages"),
     path('certificaciones/filter/', filter_by_tags.as_view()    , name='filter-by-tags'),
     path('certificaciones/busqueda/', filter_by_search.as_view(), name='filter_by_search'),
     path('certificacionesInterest/', CertificationsCafam.as_view(), name="certificaciones_interest"),

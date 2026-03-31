@@ -118,10 +118,15 @@ class SkillSerializer(serializers.ModelSerializer):
     class Meta:
         model = Skills
         fields = "__all__"
+class InstructorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Instructores
+        fields = "__all__"
 
 class CertificationSerializer(serializers.ModelSerializer):
     skills = serializers.SerializerMethodField()
     primary_skill = serializers.SerializerMethodField()
+    instructores_detalle_certificacion = serializers.SerializerMethodField()
 
     class Meta:
         model = Certificaciones
@@ -158,7 +163,22 @@ class CertificationSerializer(serializers.ModelSerializer):
         if not ordered_skills:
             return None
         return SkillSerializer(ordered_skills[0]).data
+    
+    def get_instructores_detalle_certificacion(self, instance):
+        links = getattr(instance, "instructor_links_prefetched", None)
 
+        if links is not None:
+            ordered_instructors = []
+            for link in links:
+                instructor = getattr(link, "instructor", None)
+                if instructor:
+                    ordered_instructors.append(instructor)
+            return InstructorSerializer(ordered_instructors, many=True).data
+
+        links = instance.instructor_links.select_related("instructor").all()
+        instructors = [link.instructor for link in links if link.instructor]
+        return InstructorSerializer(instructors, many=True).data
+    
     def get_fecha_certificacion(self, instance):
         fecha = instance.fecha_creado_cert
         if isinstance(fecha, datetime):

@@ -3,6 +3,9 @@ from __future__ import annotations
 from topeducation.inspectors.courses_inspector import fetch_and_parse_page
 from topeducation.models import ExternalSyncState
 
+from django.db.models import Q, Case, When, Value, IntegerField, OuterRef, Subquery, Prefetch
+from django.db.models import OuterRef, Subquery, Case, When, Value, IntegerField, Prefetch
+
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 import re
@@ -29,7 +32,6 @@ from rest_framework.decorators import api_view
 import json
 from django.views.decorators.http import require_http_methods
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
 from django.core.paginator import EmptyPage, PageNotAnInteger
 from django.core.paginator import Paginator
 from rest_framework.pagination import PageNumberPagination
@@ -44,7 +46,6 @@ from django.forms import modelformset_factory
 import os
 from collections import defaultdict
 from django.db.models import Count
-from django.db.models import Prefetch
 
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden
 import requests
@@ -97,7 +98,6 @@ from topeducation.services.import_courses import ingest_course_payload
 from django.core.paginator import Paginator
 from django.shortcuts import render
 
-from django.db.models import OuterRef, Subquery, Case, When, Value, IntegerField, Prefetch
 
 @staff_member_required(login_url="/signin/")
 def admin_purchases_page(request):
@@ -1590,6 +1590,215 @@ class CertificationDetailView(APIView):
             )
 
 
+LANGUAGE_NORMALIZATION = {
+    "es": {
+        "label": "Español",
+        "values": ["es", "spanish", "enseñado en español", "español"],
+    },
+    "en": {
+        "label": "Inglés",
+        "values": ["en", "english", "enseñado en inglés (22 idiomas disponibles)", "inglés"],
+    },
+    "ar": {
+        "label": "Árabe",
+        "values": ["ar", "arabic"],
+    },
+    "bn": {
+        "label": "Bengalí",
+        "values": ["bn", "bengali"],
+    },
+    "ca": {
+        "label": "Catalán",
+        "values": ["ca", "catalan"],
+    },
+    "zh": {
+        "label": "Chino",
+        "values": [
+            "zh",
+            "zh-cn",
+            "zh-tw",
+            "chinese - china",
+            "chinese - mandarin",
+            "chinese - simplified",
+            "chinese",
+        ],
+    },
+    "de": {
+        "label": "Alemán",
+        "values": ["de", "german"],
+    },
+    "nl": {
+        "label": "Neerlandés",
+        "values": ["nl", "dutch"],
+    },
+    "fa": {
+        "label": "Persa",
+        "values": ["fa", "farsi"],
+    },
+    "fr": {
+        "label": "Francés",
+        "values": ["fr", "french"],
+    },
+    "he": {
+        "label": "Hebreo",
+        "values": ["he", "hebrew"],
+    },
+    "hi": {
+        "label": "Hindi",
+        "values": ["hi", "hindi"],
+    },
+    "hu": {
+        "label": "Húngaro",
+        "values": ["hu", "hungarian"],
+    },
+    "id": {
+        "label": "Indonesio",
+        "values": ["id", "indonesian"],
+    },
+    "it": {
+        "label": "Italiano",
+        "values": ["it", "italian"],
+    },
+    "ja": {
+        "label": "Japonés",
+        "values": ["ja", "japanese"],
+    },
+    "kk": {
+        "label": "Kazajo",
+        "values": ["kk", "kazakh"],
+    },
+    "ko": {
+        "label": "Coreano",
+        "values": ["ko", "korean"],
+    },
+    "dv": {
+        "label": "Maldivo",
+        "values": ["dv", "maldivian"],
+    },
+    "pl": {
+        "label": "Polaco",
+        "values": ["pl", "polish"],
+    },
+    "pt": {
+        "label": "Portugués",
+        "values": ["pt", "pt-br", "pt-pt", "portuguese"],
+    },
+    "ru": {
+        "label": "Ruso",
+        "values": ["ru", "russian"],
+    },
+    "sv": {
+        "label": "Sueco",
+        "values": ["sv", "swedish"],
+    },
+    "sw": {
+        "label": "Suajili",
+        "values": ["sw", "swahili"],
+    },
+    "th": {
+        "label": "Tailandés",
+        "values": ["th", "thai"],
+    },
+    "tr": {
+        "label": "Turco",
+        "values": ["tr", "turkish"],
+    },
+    "uk": {
+        "label": "Ucraniano",
+        "values": ["uk", "ukrainian"],
+    },
+    "ur": {
+        "label": "Urdu",
+        "values": ["ur", "urdu"],
+    },
+}
+
+IGNORED_LANGUAGE_VALUES = {"", "none", "null", "-"}
+
+
+def normalize_language_value(raw_value):
+    raw = (raw_value or "").strip().lower()
+
+    if raw in IGNORED_LANGUAGE_VALUES:
+        return None
+
+    for code, config in LANGUAGE_NORMALIZATION.items():
+        if raw in config["values"]:
+            return {
+                "code": code,
+                "label": config["label"],
+            }
+
+    return None
+
+
+def split_language_values(raw_value):
+    if not raw_value:
+        return []
+
+    return [
+        item.strip()
+        for item in str(raw_value).split(",")
+        if item and item.strip()
+    ]
+
+
+class CertificationLanguagesList(APIView):
+    def get(self, request):
+        try:
+            rows = (
+                Certificaciones.objects
+                .exclude(lenguaje_certificacion__isnull=True)
+                .exclude(lenguaje_certificacion__exact="")
+                .values_list("lenguaje_certificacion", flat=True)
+            )
+
+            grouped = defaultdict(int)
+
+            for raw in rows:
+                normalized_codes_in_row = set()
+
+                for item in split_language_values(raw):
+                    normalized = normalize_language_value(item)
+                    if normalized:
+                        normalized_codes_in_row.add(normalized["code"])
+
+                for code in normalized_codes_in_row:
+                    grouped[code] += 1
+
+            ordered_codes = ["es", "en"] + sorted(
+                [code for code in grouped.keys() if code not in {"es", "en"}]
+            )
+
+            data = [
+                {
+                    "code": code,
+                    "label": LANGUAGE_NORMALIZATION[code]["label"],
+                    "count": grouped[code],
+                    "checked_by_default": code in {"es", "en"},
+                }
+                for code in ordered_codes
+                if code in grouped
+            ]
+
+            return Response(data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Error en CertificationLanguagesList: {str(e)}")
+            return Response(
+                {"error": "Error al cargar idiomas"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+def get_language_values_by_codes(codes):
+    values = []
+
+    for code in codes:
+        config = LANGUAGE_NORMALIZATION.get(code, {})
+        values.extend(config.get("values", []))
+
+    return list(dict.fromkeys(values))
+
 class filter_by_tags(APIView):
     pagination_class = CustomPagination
 
@@ -1597,12 +1806,12 @@ class filter_by_tags(APIView):
         try:
             params = request.query_params.copy()
 
-            # Compatibilidad con nombres viejos y nuevos
             tema_slugs = []
             habilidad_slugs = []
             plataforma_values = []
             empresa_values = []
             universidad_values = []
+            idioma_codes = []
 
             for key, value_list in params.lists():
                 if key in ["page", "page_size"]:
@@ -1653,9 +1862,17 @@ class filter_by_tags(APIView):
                             if cleaned:
                                 universidad_values.append(cleaned)
 
+                elif key in ["Idioma", "idioma"]:
+                    for value in value_list:
+                        if not isinstance(value, str):
+                            continue
+                        for v in value.split(","):
+                            cleaned = v.strip().lower()
+                            if cleaned:
+                                idioma_codes.append(cleaned)
+
             skill_slugs = tema_slugs + habilidad_slugs
 
-            # Primera skill real de la certificación
             first_skill_slug_subquery = SkillsCertification.objects.filter(
                 certificacion_id=OuterRef("pk")
             ).order_by("orden", "id").values("skill__slug")[:1]
@@ -1680,34 +1897,58 @@ class filter_by_tags(APIView):
                 )
             )
 
-            # Filtro por plataforma
+            # Plataforma
             if plataforma_values:
                 q_plataforma = Q()
                 for value in plataforma_values:
                     q_plataforma |= Q(plataforma_certificacion__nombre__iexact=value)
                 queryset = queryset.filter(q_plataforma)
 
-            # Filtro por empresa
+            # Empresa
             if empresa_values:
                 q_empresa = Q()
                 for value in empresa_values:
                     q_empresa |= Q(empresa_certificacion__nombre__iexact=value)
                 queryset = queryset.filter(q_empresa)
 
-            # Filtro por universidad
+            # Universidad
             if universidad_values:
                 q_universidad = Q()
                 for value in universidad_values:
                     q_universidad |= Q(universidad_certificacion__nombre__iexact=value)
                 queryset = queryset.filter(q_universidad)
 
-            # Filtro nuevo por skills usando slug
+            # Idioma
+            def get_language_values_by_codes(codes):
+                values = []
+
+                for code in codes:
+                    config = LANGUAGE_NORMALIZATION.get(code, {})
+                    values.extend(config.get("values", []))
+
+                # quitar duplicados conservando orden
+                return list(dict.fromkeys(values))
+
+            if idioma_codes:
+                language_values = get_language_values_by_codes(idioma_codes)
+            else:
+                # default: Español + Inglés
+                language_values = get_language_values_by_codes(["es", "en"])
+
+            if language_values:
+                q_language = Q()
+                for value in language_values:
+                    q_language |= Q(lenguaje_certificacion__iexact=value)
+                    q_language |= Q(lenguaje_certificacion__icontains=value)
+
+                queryset = queryset.filter(q_language)
+
+            # Skills
             if skill_slugs:
                 queryset = queryset.filter(
                     skills_rel__skill__slug__in=skill_slugs
                 ).distinct()
 
-                # Si solo hay una skill seleccionada, priorizamos las que la tienen primero
                 if len(skill_slugs) == 1:
                     priority_slug = skill_slugs[0]
 
