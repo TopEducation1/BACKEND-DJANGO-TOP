@@ -3404,7 +3404,7 @@ COLOR_MAP = {
     "tag-rojo": "#D33B3E",
 }
 
-MAX_ITEMS_PER_SKILL = 5
+MAX_ITEMS_PER_SKILL = 8
 CACHE_KEY = "home_skills_grid_v1"
 CACHE_TIMEOUT = 60 * 30  # 30 minutos
 
