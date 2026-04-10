@@ -12,6 +12,8 @@ import re
 import time
 import traceback
 import logging
+import random
+from django.core.cache import cache
 
 from django.contrib.admin.views.decorators import staff_member_required
 
@@ -3394,3 +3396,323 @@ def api_run_courses_sync(request):
             _release_lock(state_key)
         except Exception:
             pass
+
+
+COLOR_MAP = {
+    "tag-verde": "#5CC781",
+    "tag-azul": "#034694",
+    "tag-rojo": "#D33B3E",
+}
+
+MAX_ITEMS_PER_SKILL = 5
+CACHE_KEY = "home_skills_grid_v1"
+CACHE_TIMEOUT = 60 * 30  # 30 minutos
+
+
+def normalize_media_url(request, value):
+    if not value:
+        return ""
+
+    value = str(value).strip()
+    if not value:
+        return ""
+
+    low = value.lower()
+    if low in {"none", "null", "false"}:
+        return ""
+
+    # Ya es absoluta
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+
+    # Assets del frontend
+    if value.startswith("/assets/") or value.startswith("assets/"):
+        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+        clean_path = value if value.startswith("/") else f"/{value}"
+        return f"{frontend_url}{clean_path}"
+
+    # Media/archivos del backend
+    return request.build_absolute_uri(value)
+
+
+def normalize_skill_type_for_filter(skill_type):
+    value = str(skill_type or "").strip().lower()
+
+    if value == "tema":
+        return "Temas"
+
+    if value == "habilidad":
+        return "Habilidades"
+
+    return "Skills"
+
+def build_cert_link(cert):
+    slug = getattr(cert, "slug", "") or ""
+    slug = str(slug).strip()
+
+    if not slug:
+        return None
+
+    plataforma = getattr(cert, "plataforma_certificacion", None)
+    plataforma_slug = getattr(plataforma, "slug", "") if plataforma else ""
+    plataforma_slug = str(plataforma_slug or "").strip()
+
+    if plataforma_slug:
+        return f"/certificacion/{plataforma_slug}/{slug}"
+
+    return f"/certificacion/{slug}"
+
+
+def normalize_instructor_name(item):
+    if not isinstance(item, dict):
+        return ""
+
+    return (
+        item.get("name")
+        or item.get("nombre")
+        or item.get("title")
+        or item.get("label")
+        or ""
+    ).strip()
+
+
+def normalize_instructor_image(item):
+    if not isinstance(item, dict):
+        return ""
+
+    return (
+        item.get("foto")
+        or item.get("photo")
+        or item.get("image")
+        or item.get("img")
+        or item.get("imagen")
+        or item.get("instructor_img")
+        or ""
+    ).strip()
+
+
+def parse_instructors_text(raw):
+    """
+    Fallback mínimo si instructores_certificacion viene como string.
+    Solo devuelve nombres; sin imagen no nos sirve para el home,
+    pero se deja por robustez.
+    """
+    if not raw or not isinstance(raw, str):
+        return []
+
+    text = raw.strip()
+    if not text or text.lower() in {"none", "null", "[]"}:
+        return []
+
+    parts = (
+        text.replace(" y ", ",")
+        .replace(" and ", ",")
+        .split(",")
+    )
+
+    return [{"name": p.strip(), "img": ""} for p in parts if p.strip()]
+
+
+def get_certification_instructors(cert):
+    """
+    Unifica instructores sin importar si vienen:
+    - en un JSON/lista dentro de instructores_certificacion
+    - en una relación instructoresCertificacion
+    - o en otros formatos mixtos
+    """
+    normalized = []
+
+    # Caso 1: cert.instructores_certificacion ya viene como lista/json
+    raw = getattr(cert, "instructores_certificacion", None)
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                normalized.append({
+                    "name": normalize_instructor_name(item),
+                    "img": normalize_instructor_image(item),
+                })
+
+    # Caso 2: cert.instructores_certificacion viene como string
+    elif isinstance(raw, str):
+        normalized.extend(parse_instructors_text(raw))
+
+    # Caso 3: relación aparte tipo instructoresCertificacion
+    related = getattr(cert, "instructoresCertificacion", None)
+    if related is not None:
+        try:
+            for ins in related.all():
+                name = (
+                    getattr(ins, "nombre", None)
+                    or getattr(ins, "name", None)
+                    or ""
+                )
+                img = (
+                    getattr(ins, "foto", None)
+                    or getattr(ins, "image", None)
+                    or getattr(ins, "img", None)
+                    or ""
+                )
+
+                normalized.append({
+                    "name": str(name).strip(),
+                    "img": str(img).strip() if img else "",
+                })
+        except Exception:
+            pass
+
+    # Limpieza
+    clean = []
+    seen = set()
+
+    for item in normalized:
+        name = str(item.get("name") or "").strip()
+        img = str(item.get("img") or "").strip()
+
+        key = f"{name.lower()}|{img}"
+        if key in seen:
+            continue
+        seen.add(key)
+
+        if name or img:
+            clean.append({
+                "name": name,
+                "img": img,
+            })
+
+    return clean
+
+
+def pick_first_instructor_image(cert, request):
+    instructors = get_certification_instructors(cert)
+
+    for ins in instructors:
+        img = str(ins.get("img") or "").strip()
+        if img:
+            return normalize_media_url(request, img)
+
+    return ""
+
+
+class HomeSkillsGridAPIView(APIView):
+    permission_classes = []
+
+    def get(self, request, *args, **kwargs):
+        cached = cache.get(CACHE_KEY)
+        if cached:
+            return Response(cached)
+
+        skills = (
+            Skills.objects.filter(
+                parent__isnull=True,
+                estado=True,
+            )
+            .exclude(Q(skill_ico__isnull=True) | Q(skill_ico__exact=""))
+            .order_by("id")
+        )
+
+        response_data = []
+
+        for skill in skills:
+            certs = (
+                Certificaciones.objects.filter(
+                    skills_rel__skill=skill
+                )
+                .select_related(
+                    "universidad_certificacion",
+                    "empresa_certificacion",
+                    "plataforma_certificacion",
+                )
+                .distinct()
+            )
+
+            related_items = []
+
+            seen_universities = set()
+            seen_companies = set()
+            seen_certs = set()
+
+            # Universidades
+            for cert in certs:
+                uni = getattr(cert, "universidad_certificacion", None)
+                if not uni:
+                    continue
+
+                uni_name = getattr(uni, "nombre", "") or ""
+                uni_icon = getattr(uni, "univ_ico", "") or ""
+
+                if not uni_name or not uni_icon:
+                    continue
+
+                key = f"uni-{getattr(uni, 'id', uni_name)}"
+                if key in seen_universities:
+                    continue
+
+                seen_universities.add(key)
+                related_items.append({
+                    "name": uni_name,
+                    "type": "Universidades",
+                    "img": normalize_media_url(request, uni_icon),
+                })
+
+            # Empresas
+            for cert in certs:
+                emp = getattr(cert, "empresa_certificacion", None)
+                if not emp:
+                    continue
+
+                emp_name = getattr(emp, "nombre", "") or ""
+                emp_icon = getattr(emp, "empr_ico", "") or ""
+
+                if not emp_name or not emp_icon:
+                    continue
+
+                key = f"emp-{getattr(emp, 'id', emp_name)}"
+                if key in seen_companies:
+                    continue
+
+                seen_companies.add(key)
+                related_items.append({
+                    "name": emp_name,
+                    "type": "Empresas",
+                    "img": normalize_media_url(request, emp_icon),
+                })
+
+            # Certificaciones solo si la skill es habilidad
+            if str(skill.skill_type or "").strip().lower() == "habilidad":
+                for cert in certs:
+                    cert_name = getattr(cert, "nombre", "") or ""
+                    cert_link = build_cert_link(cert)
+                    instructor_img = pick_first_instructor_image(cert, request)
+
+                    if not cert_name or not cert_link or not instructor_img:
+                        continue
+
+                    key = f"cert-{getattr(cert, 'id', cert_name)}"
+                    if key in seen_certs:
+                        continue
+
+                    seen_certs.add(key)
+                    related_items.append({
+                        "name": cert_name,
+                        "type": "Certificacion",
+                        "img": instructor_img,
+                        "link": cert_link,
+                    })
+
+            random.shuffle(related_items)
+            related_items = related_items[:MAX_ITEMS_PER_SKILL]
+
+            response_data.append({
+                "id": skill.id,
+                "name": (skill.translate or skill.nombre or "").strip(),
+                "type": normalize_skill_type_for_filter(skill.skill_type),
+                "img": normalize_media_url(request, skill.skill_img),
+                "color": COLOR_MAP.get(skill.skill_col, "#034694"),
+                "description": (skill.descripcion or "").strip(),
+                "universities": related_items,
+            })
+
+        random.shuffle(response_data)
+
+        cache.set(CACHE_KEY, response_data, CACHE_TIMEOUT)
+        return Response(response_data)

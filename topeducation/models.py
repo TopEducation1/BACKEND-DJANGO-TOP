@@ -44,7 +44,7 @@ class Skills(models.Model):
     slug = models.SlugField(max_length=300, null=True, blank=True, unique=True)
     skill_col = models.CharField(max_length=10, null=True)
     skill_type = models.CharField(max_length=50, null=True)
-    skill_img = models.ImageField(upload_to='skills/', null=True, blank=True)
+    skill_img = models.CharField(max_length=200, null=True, blank=True)
     skill_ico = models.CharField(max_length=200, null=True, blank=True)
     estado = models.BooleanField(default=True)
     # ✅ NUEVO: relación a sí mismo (padre)

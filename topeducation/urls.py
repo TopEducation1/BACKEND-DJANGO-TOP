@@ -78,6 +78,7 @@ urlpatterns = [
     path('api/universities-by-region/', UniversitiesByRegion.as_view(), name='universities-by-region'),
     path('api/topics/', TopicsList.as_view(), name='topics-list'),
     path('api/skills/', SkillsList.as_view(), name='skills-list'),
+    path("api/home/skills-grid/", HomeSkillsGridAPIView.as_view(), name="home-skills-grid"),
     path('api/platforms/', PlatformsList.as_view(), name='platforms-list'),
     path('api/companies/', CompaniesList.as_view(), name='companies-list'),
     path('api/originals/', OriginalsList.as_view(), name='originals-list'),
