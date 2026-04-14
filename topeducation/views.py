@@ -2070,9 +2070,30 @@ class filter_by_search(APIView):
             # Idioma
             if idioma_values:
                 q_idioma = Q()
+
                 for value in idioma_values:
-                    q_idioma |= Q(lenguaje_certificacion__iexact=value)
-                    q_idioma |= Q(lenguaje_certificacion__icontains=value)
+                    lang = (value or "").strip().lower()
+
+                    if lang == "es":
+                        q_idioma |= Q(lenguaje_certificacion__iexact="es")
+                        q_idioma |= Q(lenguaje_certificacion__iexact="spanish")
+                        q_idioma |= Q(lenguaje_certificacion__iexact="español")
+                        q_idioma |= Q(lenguaje_certificacion__icontains="español")
+                        q_idioma |= Q(lenguaje_certificacion__icontains="spanish")
+                        q_idioma |= Q(lenguaje_certificacion__icontains="enseñado en español")
+
+                    elif lang == "en":
+                        q_idioma |= Q(lenguaje_certificacion__iexact="en")
+                        q_idioma |= Q(lenguaje_certificacion__iexact="english")
+                        q_idioma |= Q(lenguaje_certificacion__iexact="inglés")
+                        q_idioma |= Q(lenguaje_certificacion__icontains="english")
+                        q_idioma |= Q(lenguaje_certificacion__icontains="inglés")
+                        q_idioma |= Q(lenguaje_certificacion__icontains="enseñado en inglés")
+
+                    else:
+                        q_idioma |= Q(lenguaje_certificacion__iexact=value)
+                        q_idioma |= Q(lenguaje_certificacion__icontains=value)
+
                 queryset = queryset.filter(q_idioma)
 
             # Skills / temas activos
