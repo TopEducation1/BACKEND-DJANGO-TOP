@@ -4,6 +4,8 @@ from topeducation.inspectors.courses_inspector import fetch_and_parse_page
 from topeducation.models import ExternalSyncState
 
 from django.db.models import Q, Case, When, Value, IntegerField, OuterRef, Subquery, Prefetch
+from django.db.models import Q, Case, When, Value, IntegerField, Prefetch
+
 from django.db.models import OuterRef, Subquery, Case, When, Value, IntegerField, Prefetch
 
 from datetime import datetime, timedelta, timezone
@@ -1980,34 +1982,157 @@ class filter_by_tags(APIView):
                 {"error": "Error al filtrar certificaciones"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-        
+
+
 class filter_by_search(APIView):
     def post(self, request):
-        query_string = request.data.get('data', "").strip()
-        if not query_string or len(query_string) < 2:
-            return Response([], status=200)
+        query_string = (request.data.get("data") or "").strip()
+        limit = request.data.get("limit", 12)
+        filters = request.data.get("filters", {}) or {}
 
         try:
-            filtered_results = Certificaciones.objects.filter(
-                Q(nombre__icontains=query_string) |
-                Q(tema_certificacion__nombre__icontains=query_string) |
-                Q(universidad_certificacion__nombre__icontains=query_string) |
-                Q(empresa_certificacion__nombre__icontains=query_string)
-            ).distinct()
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 12
 
-            print("Resultados encontrados:", filtered_results.count())
+        limit = max(1, min(limit, 24))
+
+        if not query_string or len(query_string) < 3:
+            return Response(
+                {
+                    "results": [],
+                    "count": 0,
+                },
+                status=status.HTTP_200_OK
+            )
+
+        idioma_values = filters.get("idioma", [])
+        plataforma_values = filters.get("Plataforma", [])
+        empresa_values = filters.get("Empresa", [])
+        universidad_values = filters.get("Universidad", [])
+        tema_values = filters.get("Tema", [])
+        habilidad_values = filters.get("Habilidad", [])
+
+        skill_slugs = tema_values + habilidad_values
+
+        try:
+            queryset = (
+                Certificaciones.objects
+                .select_related(
+                    "tema_certificacion",
+                    "plataforma_certificacion",
+                    "universidad_certificacion",
+                    "empresa_certificacion",
+                )
+                .prefetch_related(
+                    Prefetch(
+                        "skills_rel",
+                        queryset=SkillsCertification.objects.select_related("skill").order_by("orden", "id"),
+                        to_attr="skills_links_ordered",
+                    )
+                )
+                .filter(
+                    Q(nombre__icontains=query_string) |
+                    Q(metadescripcion_certificacion__icontains=query_string) |
+                    Q(slug__icontains=query_string) |
+                    Q(tema_certificacion__nombre__icontains=query_string) |
+                    Q(tema_certificacion__translate__icontains=query_string) |
+                    Q(universidad_certificacion__nombre__icontains=query_string) |
+                    Q(empresa_certificacion__nombre__icontains=query_string) |
+                    Q(plataforma_certificacion__nombre__icontains=query_string) |
+                    Q(skills_rel__skill__nombre__icontains=query_string) |
+                    Q(skills_rel__skill__translate__icontains=query_string) |
+                    Q(habilidades_certificacion__icontains=query_string)
+                )
+            )
+
+            # Plataforma
+            if plataforma_values:
+                q_plataforma = Q()
+                for value in plataforma_values:
+                    q_plataforma |= Q(plataforma_certificacion__nombre__iexact=value)
+                queryset = queryset.filter(q_plataforma)
+
+            # Empresa
+            if empresa_values:
+                q_empresa = Q()
+                for value in empresa_values:
+                    q_empresa |= Q(empresa_certificacion__nombre__iexact=value)
+                queryset = queryset.filter(q_empresa)
+
+            # Universidad
+            if universidad_values:
+                q_universidad = Q()
+                for value in universidad_values:
+                    q_universidad |= Q(universidad_certificacion__nombre__iexact=value)
+                queryset = queryset.filter(q_universidad)
+
+            # Idioma
+            if idioma_values:
+                q_idioma = Q()
+                for value in idioma_values:
+                    q_idioma |= Q(lenguaje_certificacion__iexact=value)
+                    q_idioma |= Q(lenguaje_certificacion__icontains=value)
+                queryset = queryset.filter(q_idioma)
+
+            # Skills / temas activos
+            if skill_slugs:
+                q_skills = Q()
+                for value in skill_slugs:
+                    q_skills |= Q(skills_rel__skill__slug__iexact=value)
+                    q_skills |= Q(skills_rel__skill__nombre__iexact=value)
+                    q_skills |= Q(skills_rel__skill__translate__iexact=value)
+                    q_skills |= Q(tema_certificacion__nombre__iexact=value)
+                    q_skills |= Q(tema_certificacion__translate__iexact=value)
+
+                queryset = queryset.filter(q_skills)
+
+            queryset = (
+                queryset
+                .annotate(
+                    search_priority=Case(
+                        When(nombre__istartswith=query_string, then=Value(1)),
+                        When(skills_rel__skill__nombre__istartswith=query_string, then=Value(2)),
+                        When(skills_rel__skill__translate__istartswith=query_string, then=Value(2)),
+                        When(tema_certificacion__nombre__istartswith=query_string, then=Value(3)),
+                        When(tema_certificacion__translate__istartswith=query_string, then=Value(3)),
+                        When(universidad_certificacion__nombre__istartswith=query_string, then=Value(4)),
+                        When(empresa_certificacion__nombre__istartswith=query_string, then=Value(5)),
+                        default=Value(99),
+                        output_field=IntegerField(),
+                    )
+                )
+                .distinct()
+                .order_by("search_priority", "nombre")[:limit]
+            )
+
+            results = list(queryset)
 
         except Exception as e:
-            print("Error en la consulta:", e)
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            print("Error en filter_by_search:", e)
+            return Response(
+                {
+                    "error": str(e),
+                    "results": [],
+                    "count": 0,
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
-        # Si el queryset está vacío, devolvemos una lista vacía sin serializar
-        if not filtered_results.exists():
-            return Response([], status=status.HTTP_200_OK)
+        serializer = CertificationSearchSerializer(
+            results,
+            many=True,
+            context={"request": request}
+        )
 
-        serializer = CertificationSearchSerializer(filtered_results, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
+        return Response(
+            {
+                "results": serializer.data,
+                "count": len(results),
+            },
+            status=status.HTTP_200_OK
+        )
+    
 class LatestCertificationsView(APIView):
     def get(self, request):
         try:

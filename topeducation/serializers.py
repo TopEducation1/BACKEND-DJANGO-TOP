@@ -123,7 +123,47 @@ class InstructorSerializer(serializers.ModelSerializer):
         model = Instructores
         fields = "__all__"
 
-class CertificationSerializer(serializers.ModelSerializer):
+class CertificationSkillsMixin:
+    def _get_ordered_skills(self, instance):
+        """
+        Devuelve las skills ordenadas.
+        Prioridad:
+        1) si viene prefetch desde backend en skills_links_ordered
+        2) si no, usa la relación intermedia skills_rel
+        3) si no, usa instance.skills.all() si existe
+        """
+        links = getattr(instance, "skills_links_ordered", None)
+
+        if links is not None:
+            ordered_skills = []
+            for link in links:
+                skill = getattr(link, "skill", None)
+                if skill:
+                    ordered_skills.append(skill)
+            if ordered_skills:
+                return ordered_skills
+
+        try:
+            rel_links = getattr(instance, "skills_rel", None)
+            if rel_links is not None:
+                ordered_links = rel_links.select_related("skill").all().order_by("orden", "id")
+                ordered_skills = [link.skill for link in ordered_links if getattr(link, "skill", None)]
+                if ordered_skills:
+                    return ordered_skills
+        except Exception as e:
+            print(f"Error obteniendo skills_rel fallback para cert {getattr(instance, 'id', None)}: {e}")
+
+        try:
+            if hasattr(instance, "skills"):
+                skills = list(instance.skills.all())
+                if skills:
+                    return skills
+        except Exception as e:
+            print(f"Error obteniendo skills fallback para cert {getattr(instance, 'id', None)}: {e}")
+
+        return []
+    
+class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSerializer):
     skills = serializers.SerializerMethodField()
     primary_skill = serializers.SerializerMethodField()
     instructores_detalle_certificacion = serializers.SerializerMethodField()
@@ -131,28 +171,6 @@ class CertificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Certificaciones
         fields = '__all__'
-
-    def _get_ordered_skills(self, instance):
-        """
-        Devuelve las skills ordenadas.
-        Prioridad:
-        1) si viene prefetch desde backend en skills_links_ordered
-        2) si no, usa instance.skills.all()
-        """
-        links = getattr(instance, 'skills_links_ordered', None)
-
-        if links is not None:
-            ordered_skills = []
-            for link in links:
-                skill = getattr(link, 'skill', None)
-                if skill:
-                    ordered_skills.append(skill)
-            return ordered_skills
-
-        if hasattr(instance, 'skills'):
-            return list(instance.skills.all())
-
-        return []
 
     def get_skills(self, instance):
         ordered_skills = self._get_ordered_skills(instance)
@@ -324,123 +342,133 @@ class CertificationSerializer(serializers.ModelSerializer):
 
         return data
 
-class CertificationSearchSerializer(serializers.ModelSerializer):
+## MINI SERIALIZERS
+class SkillMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Skills
+        fields = [
+            "id",
+            "nombre",
+            "translate",
+            "skill_col",
+            "skill_img",
+            "skill_ico",
+            "skill_type",
+            "estado",
+        ]
+
+
+class TopicMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Temas
+        fields = [
+            "id",
+            "nombre",
+            "translate",
+            "tem_type",
+            "tem_col",
+            "tem_img",
+            "tem_est",
+        ]
+
+
+class PlataformaMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Plataformas
+        fields = [
+            "id",
+            "nombre",
+            "plat_img",
+            "plat_ico",
+        ]
+
+
+class UniversidadMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Universidades
+        fields = [
+            "id",
+            "nombre",
+            "descripcion_institucion",
+            "univ_img",
+            "univ_ico",
+            "univ_fla",
+            "univ_est",
+            "univ_top",
+        ]
+
+
+class EmpresaMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Empresas
+        fields = [
+            "id",
+            "nombre",
+            "empr_img",
+            "empr_ico",
+            "empr_est",
+            "empr_top",
+            "descripcion_institucion",
+        ]
+
+class CertificationSearchSerializer(CertificationSkillsMixin, serializers.ModelSerializer):
+    tema_certificacion = serializers.SerializerMethodField()
+    plataforma_certificacion = serializers.SerializerMethodField()
+    universidad_certificacion = serializers.SerializerMethodField()
+    empresa_certificacion = serializers.SerializerMethodField()
+    primary_skill = serializers.SerializerMethodField()
+    skills = serializers.SerializerMethodField()
 
     class Meta:
         model = Certificaciones
-        fields = '__all__'   
-    def get_fecha_certificacion(self, instance):
-        fecha = instance.fecha_creado_cert
-        if isinstance(fecha, datetime):
-            return fecha.date()
-        return fecha
-    def to_representation(self, instance):
-        try:
-            data = super().to_representation(instance)
-            content = data['contenido_certificacion']
-            
-            contenido_mod = data.get('contenido_certificacion', '')
-            lineas = contenido_mod.split('\n') if isinstance(contenido_mod, str) else []
-            cantidad_modulos = lineas[0] if len(lineas) > 0 else ''
-            contenido_certificacion = lineas[1:] if len(lineas) > 1 else []
+        fields = [
+            "id",
+            "slug",
+            "nombre",
+            "metadescripcion_certificacion",
+            "imagen_final",
+            "tipo_certificacion",
+            "plataforma_certificacion_id",
+            "tema_certificacion",
+            "plataforma_certificacion",
+            "universidad_certificacion",
+            "empresa_certificacion",
+            "primary_skill",
+            "skills",
+        ]
 
-            data['contenido_certificacion'] = {
-                "cantidad_modulos": cantidad_modulos,
-                "contenido_certificacion": contenido_certificacion
-            }
+    def get_skills(self, instance):
+        ordered_skills = self._get_ordered_skills(instance)
+        if not ordered_skills:
+            return []
+        return SkillMiniSerializer(ordered_skills, many=True, context=self.context).data
 
-            
-            tema_instance = instance.tema_certificacion
-            data['tema_certificacion'] = TopicsSerializer(tema_instance).data if tema_instance else None
-            plataforma_instance = instance.plataforma_certificacion
-            data['plataforma_certificacion'] = PlataformaSerializer(plataforma_instance).data if plataforma_instance else None
-            universidad_instance = instance.universidad_certificacion
-            data['universidad_certificacion'] = UniverisitiesSerializer(universidad_instance).data if universidad_instance else None
-            data['empresa_certificacion'] = EmpresaSerializer(instance.empresa_certificacion).data if instance.empresa_certificacion else None
-            # Procesamiento de módulos
-            if isinstance(data['modulos_certificacion'], str):
-                modulos_raw = data['modulos_certificacion'].strip().split('\n') if data['modulos_certificacion'].strip() else []
-            else:
-                modulos_raw = []
+    def get_primary_skill(self, instance):
+        ordered_skills = self._get_ordered_skills(instance)
+        if not ordered_skills:
+            return None
+        return SkillMiniSerializer(ordered_skills[0], context=self.context).data
 
-            modulos_procesados = []
-            current_module = None
+    def get_tema_certificacion(self, instance):
+        if not getattr(instance, "tema_certificacion", None):
+            return None
+        return TopicMiniSerializer(instance.tema_certificacion, context=self.context).data
 
-            for linea in modulos_raw:
-                linea = linea.strip()
-                if not linea:
-                    continue
+    def get_plataforma_certificacion(self, instance):
+        if not getattr(instance, "plataforma_certificacion", None):
+            return None
+        return PlataformaMiniSerializer(instance.plataforma_certificacion, context=self.context).data
 
-                if 'Módulo' in linea:
-                    if current_module:
-                        modulos_procesados.append(current_module)
+    def get_universidad_certificacion(self, instance):
+        if not getattr(instance, "universidad_certificacion", None):
+            return None
+        return UniversidadMiniSerializer(instance.universidad_certificacion, context=self.context).data
 
-                    # Evitar error por índice inexistente
-                    titulo = modulos_raw[0] if len(modulos_raw) > 0 else ''
-                    duracion = modulos_raw[1] if len(modulos_raw) > 1 else ''
-
-                    current_module = {
-                        'titulo': titulo,
-                        'duracion': duracion,
-                        'incluye': [],
-                        'contenido': []
-                    }
-                elif current_module:
-                    if 'Incluye' in linea:
-                        continue
-                    elif linea[:2].isdigit():  # Si empieza con número
-                        current_module['incluye'].append(linea)
-                    else:
-                        current_module['contenido'].append(linea)
-
-            if current_module:
-                modulos_procesados.append(current_module)
-
-            data['modulos_certificacion'] = modulos_procesados
-                #print(modulos_procesados)
-            # Procesamiento de las habilidades
-            habilidades_raw = data.get('habilidades_certificacion')
-            if isinstance(habilidades_raw, str):
-                data['habilidades_certificacion'] = [
-                    {"id": i+1, "nombre": h.strip()} for i, h in enumerate(habilidades_raw.split('-')) if h.strip()
-                ]
-            else:
-                data['habilidades_certificacion'] = []
-
-                
-            # Procesamiento de aprendizajes 
-            aprendizajes_raw = data.get('aprendizaje_certificacion')
-            if isinstance(aprendizajes_raw, str):
-                data['aprendizaje_certificacion'] = [
-                    {"id": i+1, "nombre": a.strip()} for i, a in enumerate(aprendizajes_raw.split('\n')) if a.strip()
-                ]
-            else:
-                data['aprendizaje_certificacion'] = []
-
-                
-            # Procesamiento del video
-            if isinstance(data.get('video_certificacion'), str):
-                video_url = data['video_certificacion'].strip()
-                if video_url:
-                    data['video_certificacion'] = {
-                        "url": video_url
-                    }
-                else:
-                    data['video_certificacion'] = None
-
-            # Modificar la representación final de los datos
-            #data['imagen_final'] = data['url_imagen_universidad_certificacion'] or data['url_imagen_empresa_certificacion']
-            #data['plataforma_certificacion_id'] = instance.plataforma_certificacion_id
-        
-            data['fecha_creado_cert'] = instance.fecha_creado_cert
-            return data
-        except Exception as e:
-            print("Error al procesar certificación:", instance.id)
-            print("Contenido:", data)
-            raise e
-        
-
-
+    def get_empresa_certificacion(self, instance):
+        if not getattr(instance, "empresa_certificacion", None):
+            return None
+        return EmpresaMiniSerializer(instance.empresa_certificacion, context=self.context).data
+    
 class OriginalCertificationSerializer(serializers.ModelSerializer):
     certification_title     = serializers.CharField(source='certification.nombre', read_only=True)
     certification_slug      = serializers.CharField(source='certification.slug', read_only=True)
