@@ -11,7 +11,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from .sitemaps import CertificacionSitemap, BlogSitemap
-from .views import sync_courses_from_external
+from .views import api_run_courses_sync
 from .account_views import account_me, account_purchases
 
 
@@ -97,8 +97,8 @@ urlpatterns = [
     path("bussines/purchases/", login_required(views.admin_purchases_page, login_url="/signin/"),name="admin_purchases_page"),
     path("api/proxy/", views.proxy_json, name="proxy_json"),
     path("api/proxy/courses/", views.proxy_json, name="proxy_courses"),
-    path("api/sync/courses/run/", views.api_run_courses_sync, name="api_run_courses_sync"),
-    path("api/sync/courses/", views.sync_courses_from_external, name="sync_courses_from_external"),
+    path("api/sync/courses/run/", api_run_courses_sync, name="api_run_courses_sync"),
+    #path("api/sync/courses/", views.sync_courses_from_external, name="sync_courses_from_external"),
     path("api/stripe/create-checkout-session/", views.create_checkout_session, name="create_checkout_session"),
     path('api/stripe/webhook/', views.stripe_webhook, name='stripe_webhook'),
     path("api/stripe/sync-session/", views.stripe_sync_session, name="stripe_sync_session"),

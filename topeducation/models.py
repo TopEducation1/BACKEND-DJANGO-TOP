@@ -47,7 +47,7 @@ class Skills(models.Model):
     skill_img = models.CharField(max_length=200, null=True, blank=True)
     skill_ico = models.CharField(max_length=200, null=True, blank=True)
     estado = models.BooleanField(default=True)
-    # ✅ NUEVO: relación a sí mismo (padre)
+
     parent = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,
@@ -57,11 +57,17 @@ class Skills(models.Model):
         db_column="parent_id",
     )
 
+    # NUEVO
+    external_skill_id = models.CharField(max_length=255, null=True, blank=True, db_index=True)
+    source_provider = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+
     class Meta:
         db_table = 'Skills'
 
     def __str__(self):
         return self.nombre or ''
+
 
 class SkillsCertification(models.Model):
     certificacion = models.ForeignKey(
@@ -85,59 +91,80 @@ class SkillsCertification(models.Model):
     def __str__(self):
         return f"{self.certificacion_id} - {self.skill_id} ({self.orden})"
 
-class Regiones (models.Model):
-    nombre = models.CharField(max_length=100,null=True)
-    
+
+class Regiones(models.Model):
+    nombre = models.CharField(max_length=100, null=True)
+
     def __str__(self):
-        return str(self.id) +" - "+ self.nombre
-    
+        return str(self.id) + " - " + self.nombre
+
     class Meta:
         db_table = 'Regiones'
-        
-        
-class Universidades (models.Model):
-    nombre = models.CharField(max_length=500,null=False, verbose_name='Nombre')
+
+
+class Universidades(models.Model):
+    nombre = models.CharField(max_length=500, null=False, verbose_name='Nombre')
     region_universidad = models.ForeignKey(Regiones, on_delete=models.SET_NULL, null=True, related_name='universidades')
-    univ_img = models.CharField(max_length=300,null=True,verbose_name='Imagen')
-    univ_fla = models.CharField(max_length=200,null=True,verbose_name='Bandera')
-    univ_ico = models.CharField(max_length=100,null=True,verbose_name='Icono')
-    univ_est = models.CharField(max_length=50,null=True,verbose_name='Estado')
-    univ_top = models.CharField(max_length=5,null=True,blank=True,verbose_name='Ranking global' )
+    univ_img = models.CharField(max_length=300, null=True, verbose_name='Imagen')
+    univ_fla = models.CharField(max_length=200, null=True, verbose_name='Bandera')
+    univ_ico = models.CharField(max_length=100, null=True, verbose_name='Icono')
+    univ_est = models.CharField(max_length=50, null=True, verbose_name='Estado')
+    univ_top = models.CharField(max_length=5, null=True, blank=True, verbose_name='Ranking global')
     descripcion_institucion = models.TextField(null=True, blank=True)
 
     def __str__(self):
-        return str(self.id) +" - "+ self.nombre
-    
+        return str(self.id) + " - " + self.nombre
+
     class Meta:
         db_table = 'Universidades'
-        
 
-class Empresas (models.Model):
-    nombre = models.CharField(max_length=500,null=False,verbose_name='Nombre')
-    empr_img = models.CharField(max_length=200,null=True,verbose_name='Imagen')
-    empr_ico = models.CharField(max_length=100,null=True,verbose_name='Icono')
-    empr_est = models.CharField(max_length=50,null=True,verbose_name='Estado')
-    empr_top = models.CharField(max_length=5,blank=True,null=True,verbose_name='Ranking global')
+
+class Empresas(models.Model):
+    nombre = models.CharField(max_length=500, null=False, verbose_name='Nombre')
+    empr_img = models.CharField(max_length=200, null=True, verbose_name='Imagen')
+    empr_ico = models.CharField(max_length=100, null=True, verbose_name='Icono')
+    empr_est = models.CharField(max_length=50, null=True, verbose_name='Estado')
+    empr_top = models.CharField(max_length=5, blank=True, null=True, verbose_name='Ranking global')
     descripcion_institucion = models.TextField(null=True, blank=True)
 
     def __str__(self):
-        return str(self.id) +" - "+ self.nombre
-    
+        return str(self.id) + " - " + self.nombre
+
     class Meta:
         db_table = 'Empresas'
-        
-        
-class Plataformas (models.Model):
-    nombre = models.CharField(max_length=500,null=False)
-    plat_img = models.CharField(max_length=200,null=True)
-    plat_ico = models.CharField(max_length=100,null=True)
-    
+
+
+class Plataformas(models.Model):
+    nombre = models.CharField(max_length=500, null=False)
+    plat_img = models.CharField(max_length=200, null=True)
+    plat_ico = models.CharField(max_length=100, null=True)
+
     def __str__(self):
         return self.nombre
-    
+
     class Meta:
         db_table = 'Plataformas'
-        
+
+
+class Specialization(models.Model):
+    specialization_id = models.CharField(max_length=255, unique=True, db_index=True)
+    specialization_name = models.CharField(max_length=500)
+    provider = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+
+    raw_payload = models.JSONField(default=dict, blank=True)
+    estado = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'Specializations'
+        ordering = ['specialization_name']
+
+    def __str__(self):
+        return f"{self.specialization_id} - {self.specialization_name}"
+
+
 class Certificaciones(models.Model):
     nombre = models.CharField(max_length=500)
     slug = models.SlugField(max_length=500, default="default-slug")
@@ -156,7 +183,6 @@ class Certificaciones(models.Model):
     contenido_certificacion = models.TextField(blank=True, verbose_name='Contenido', default="NONE")
     modulos_certificacion = models.TextField(default="NONE")
 
-    # ✅ nuevos campos
     tipo_certificacion = models.CharField(max_length=100, null=True, blank=True, default="NONE")
     vigente_certificacion = models.BooleanField(default=True, null=True, blank=True)
 
@@ -175,6 +201,32 @@ class Certificaciones(models.Model):
         blank=True
     )
     plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.CASCADE, null=True, blank=True)
+
+    # NUEVOS
+    source_provider = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+
+    specialization = models.ForeignKey(
+        Specialization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='certificaciones'
+    )
+    specialization_id_external = models.CharField(max_length=255, null=True, blank=True, db_index=True)
+    specialization_name_external = models.CharField(max_length=500, null=True, blank=True)
+
+    country = models.CharField(max_length=120, null=True, blank=True, default="Global")
+    region = models.CharField(max_length=120, null=True, blank=True, default="Global")
+
+    mapping_status = models.CharField(max_length=50, null=True, blank=True, default="uncategorized", db_index=True)
+    language_normalized = models.CharField(max_length=120, null=True, blank=True)
+
+    skills_internal_json = models.JSONField(default=list, blank=True)
+    subskills_internal_json = models.JSONField(default=list, blank=True)
+
+    reconciliation_snapshot = models.JSONField(default=dict, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+
     fecha_creado_cert = models.DateField(auto_now_add=True, null=False)
     url_certificacion_original = models.CharField(max_length=300, default="Null")
     video_certificacion = models.CharField(default='Null', null=True, blank=True, max_length=1000)
@@ -204,7 +256,7 @@ class Certificaciones(models.Model):
     class Meta:
         db_table = 'Certificaciones'
 
-    
+
 class Instructores(models.Model):
     nombre = models.CharField(max_length=250, null=True, blank=True)
     imagen = models.TextField(null=True, blank=True)
@@ -231,8 +283,25 @@ class InstructorCertification(models.Model):
 
     class Meta:
         db_table = 'InstructorCertification'
-        unique_together = ('certificacion', 'instructor')   
+        unique_together = ('certificacion', 'instructor')
 
+
+class ExternalReconciliationSnapshot(models.Model):
+    resource = models.CharField(max_length=50, db_index=True)  # courses / certifications
+    provider_filter = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    page = models.PositiveIntegerField(default=1)
+    page_size = models.PositiveIntegerField(default=20)
+
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'ExternalReconciliationSnapshot'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.resource} - {self.provider_filter or 'ALL'} - {self.created_at}"
+    
 class Autor(models.Model):
     nombre_autor = models.CharField(max_length=255)
     auto_img = models.CharField(max_length=500, blank=True, null=True)

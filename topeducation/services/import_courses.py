@@ -14,6 +14,8 @@ from topeducation.models import (
     SkillsCertification,
     Instructores,
     InstructorCertification,
+    Specialization,
+    ExternalReconciliationSnapshot,
 )
 
 
@@ -50,12 +52,6 @@ def _has_field(model, field_name: str) -> bool:
 
 
 def _safe_get_or_create_unique(model, lookup: dict, defaults: dict, *, order_by="id"):
-    """
-    Alternativa segura a get_or_create cuando puede haber duplicados.
-    - Si existe 1: retorna (obj, False)
-    - Si existen varios: retorna (obj_elegido, False)
-    - Si no existe: crea y retorna (obj, True)
-    """
     qs = model.objects.filter(**lookup)
     obj = _pick_one(qs, order_by=order_by)
     if obj:
@@ -69,10 +65,6 @@ def _safe_get_or_create_unique(model, lookup: dict, defaults: dict, *, order_by=
 
 
 def _apply_updates(obj, values: dict) -> list[str]:
-    """
-    Aplica updates solo si el campo existe en el modelo y el valor cambió.
-    Devuelve lista de campos modificados.
-    """
     changed_fields = []
     model_fields = _model_field_names(obj.__class__)
 
@@ -87,6 +79,14 @@ def _apply_updates(obj, values: dict) -> list[str]:
         obj.save(update_fields=changed_fields)
 
     return changed_fields
+
+
+def _ensure_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
 
 
 def safe_slug_from_name(name: str) -> str:
@@ -141,6 +141,8 @@ def clean_habilidades(value) -> str:
                     or item.get("label")
                     or item.get("skill")
                     or item.get("value")
+                    or item.get("subskill_name")
+                    or item.get("skill_name")
                 )
                 if t:
                     out.append(str(t).strip())
@@ -186,10 +188,28 @@ def _dedupe_keep_order(values: list[str]) -> list[str]:
     return out
 
 
+def _infer_provider_from_cert(cert: dict | None = None) -> str:
+    if not cert:
+        return ""
+    return _norm(
+        cert.get("provider")
+        or cert.get("providerId")
+        or cert.get("plataforma_certificacion")
+        or cert.get("source_provider")
+    ).upper()
+
+
+def _normalize_provider_for_platform(cert: dict | None = None) -> str:
+    if not cert:
+        return ""
+    return _norm(
+        cert.get("plataforma_certificacion")
+        or cert.get("provider")
+        or cert.get("providerId")
+    )
+
+
 def extract_certification_skill_names(item: dict | None = None) -> list[str]:
-    """
-    Los skills reales de la certificación salen del array `temas` del item.
-    """
     out = []
 
     if item:
@@ -203,6 +223,8 @@ def extract_certification_skill_names(item: dict | None = None) -> list[str]:
                 or row.get("label")
                 or row.get("skill")
                 or row.get("value")
+                or row.get("skill_name")
+                or row.get("subskill_name")
             )
             if nombre:
                 out.append(nombre)
@@ -210,13 +232,57 @@ def extract_certification_skill_names(item: dict | None = None) -> list[str]:
     return _dedupe_keep_order(out)
 
 
+def _extract_skill_names_from_cert(cert: dict | None = None) -> list[str]:
+    if not cert:
+        return []
+
+    out = []
+
+    for raw in _ensure_list(cert.get("skills_internal")):
+        if isinstance(raw, dict):
+            val = _norm(
+                raw.get("nombre")
+                or raw.get("name")
+                or raw.get("label")
+                or raw.get("skill")
+                or raw.get("value")
+                or raw.get("skill_name")
+            )
+        else:
+            val = _norm(raw)
+        if val:
+            out.append(val)
+
+    for raw in _ensure_list(cert.get("subskills_internal")):
+        if isinstance(raw, dict):
+            val = _norm(
+                raw.get("nombre")
+                or raw.get("name")
+                or raw.get("label")
+                or raw.get("skill")
+                or raw.get("value")
+                or raw.get("subskill_name")
+            )
+        else:
+            val = _norm(raw)
+        if val:
+            out.append(val)
+
+    raw_habilidades = cert.get("habilidades_certificacion")
+    cleaned = clean_habilidades(raw_habilidades)
+    if cleaned and cleaned != "NONE":
+        out.extend([_norm(x) for x in cleaned.split(",") if _norm(x)])
+
+    out = _dedupe_keep_order(out)
+
+    mapping_status = _norm(cert.get("mapping_status")).lower()
+    if not out and mapping_status == "uncategorized":
+        out = ["Uncategorized"]
+
+    return _dedupe_keep_order(out)
+
+
 def extract_instructors_from_cert(cert: dict | None = None) -> list[dict]:
-    """
-    Extrae instructores desde `instructores_detalle_certificacion`.
-    Espera un array de objetos con campos como:
-    - nombre
-    - imagen
-    """
     out = []
     if not cert:
         return out
@@ -252,7 +318,6 @@ def extract_instructors_from_cert(cert: dict | None = None) -> list[dict]:
             "imagen": imagen or None,
         })
 
-    # dedupe por nombre
     seen = set()
     uniq = []
     for row in out:
@@ -266,14 +331,63 @@ def extract_instructors_from_cert(cert: dict | None = None) -> list[dict]:
 
 
 def build_instructores_legacy_text(cert: dict | None = None) -> str:
-    """
-    Mantiene el campo legacy `instructores_certificacion`
-    basado en los nombres extraídos del detalle.
-    """
     rows = extract_instructors_from_cert(cert)
     nombres = [r["nombre"] for r in rows if _norm(r.get("nombre"))]
     nombres = _dedupe_keep_order(nombres)
     return ", ".join(nombres) if nombres else "NONE"
+
+
+def _build_university_rows_from_cert(cert: dict) -> list[dict]:
+    nombre = _norm(cert.get("universidad_certificacion"))
+    if not nombre:
+        return []
+    return [{
+        "nombre": nombre,
+        "descripcion_institucion": _norm(cert.get("descripcion_institucion_certificacion")),
+        "univ_img": cert.get("universidad_imagen") or cert.get("univ_img"),
+    }]
+
+
+def _build_platform_rows_from_cert(cert: dict) -> list[dict]:
+    nombre = _normalize_provider_for_platform(cert)
+    if not nombre:
+        return []
+    return [{
+        "nombre": nombre,
+        "plat_img": cert.get("plataforma_imagen") or cert.get("plat_img"),
+        "source_provider": _infer_provider_from_cert(cert) or nombre.upper(),
+    }]
+
+
+def _normalize_item_to_legacy_shape(item: dict) -> dict:
+    if not isinstance(item, dict):
+        return {
+            "certificaciones": [],
+            "temas": [],
+            "universidades": [],
+            "plataformas": [],
+        }
+
+    if any(k in item for k in ("certificaciones", "temas", "universidades", "plataformas")):
+        return {
+            "certificaciones": _ensure_list(item.get("certificaciones")),
+            "temas": _ensure_list(item.get("temas")),
+            "universidades": _ensure_list(item.get("universidades")),
+            "plataformas": _ensure_list(item.get("plataformas")),
+        }
+
+    cert = dict(item)
+
+    temas = [{"nombre": x} for x in _extract_skill_names_from_cert(cert)]
+    universidades = _build_university_rows_from_cert(cert)
+    plataformas = _build_platform_rows_from_cert(cert)
+
+    return {
+        "certificaciones": [cert],
+        "temas": temas,
+        "universidades": universidades,
+        "plataformas": plataformas,
+    }
 
 
 def upsert_skill(item: dict) -> tuple[Skills | None, bool]:
@@ -283,6 +397,8 @@ def upsert_skill(item: dict) -> tuple[Skills | None, bool]:
         or item.get("label")
         or item.get("skill")
         or item.get("value")
+        or item.get("skill_name")
+        or item.get("subskill_name")
     )
     if not nombre:
         return None, False
@@ -306,6 +422,12 @@ def upsert_skill(item: dict) -> tuple[Skills | None, bool]:
         defaults["skill_col"] = _norm(item.get("skill_col"))
     if _has_field(Skills, "estado"):
         defaults["estado"] = True
+    if _has_field(Skills, "external_skill_id"):
+        defaults["external_skill_id"] = _norm(item.get("external_skill_id") or item.get("skill_id") or item.get("subskill_id")) or None
+    if _has_field(Skills, "source_provider"):
+        defaults["source_provider"] = _norm(item.get("source_provider") or item.get("provider")) or None
+    if _has_field(Skills, "raw_payload"):
+        defaults["raw_payload"] = item if isinstance(item, dict) else {}
 
     obj, created = _safe_get_or_create_unique(
         Skills,
@@ -334,11 +456,6 @@ def upsert_skill(item: dict) -> tuple[Skills | None, bool]:
         if new_ico:
             updates["skill_ico"] = new_ico
 
-    if _has_field(Skills, "skill_type"):
-        new_type = _norm(item.get("skill_type") or item.get("tem_type"))
-        ##if new_type:
-        ##    updates["skill_type"] = new_type
-
     if _has_field(Skills, "skill_col"):
         new_col = _norm(item.get("skill_col"))
         if new_col:
@@ -347,11 +464,31 @@ def upsert_skill(item: dict) -> tuple[Skills | None, bool]:
     if _has_field(Skills, "estado"):
         updates["estado"] = True
 
+    if _has_field(Skills, "external_skill_id"):
+        ext_id = _norm(item.get("external_skill_id") or item.get("skill_id") or item.get("subskill_id"))
+        if ext_id:
+            updates["external_skill_id"] = ext_id
+
+    if _has_field(Skills, "source_provider"):
+        provider = _norm(item.get("source_provider") or item.get("provider"))
+        if provider:
+            updates["source_provider"] = provider
+
+    if _has_field(Skills, "raw_payload") and isinstance(item, dict) and item:
+        updates["raw_payload"] = item
+
     _apply_updates(obj, updates)
     return obj, created
 
 
-def upsert_skill_by_name(nombre: str) -> tuple[Skills | None, bool]:
+def upsert_skill_by_name(
+    nombre: str,
+    skill_type: str | None = None,
+    parent_obj: Skills | None = None,
+    external_skill_id: str | None = None,
+    source_provider: str | None = None,
+    raw_payload: dict | None = None,
+) -> tuple[Skills | None, bool]:
     nombre = _norm(nombre)
     if not nombre:
         return None, False
@@ -361,6 +498,14 @@ def upsert_skill_by_name(nombre: str) -> tuple[Skills | None, bool]:
         defaults["slug"] = safe_slug_from_name(nombre)[:300] or None
     if _has_field(Skills, "estado"):
         defaults["estado"] = True
+    if _has_field(Skills, "skill_type") and skill_type:
+        defaults["skill_type"] = skill_type
+    if _has_field(Skills, "external_skill_id") and external_skill_id:
+        defaults["external_skill_id"] = external_skill_id
+    if _has_field(Skills, "source_provider") and source_provider:
+        defaults["source_provider"] = source_provider
+    if _has_field(Skills, "raw_payload") and raw_payload:
+        defaults["raw_payload"] = raw_payload
 
     obj, created = _safe_get_or_create_unique(
         Skills,
@@ -371,6 +516,25 @@ def upsert_skill_by_name(nombre: str) -> tuple[Skills | None, bool]:
     updates = {}
     if _has_field(Skills, "estado"):
         updates["estado"] = True
+
+    if _has_field(Skills, "skill_type") and skill_type and not getattr(obj, "skill_type", None):
+        updates["skill_type"] = skill_type
+
+    if _has_field(Skills, "parent") and parent_obj:
+        if getattr(obj, "parent_id", None) != parent_obj.id:
+            updates["parent"] = parent_obj
+
+    if _has_field(Skills, "external_skill_id") and external_skill_id:
+        if getattr(obj, "external_skill_id", None) != external_skill_id:
+            updates["external_skill_id"] = external_skill_id
+
+    if _has_field(Skills, "source_provider") and source_provider:
+        if getattr(obj, "source_provider", None) != source_provider:
+            updates["source_provider"] = source_provider
+
+    if _has_field(Skills, "raw_payload") and raw_payload:
+        updates["raw_payload"] = raw_payload
+
     _apply_updates(obj, updates)
 
     return obj, created
@@ -447,6 +611,10 @@ def upsert_universidad(item: dict) -> tuple[Universidades | None, bool]:
     if new_desc and _has_field(Universidades, "descripcion_institucion"):
         updates["descripcion_institucion"] = new_desc
 
+    new_img = item.get("univ_img")
+    if new_img and _has_field(Universidades, "univ_img"):
+        updates["univ_img"] = new_img
+
     _apply_updates(obj, updates)
     return obj, created
 
@@ -459,6 +627,8 @@ def upsert_plataforma(item: dict) -> tuple[Plataformas | None, bool]:
     defaults = {"plat_img": item.get("plat_img")}
     if _has_field(Plataformas, "plat_ico"):
         defaults["plat_ico"] = None
+    if _has_field(Plataformas, "source_provider"):
+        defaults["source_provider"] = _norm(item.get("source_provider")) or None
 
     obj, created = _safe_get_or_create_unique(
         Plataformas,
@@ -467,14 +637,20 @@ def upsert_plataforma(item: dict) -> tuple[Plataformas | None, bool]:
     )
 
     updates = {}
+    new_img = item.get("plat_img")
+    if new_img and _has_field(Plataformas, "plat_img"):
+        updates["plat_img"] = new_img
+
+    if _has_field(Plataformas, "source_provider"):
+        source_provider = _norm(item.get("source_provider"))
+        if source_provider:
+            updates["source_provider"] = source_provider
+
     _apply_updates(obj, updates)
     return obj, created
 
 
 def upsert_empresa_por_nombre(nombre: str, descripcion_institucion: str | None = None) -> tuple[Empresas | None, bool, bool]:
-    """
-    retorna: (empresa, created, updated_description)
-    """
     nombre = _norm(nombre)
     descripcion_institucion = _norm(descripcion_institucion)
 
@@ -501,6 +677,44 @@ def upsert_empresa_por_nombre(nombre: str, descripcion_institucion: str | None =
 
     _apply_updates(obj, updates)
     return obj, created, updated_description
+
+
+def upsert_specialization(cert: dict | None = None) -> tuple[Specialization | None, bool]:
+    if not cert:
+        return None, False
+
+    specialization_id = _norm(cert.get("specialization_id"))
+    specialization_name = _norm(cert.get("specialization_name"))
+    provider = _infer_provider_from_cert(cert)
+
+    if not specialization_id:
+        return None, False
+
+    defaults = {
+        "specialization_name": specialization_name or specialization_id,
+        "provider": provider or None,
+        "raw_payload": cert if isinstance(cert, dict) else {},
+        "estado": True,
+    }
+
+    obj, created = _safe_get_or_create_unique(
+        Specialization,
+        lookup={"specialization_id": specialization_id},
+        defaults=defaults,
+    )
+
+    updates = {}
+    if specialization_name:
+        updates["specialization_name"] = specialization_name
+    if provider:
+        updates["provider"] = provider
+    if isinstance(cert, dict) and cert:
+        updates["raw_payload"] = cert
+    if _has_field(Specialization, "estado"):
+        updates["estado"] = True
+
+    _apply_updates(obj, updates)
+    return obj, created
 
 
 def _find_existing_certificacion(cert: dict, plat_fk=None, univ_fk=None, empresa_fk=None):
@@ -534,13 +748,13 @@ def _find_existing_certificacion(cert: dict, plat_fk=None, univ_fk=None, empresa
     return None
 
 
-def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict) -> tuple[Certificaciones, bool]:
+def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict, reconciliation_snapshot: dict | None = None) -> tuple[Certificaciones, bool]:
     nombre = _norm(cert.get("nombre"))
     if not nombre:
         raise ValueError("Certificación sin nombre")
 
     univ_name = _norm(cert.get("universidad_certificacion")).lower()
-    plat_name = _norm(cert.get("plataforma_certificacion")).lower()
+    plat_name = _normalize_provider_for_platform(cert).lower()
     empresa_name = _norm(cert.get("empresa_certificacion"))
     descripcion_inst = _norm(cert.get("descripcion_institucion_certificacion"))
 
@@ -554,20 +768,31 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict) -> tuple[Ce
         if empresa_name else (None, False, False)
     )
 
+    specialization_obj, _ = upsert_specialization(cert)
+
     obj = _find_existing_certificacion(cert, plat_fk=plat_fk, univ_fk=univ_fk, empresa_fk=empresa_fk)
     slug_value = build_unique_slug(Certificaciones, nombre, existing_obj=obj, max_length=500)
+
+    merged_skill_names = _extract_skill_names_from_cert(cert)
+    habilidades_value = ", ".join(merged_skill_names) if merged_skill_names else clean_habilidades(cert.get("habilidades_certificacion"))
+    instructores_legacy = build_instructores_legacy_text(cert)
+    lenguaje_value = (
+        _norm(cert.get("lenguaje_certificacion"))
+        or _norm(cert.get("language_normalized"))
+        or "NONE"
+    )
 
     defaults = {
         "nombre": nombre,
         "slug": slug_value,
         "palabra_clave_certificacion": cert.get("palabra_clave_certificacion") or "NONE",
-        "metadescripcion_certificacion": cert.get("metadescripcion_certificacion") or "NONE",        
-        "instructores_certificacion": cert.get("instructores_certificacion") or "NONE",
+        "metadescripcion_certificacion": cert.get("metadescripcion_certificacion") or "NONE",
+        "instructores_certificacion": cert.get("instructores_certificacion") or instructores_legacy or "NONE",
         "nivel_certificacion": cert.get("nivel_certificacion") or "NONE",
         "tiempo_certificacion": cert.get("tiempo_certificacion") or "NONE",
-        "lenguaje_certificacion": cert.get("lenguaje_certificacion") or "NONE",
+        "lenguaje_certificacion": lenguaje_value,
         "aprendizaje_certificacion": cert.get("aprendizaje_certificacion") or "NONE",
-        "habilidades_certificacion": clean_habilidades(cert.get("habilidades_certificacion")),
+        "habilidades_certificacion": habilidades_value or "NONE",
         "experiencia_certificacion": cert.get("experiencia_certificacion") or "NONE",
         "testimonios_certificacion": cert.get("testimonios_certificacion") or "NONE",
         "contenido_certificacion": cert.get("contenido_certificacion") or "NONE",
@@ -587,6 +812,42 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict) -> tuple[Ce
         if tema_val is None:
             defaults["tema_certificacion"] = getattr(obj, "tema_certificacion", None) if obj else None
 
+    if _has_field(Certificaciones, "source_provider"):
+        defaults["source_provider"] = _infer_provider_from_cert(cert) or None
+
+    if _has_field(Certificaciones, "specialization"):
+        defaults["specialization"] = specialization_obj
+
+    if _has_field(Certificaciones, "specialization_id_external"):
+        defaults["specialization_id_external"] = _norm(cert.get("specialization_id")) or None
+
+    if _has_field(Certificaciones, "specialization_name_external"):
+        defaults["specialization_name_external"] = _norm(cert.get("specialization_name")) or None
+
+    if _has_field(Certificaciones, "country"):
+        defaults["country"] = _norm(cert.get("country")) or "Global"
+
+    if _has_field(Certificaciones, "region"):
+        defaults["region"] = _norm(cert.get("region")) or "Global"
+
+    if _has_field(Certificaciones, "mapping_status"):
+        defaults["mapping_status"] = _norm(cert.get("mapping_status")) or "uncategorized"
+
+    if _has_field(Certificaciones, "language_normalized"):
+        defaults["language_normalized"] = _norm(cert.get("language_normalized")) or None
+
+    if _has_field(Certificaciones, "skills_internal_json"):
+        defaults["skills_internal_json"] = _ensure_list(cert.get("skills_internal"))
+
+    if _has_field(Certificaciones, "subskills_internal_json"):
+        defaults["subskills_internal_json"] = _ensure_list(cert.get("subskills_internal"))
+
+    if _has_field(Certificaciones, "reconciliation_snapshot"):
+        defaults["reconciliation_snapshot"] = reconciliation_snapshot or {}
+
+    if _has_field(Certificaciones, "raw_payload"):
+        defaults["raw_payload"] = cert if isinstance(cert, dict) else {}
+
     if obj is None:
         obj = Certificaciones.objects.create(**defaults)
         return obj, True
@@ -596,12 +857,6 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict) -> tuple[Ce
 
 
 def sync_certification_skills(cert_obj: Certificaciones, skill_names: list[str]) -> dict:
-    """
-    Sincroniza las relaciones exactas:
-    - crea skills faltantes
-    - crea links faltantes
-    - elimina links que ya no aplican
-    """
     skill_names = _dedupe_keep_order(skill_names)
 
     created_skills = 0
@@ -610,7 +865,7 @@ def sync_certification_skills(cert_obj: Certificaciones, skill_names: list[str])
 
     desired_skill_ids = []
 
-    for skill_name in skill_names:
+    for order, skill_name in enumerate(skill_names, start=1):
         skill_obj, created = upsert_skill_by_name(skill_name)
         if not skill_obj:
             continue
@@ -620,13 +875,17 @@ def sync_certification_skills(cert_obj: Certificaciones, skill_names: list[str])
 
         desired_skill_ids.append(skill_obj.id)
 
-        _, rel_created = SkillsCertification.objects.get_or_create(
+        rel, rel_created = SkillsCertification.objects.get_or_create(
             certificacion_id=cert_obj.id,
             skill_id=skill_obj.id,
+            defaults={"orden": order},
         )
 
         if rel_created:
             linked += 1
+        elif rel.orden != order:
+            rel.orden = order
+            rel.save(update_fields=["orden"])
 
     current_qs = SkillsCertification.objects.filter(certificacion_id=cert_obj.id)
 
@@ -647,12 +906,6 @@ def sync_certification_skills(cert_obj: Certificaciones, skill_names: list[str])
 
 
 def sync_certification_instructors(cert_obj: Certificaciones, instructor_rows: list[dict]) -> dict:
-    """
-    Sincroniza instructores exactos de la certificación:
-    - crea instructores faltantes
-    - crea links faltantes
-    - elimina links que ya no aplican
-    """
     created_instructors = 0
     linked = 0
     unlinked = 0
@@ -731,29 +984,42 @@ def update_institution_description_from_cert(cert: dict, cert_obj: Certificacion
     }
 
 
-@transaction.atomic
-def ingest_course_payload(payload: dict) -> dict:
-    """
-    payload esperado:
-    {
-      "items": [
-        {
-          "certificaciones": [...],
-          "temas": [...],
-          "universidades": [...],
-          "plataformas": [...]
-        }
-      ]
-    }
-    """
+def save_reconciliation_snapshot(payload: dict, resource: str = "courses", provider_filter: str | None = None, page: int = 1, page_size: int = 20):
+    reconciliation = payload.get("reconciliation")
+    if not isinstance(reconciliation, dict):
+        return None
 
+    snapshot = ExternalReconciliationSnapshot.objects.create(
+        resource=resource,
+        provider_filter=provider_filter or None,
+        page=page or 1,
+        page_size=page_size or 20,
+        payload=reconciliation,
+    )
+    return snapshot
+
+
+@transaction.atomic
+def ingest_course_payload(payload: dict, resource: str = "courses", provider_filter: str | None = None) -> dict:
     items = payload.get("items") or []
+    page = payload.get("page") or 1
+    page_size = payload.get("pageSize") or payload.get("page_size") or 20
+    reconciliation = payload.get("reconciliation") if isinstance(payload.get("reconciliation"), dict) else {}
+
+    save_reconciliation_snapshot(
+        payload=payload,
+        resource=resource,
+        provider_filter=provider_filter,
+        page=page,
+        page_size=page_size,
+    )
 
     created_skills_catalog = 0
     created_unis = 0
     created_plats = 0
     created_companies = 0
     created_instructors = 0
+    created_specializations = 0
 
     created_certs = 0
     updated_certs = 0
@@ -773,7 +1039,9 @@ def ingest_course_payload(payload: dict) -> dict:
     companies_updated = 0
     universities_updated = 0
 
-    for item in items:
+    for raw_item in items:
+        item = _normalize_item_to_legacy_shape(raw_item)
+
         skills_map = {}
 
         for s in (item.get("temas") or []):
@@ -791,6 +1059,9 @@ def ingest_course_payload(payload: dict) -> dict:
 
         unis_map = {}
         for u in (item.get("universidades") or []):
+            if not isinstance(u, dict):
+                continue
+
             nombre = _norm(u.get("nombre"))
             if not nombre:
                 continue
@@ -810,6 +1081,9 @@ def ingest_course_payload(payload: dict) -> dict:
 
         plats_map = {}
         for p in (item.get("plataformas") or []):
+            if not isinstance(p, dict):
+                continue
+
             nombre = _norm(p.get("nombre"))
             if not nombre:
                 continue
@@ -823,9 +1097,13 @@ def ingest_course_payload(payload: dict) -> dict:
 
             plats_map[nombre.lower()] = obj
 
-        item_skill_names = extract_certification_skill_names(item=item)
+        legacy_item_skill_names = extract_certification_skill_names(item=item)
 
         for c in (item.get("certificaciones") or []):
+            if not isinstance(c, dict):
+                skipped_invalid += 1
+                continue
+
             nombre = _norm(c.get("nombre"))
             if not nombre:
                 skipped_invalid += 1
@@ -833,10 +1111,15 @@ def ingest_course_payload(payload: dict) -> dict:
 
             try:
                 with transaction.atomic():
+                    spec_obj, spec_created = upsert_specialization(c)
+                    if spec_created:
+                        created_specializations += 1
+
                     cert_obj, cert_created = upsert_certificacion(
                         c,
                         univ_map=unis_map,
                         plat_map=plats_map,
+                        reconciliation_snapshot=reconciliation,
                     )
 
                     if cert_created:
@@ -862,8 +1145,12 @@ def ingest_course_payload(payload: dict) -> dict:
                     companies_updated += inst_res["companies_updated"]
                     universities_updated += inst_res["universities_updated"]
 
+                    cert_skill_names = _extract_skill_names_from_cert(c)
+                    if not cert_skill_names:
+                        cert_skill_names = legacy_item_skill_names
+
                     normalized_names = []
-                    for skill_name in item_skill_names:
+                    for skill_name in cert_skill_names:
                         skill_name = _norm(skill_name)
                         if not skill_name:
                             continue
@@ -898,6 +1185,7 @@ def ingest_course_payload(payload: dict) -> dict:
                 print(f"ERROR en certificación '{nombre}': {str(e)}")
                 print(traceback.format_exc())
                 continue
+
     return {
         "created": created_certs,
         "updated": updated_certs,
@@ -916,6 +1204,7 @@ def ingest_course_payload(payload: dict) -> dict:
         "universities_created": created_unis,
         "platforms_created": created_plats,
         "companies_created": created_companies,
+        "specializations_created": created_specializations,
 
         "institutions_updated": institutions_updated,
         "companies_updated": companies_updated,
@@ -925,4 +1214,204 @@ def ingest_course_payload(payload: dict) -> dict:
         "certifications_without_instructors": certifications_without_instructors,
         "duplicates_detected": duplicates_detected,
         "received_items": len(items),
+        "reconciliation_saved": bool(reconciliation),
+        "resource": resource,
+        "provider_filter": provider_filter,
+    }
+
+
+@transaction.atomic
+def ingest_skills_structure_payload(payload: dict, provider_filter: str | None = None) -> dict:
+    items = payload.get("items") or []
+
+    skills_created = 0
+    subskills_created = 0
+    parent_links_updated = 0
+
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+
+        skill_name = _norm(row.get("skill_name") or row.get("nombre") or row.get("name"))
+        skill_id = _norm(row.get("skill_id"))
+        if not skill_name:
+            continue
+
+        parent_obj, parent_created = upsert_skill_by_name(
+            skill_name,
+            skill_type="tema",
+            external_skill_id=skill_id or None,
+            source_provider=provider_filter,
+            raw_payload=row,
+        )
+        if not parent_obj:
+            continue
+
+        if parent_created:
+            skills_created += 1
+
+        for sub in (row.get("subskills") or []):
+            if not isinstance(sub, dict):
+                continue
+
+            subskill_name = _norm(sub.get("subskill_name") or sub.get("nombre") or sub.get("name"))
+            subskill_id = _norm(sub.get("subskill_id"))
+            if not subskill_name:
+                continue
+
+            before_parent_id = None
+            existing_child = Skills.objects.filter(nombre=subskill_name).order_by("id").first()
+            if existing_child is not None:
+                before_parent_id = getattr(existing_child, "parent_id", None)
+
+            child_obj, child_created = upsert_skill_by_name(
+                subskill_name,
+                skill_type="habilidad",
+                parent_obj=parent_obj,
+                external_skill_id=subskill_id or None,
+                source_provider=provider_filter,
+                raw_payload=sub,
+            )
+            if not child_obj:
+                continue
+
+            if child_created:
+                subskills_created += 1
+
+            if before_parent_id != parent_obj.id and getattr(child_obj, "parent_id", None) == parent_obj.id:
+                parent_links_updated += 1
+
+    return {
+        "skills_created": skills_created,
+        "subskills_created": subskills_created,
+        "parent_links_updated": parent_links_updated,
+        "received_items": len(items),
+        "total_skills": payload.get("total_skills"),
+        "total_subskills": payload.get("total_subskills"),
+        "provider_filter": provider_filter,
+    }
+
+
+@transaction.atomic
+def ingest_specializations_payload(payload: dict, provider_filter: str | None = None) -> dict:
+    items = payload.get("items") or []
+
+    processed = 0
+    skipped = 0
+    created = 0
+    updated = 0
+
+    for row in items:
+        if not isinstance(row, dict):
+            skipped += 1
+            continue
+
+        specialization_id = _norm(row.get("specialization_id"))
+        specialization_name = _norm(row.get("specialization_name"))
+        provider = _norm(row.get("provider")) or provider_filter
+
+        if not specialization_id or not specialization_name:
+            skipped += 1
+            continue
+
+        obj, was_created = _safe_get_or_create_unique(
+            Specialization,
+            lookup={"specialization_id": specialization_id},
+            defaults={
+                "specialization_name": specialization_name,
+                "provider": provider or None,
+                "raw_payload": row,
+                "estado": True,
+            },
+        )
+
+        updates = {
+            "specialization_name": specialization_name,
+            "provider": provider or None,
+            "raw_payload": row,
+            "estado": True,
+        }
+        changed = _apply_updates(obj, updates)
+
+        if was_created:
+            created += 1
+        elif changed:
+            updated += 1
+
+        processed += 1
+
+    return {
+        "processed": processed,
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "received_items": len(items),
+        "page": payload.get("page"),
+        "pageSize": payload.get("pageSize"),
+        "total": payload.get("total"),
+        "totalPages": payload.get("totalPages"),
+        "provider_filter": provider_filter,
+    }
+
+
+@transaction.atomic
+def ingest_specialization_detail_payload(payload: dict, specialization_id: str | None = None, provider_filter: str | None = None) -> dict:
+    specialization = payload.get("specialization") if isinstance(payload.get("specialization"), dict) else {}
+    items = payload.get("items") or []
+
+    effective_specialization_id = specialization_id or _norm(specialization.get("specialization_id"))
+    specialization_name = _norm(specialization.get("specialization_name"))
+    provider = _norm(specialization.get("provider")) or provider_filter
+
+    spec_obj = None
+    if effective_specialization_id:
+        spec_obj, _ = _safe_get_or_create_unique(
+            Specialization,
+            lookup={"specialization_id": effective_specialization_id},
+            defaults={
+                "specialization_name": specialization_name or effective_specialization_id,
+                "provider": provider or None,
+                "raw_payload": specialization or {},
+                "estado": True,
+            },
+        )
+
+        _apply_updates(spec_obj, {
+            "specialization_name": specialization_name or effective_specialization_id,
+            "provider": provider or None,
+            "raw_payload": specialization or {},
+            "estado": True,
+        })
+
+    patched_items = []
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        row_copy = dict(row)
+
+        if effective_specialization_id and not row_copy.get("specialization_id"):
+            row_copy["specialization_id"] = effective_specialization_id
+
+        if specialization_name and not row_copy.get("specialization_name"):
+            row_copy["specialization_name"] = specialization_name
+
+        if provider and not row_copy.get("provider"):
+            row_copy["provider"] = provider
+
+        patched_items.append(row_copy)
+
+    summary = ingest_course_payload(
+        {"items": patched_items, "reconciliation": payload.get("reconciliation") or {}},
+        resource="specialization-detail",
+        provider_filter=provider_filter,
+    )
+
+    return {
+        "specialization_db_id": getattr(spec_obj, "id", None),
+        "specialization_id": effective_specialization_id,
+        "specialization_name": specialization_name,
+        "courses_summary": summary,
+        "total": payload.get("total"),
+        "received_items": len(items),
+        "provider_filter": provider_filter,
     }

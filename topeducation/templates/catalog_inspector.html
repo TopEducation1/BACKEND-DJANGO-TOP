@@ -15,7 +15,7 @@
           <label class="block text-sm">
             Base URL
             <input id="base-input" type="text"
-              value="https://erucsg6yrj.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information"
+              value="https://99f51wnzz7.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information"
               class="mt-1 w-full rounded-full border px-3 py-2 bg-neutral-700">
           </label>
 
@@ -23,19 +23,42 @@
             Recurso
             <select id="resource-select" class="mt-1 w-full rounded-full border px-3 py-2 bg-neutral-700">
               <option value="courses" selected>/courses</option>
+              <option value="certifications">/certifications</option>
+              <option value="skills-structure">/skills-structure</option>
+              <option value="specializations">/specializations</option>
+              <option value="specialization-detail">/specializations/{id}</option>
             </select>
+          </label>
+
+          <label class="block text-sm">
+            Provider
+            <input id="provider-input" type="text"
+              placeholder="COURSERA / EDX / MASTERCLASS"
+              class="mt-1 w-full rounded-full border px-3 py-2 bg-neutral-700">
+          </label>
+
+          <label class="block text-sm">
+            Specialization ID
+            <input id="specialization-id-input" type="text"
+              placeholder="coursera:Specialization~ABC"
+              class="mt-1 w-full rounded-full border px-3 py-2 bg-neutral-700">
           </label>
 
           <div class="grid grid-cols-2 gap-2">
             <input id="page-input" type="number" value="1" min="1"
               class="rounded-full border px-3 py-2 bg-neutral-700">
-            <input id="page-size-input" type="number" value="25" min="1" max="500"
+            <input id="page-size-input" type="number" value="25" min="1" max="100"
               class="rounded-full border px-3 py-2 bg-neutral-700">
           </div>
 
           <div class="flex gap-2">
-            <button id="reload" class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full">Consultar</button>
-            <button id="sync-btn" class="bg-blue-600 px-3 py-1 rounded-full text-neutral-100">Sincronizar</button>
+            <button id="reload"
+              class="bg-[#F6F4EF] transition duration-300 hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full">
+              Consultar
+            </button>
+            <button id="sync-btn" class="bg-blue-600 px-3 py-1 rounded-full text-neutral-100">
+              Sincronizar
+            </button>
           </div>
         </div>
 
@@ -62,7 +85,7 @@
       <!-- ===================== RIGHT PANEL ===================== -->
       <section class="lg:col-span-3 rounded-sm max-h-[77vh] px-3 text-slate-100">
 
-        <div class="flex justify-between items-center mb-2">
+        <div class="flex justify-between items-center mb-2 gap-2">
           <input id="global-search" placeholder="Buscar..."
             class="rounded-lg border px-3 py-2 bg-neutral-800 w-64">
           <span id="count"></span>
@@ -83,51 +106,150 @@
 
 <script>
 (() => {
-
-  /* ================= CONFIG ================= */
-  // ⚠️ No usamos x-api-key en el front. El backend toma la key del .env.
-  // Recomendado: usa un proxy dedicado para cursos, para no chocar con tu proxy_json existente.
-  // Si tu ruta es /api/proxy/courses, déjalo así:
   const PROXY_PATH = "/api/proxy/courses/";
-
-
-  // Endpoint interno que ejecuta "1 página" tipo cron job manual.
-  // Si ya lo migraste a /api/sync/courses/run, puedes cambiarlo aquí.
   const SYNC_URL = "/api/sync/courses/run/";
 
-  const COURSE_COLUMNS = [
+  const DEFAULT_COLUMNS = [
     "nombre",
-    "tema_certificacion",
+    "specialization_name",
+    "country",
+    "region",
     "nivel_certificacion",
     "lenguaje_certificacion",
-    "aprendizaje_certificacion",
+    "language_normalized",
+    "mapping_status",
     "habilidades_certificacion",
     "universidad_certificacion",
+    "empresa_certificacion",
     "plataforma_certificacion",
     "url_certificacion_original",
     "imagen_final",
-    "temas",
-    "universidades",
-    "plataformas"
+  ];
+
+  const SKILLS_STRUCTURE_COLUMNS = [
+    "skill_id",
+    "skill_name",
+    "subskills_count",
+    "subskills_preview",
+  ];
+
+  const SPECIALIZATIONS_COLUMNS = [
+    "specialization_id",
+    "specialization_name",
+    "provider",
   ];
 
   const $ = id => document.getElementById(id);
   let RAW = [];
+  let CURRENT_COLUMNS = [...DEFAULT_COLUMNS];
 
-  /* ================= UTILS ================= */
   function escapeHtml(s) {
     return String(s ?? "")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#039;");
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(";").shift();
+    return "";
+  }
+
+  function getCurrentResource() {
+    return $("resource-select").value || "courses";
+  }
+
+  function usesPagination(resource) {
+    return ["courses", "certifications", "specializations"].includes(resource);
+  }
+
+  function getCurrentColumns(resource) {
+    if (resource === "skills-structure") return SKILLS_STRUCTURE_COLUMNS;
+    if (resource === "specializations") return SPECIALIZATIONS_COLUMNS;
+    if (resource === "specialization-detail") return DEFAULT_COLUMNS;
+    return DEFAULT_COLUMNS;
   }
 
   function renderHead() {
-    $("thead-row").innerHTML = COURSE_COLUMNS.map(c =>
-      `<th class="px-3 py-2 text-left whitespace-nowrap">${c}</th>`
+    $("thead-row").innerHTML = CURRENT_COLUMNS.map(c =>
+      `<th class="px-3 py-2 text-left whitespace-nowrap">${escapeHtml(c)}</th>`
     ).join("");
+  }
+
+  function normalizeRowsForCourses(data) {
+    const all = [];
+
+    if (!Array.isArray(data.items)) return all;
+
+    data.items.forEach(item => {
+      const isLegacyShape = Array.isArray(item?.certificaciones);
+
+      if (isLegacyShape) {
+        const temas = (item.temas || []).map(t => t.nombre).join(", ");
+        const unis = (item.universidades || []).map(u => u.nombre).join(", ");
+        const plats = (item.plataformas || []).map(p => p.nombre).join(", ");
+
+        (item.certificaciones || []).forEach(c => {
+          all.push({
+            ...c,
+            temas,
+            universidades: unis,
+            plataformas: plats,
+          });
+        });
+      } else {
+        all.push(item);
+      }
+    });
+
+    return all;
+  }
+
+  function normalizeRowsForSkillsStructure(data) {
+    if (!Array.isArray(data.items)) return [];
+
+    return data.items.map(item => {
+      const subskills = Array.isArray(item.subskills) ? item.subskills : [];
+      return {
+        skill_id: item.skill_id ?? "",
+        skill_name: item.skill_name ?? "",
+        subskills_count: subskills.length,
+        subskills_preview: subskills.map(s => s.subskill_name || s.nombre || "").filter(Boolean).join(", "),
+      };
+    });
+  }
+
+  function normalizeRowsForSpecializations(data) {
+    if (!Array.isArray(data.items)) return [];
+    return data.items.map(item => ({
+      specialization_id: item.specialization_id ?? "",
+      specialization_name: item.specialization_name ?? "",
+      provider: item.provider ?? "",
+    }));
+  }
+
+  function normalizeRows(resource, data) {
+    if (resource === "skills-structure") {
+      return normalizeRowsForSkillsStructure(data);
+    }
+
+    if (resource === "specializations") {
+      return normalizeRowsForSpecializations(data);
+    }
+
+    if (resource === "specialization-detail") {
+      const detailItems = Array.isArray(data.items) ? data.items : [];
+      return detailItems.map(item => ({
+        ...item,
+        specialization_name: item.specialization_name || data?.specialization?.specialization_name || "",
+      }));
+    }
+
+    return normalizeRowsForCourses(data);
   }
 
   function renderTable() {
@@ -141,8 +263,8 @@
 
     $("tbody").innerHTML = rows.map(row => {
       return `<tr>${
-        COURSE_COLUMNS.map(c => {
-          let value = row[c] ?? "";
+        CURRENT_COLUMNS.map(c => {
+          const value = row[c] ?? "";
 
           if (c === "imagen_final" && value) {
             return `<td class="px-3 py-2 border-t">
@@ -150,9 +272,7 @@
             </td>`;
           }
 
-          return `<td class="px-3 py-2 border-t align-top">
-            ${escapeHtml(value)}
-          </td>`;
+          return `<td class="px-3 py-2 border-t align-top">${escapeHtml(value)}</td>`;
         }).join("")
       }</tr>`;
     }).join("");
@@ -162,99 +282,122 @@
       : "{}";
   }
 
-  // CSRF desde cookie (si tu SYNC_URL requiere CSRF)
-  function getCookie(name) {
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) return parts.pop().split(';').shift();
-    return '';
+  function buildExternalUrl() {
+    const base = $("base-input").value.replace(/\/+$/, "");
+    const resource = getCurrentResource();
+    const page = $("page-input").value;
+    const pageSize = $("page-size-input").value;
+    const provider = ($("provider-input").value || "").trim();
+    const specializationId = ($("specialization-id-input").value || "").trim();
+
+    let url = "";
+
+    if (resource === "specialization-detail") {
+      url = `${base}/specializations/${encodeURIComponent(specializationId)}`;
+    } else {
+      url = `${base}/${resource}`;
+    }
+
+    const params = new URLSearchParams();
+
+    if (usesPagination(resource)) {
+      params.set("page", page);
+      params.set("pageSize", pageSize);
+    }
+
+    if (provider && ["courses", "certifications", "specializations"].includes(resource)) {
+      params.set("provider", provider);
+      params.set("providerId", provider);
+    }
+
+    const query = params.toString();
+    if (query) {
+      url += `?${query}`;
+    }
+
+    return url;
   }
 
-  /* ================= PROXY LOAD ================= */
   async function loadFromProxy() {
     $("status").textContent = "Cargando...";
     RAW = [];
     renderTable();
 
-    const page = $("page-input").value;
-    const pageSize = $("page-size-input").value;
+    const resource = getCurrentResource();
+    CURRENT_COLUMNS = getCurrentColumns(resource);
+    renderHead();
 
-    const base = $("base-input").value.replace(/\/+$/,"");
-    const resource = $("resource-select").value || "courses";
-
-    // El externo usa page + pageSize (según tu ejemplo)
-    const url = `${base}/${resource}?page=${page}&pageSize=${pageSize}`;
+    const url = buildExternalUrl();
     $("full-url").textContent = url;
 
     try {
-      // ✅ Solo llamamos al backend. Nada de x-api-key en el front.
       const res = await fetch(
         `${PROXY_PATH}?url=${encodeURIComponent(url)}`,
         { headers: { "Accept": "application/json" } }
       );
 
-
       const text = await res.text();
       let data = {};
-      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { raw: text };
+      }
 
       $("raw-json").textContent = JSON.stringify(data, null, 2);
 
       if (!res.ok) {
-        // Si el proxy no está enviando la API key bien, lo verás como 401/403 acá.
         $("status").textContent = `Error proxy HTTP ${res.status}`;
-        $("meta").textContent = `page=${page} · pageSize=${pageSize}`;
+        $("meta").textContent = "error";
         return;
       }
 
-      let all = [];
+      RAW = normalizeRows(resource, data);
 
-      // Tu estructura actual:
-      // data.items[] -> item.temas/universidades/plataformas + item.certificaciones[]
-      if (Array.isArray(data.items)) {
-        data.items.forEach(item => {
-          const temas = (item.temas || []).map(t => t.nombre).join(", ");
-          const unis  = (item.universidades || []).map(u => u.nombre).join(", ");
-          const plats = (item.plataformas || []).map(p => p.nombre).join(", ");
+      const metaBits = [];
+      if (data.page) metaBits.push(`page=${data.page}`);
+      if (data.pageSize) metaBits.push(`pageSize=${data.pageSize}`);
+      if (data.total) metaBits.push(`total=${data.total}`);
+      if (data.totalPages || data.totalPage) metaBits.push(`totalPages=${data.totalPages || data.totalPage}`);
+      if (data.total_skills) metaBits.push(`total_skills=${data.total_skills}`);
+      if (data.total_subskills) metaBits.push(`total_subskills=${data.total_subskills}`);
 
-          (item.certificaciones || []).forEach(c => {
-            all.push({
-              ...c,
-              temas,
-              universidades: unis,
-              plataformas: plats
-            });
-          });
-        });
-      }
-
-      RAW = all;
       $("status").textContent = `OK (proxy) · rows=${RAW.length}`;
-      $("meta").textContent = `page=${page} · pageSize=${pageSize}`;
-      renderTable();
+      $("meta").textContent = metaBits.length ? metaBits.join(" · ") : "—";
 
+      renderTable();
     } catch (e) {
       $("status").textContent = "Error proxy";
       console.error(e);
     }
   }
 
-  /* ================= SYNC ================= */
   async function syncInternal() {
     $("status").textContent = "Sincronizando...";
 
+    const resource = getCurrentResource();
     const page = parseInt($("page-input").value || "1", 10);
     const pageSize = parseInt($("page-size-input").value || "25", 10);
+    const provider = ($("provider-input").value || "").trim();
+    const specialization_id = ($("specialization-id-input").value || "").trim();
 
     try {
+      const body = {
+        resource,
+        page,
+        pageSize,
+        provider,
+        specialization_id,
+      };
+
       const res = await fetch(SYNC_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Accept": "application/json",
-          "X-CSRFToken": getCookie('csrftoken'),
+          "X-CSRFToken": getCookie("csrftoken"),
         },
-        body: JSON.stringify({ page, pageSize }),
+        body: JSON.stringify(body),
         credentials: "same-origin",
       });
 
@@ -266,25 +409,51 @@
         return;
       }
 
-      $("status").textContent = `OK sync · page=${page} · received=${data.received ?? "?"} · next=${data.next_page ?? "?"}`;
+      const bits = [
+        `resource=${resource}`,
+      ];
 
-      // ✅ recargar tabla después del sync
+      if (data.page) bits.push(`page=${data.page}`);
+      if (data.received) bits.push(`received=${data.received}`);
+      if (data.items_len) bits.push(`items=${data.items_len}`);
+      if (data.next_page !== undefined && data.next_page !== null) bits.push(`next=${data.next_page}`);
+
+      $("status").textContent = `OK sync · ${bits.join(" · ")}`;
+
       await loadFromProxy();
-
     } catch (e) {
       $("status").textContent = "Error sync";
       console.error(e);
     }
   }
 
-  /* ================= EVENTS ================= */
+  function onResourceChange() {
+    const resource = getCurrentResource();
+
+    const disablePagination = !usesPagination(resource);
+    $("page-input").disabled = disablePagination;
+    $("page-size-input").disabled = disablePagination;
+
+    const needsSpecializationId = resource === "specialization-detail";
+    $("specialization-id-input").disabled = !needsSpecializationId;
+
+    const providerAllowed = ["courses", "certifications", "specializations", "specialization-detail"].includes(resource);
+    $("provider-input").disabled = !providerAllowed;
+
+    CURRENT_COLUMNS = getCurrentColumns(resource);
+    renderHead();
+    renderTable();
+  }
+
   $("reload").onclick = loadFromProxy;
   $("sync-btn").onclick = syncInternal;
   $("global-search").oninput = renderTable;
+  $("resource-select").onchange = onResourceChange;
 
+  CURRENT_COLUMNS = getCurrentColumns(getCurrentResource());
   renderHead();
+  onResourceChange();
   loadFromProxy();
-
 })();
 </script>
 </main>

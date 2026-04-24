@@ -15,7 +15,7 @@ SECRET_KEY = str(os.getenv('SECRET_KEY'))
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True 
 
-ALLOWED_HOSTS = ['backend-django-top-production.up.railway.app', '127.0.0.1', 'localhost','app.top.education']
+ALLOWED_HOSTS = ['backend-django-top-production.up.railway.app', '127.0.0.1', 'localhost','localhost:8000','app.top.education']
 
 # Configuración de seguridad HTTPS
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -34,11 +34,18 @@ STRIPE_PRICE_YEARLY = os.getenv("STRIPE_PRICE_YEARLY", "")
 STRIPE_PRICE_MONTHLY = os.getenv("STRIPE_PRICE_MONTHLY", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
-STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "http://localhost:3000/success?session_id={CHECKOUT_SESSION_ID}")
-STRIPE_CANCEL_URL  = os.getenv("STRIPE_CANCEL_URL", "http://localhost:3000/cancel")
+STRIPE_SUCCESS_URL = os.getenv(
+    "STRIPE_SUCCESS_URL",
+    f"{FRONTEND_URL}/success?session_id={{CHECKOUT_SESSION_ID}}"
+)
+
+STRIPE_CANCEL_URL = os.getenv(
+    "STRIPE_CANCEL_URL",
+    f"{FRONTEND_URL}/cancel"
+)
 
 PROXY_WHITELIST = {
-    "erucsg6yrj.execute-api.us-east-1.amazonaws.com",
+    "99f51wnzz7.execute-api.us-east-1.amazonaws.com",
 }
 APPEND_SLASH = True
 
@@ -47,14 +54,14 @@ COURSES_EXTERNAL_API_KEY = os.getenv("COURSES_EXTERNAL_API_KEY", default=None)
 COURSES_EXTERNAL_AUTH_HEADER = "x-api-key"
 
 COURSES_EXTERNAL_ALLOWED_HOSTS = [
-    "erucsg6yrj.execute-api.us-east-1.amazonaws.com",
+    "99f51wnzz7.execute-api.us-east-1.amazonaws.com",
 ]
 
 
 AWS_COURSES_API_KEY = os.environ.get("AWS_COURSES_API_KEY", "")
 
 PROXY_HEADERS = {
-    "erucsg6yrj.execute-api.us-east-1.amazonaws.com": {
+    "99f51wnzz7.execute-api.us-east-1.amazonaws.com": {
         "x-api-key": AWS_COURSES_API_KEY,
     }
 }
