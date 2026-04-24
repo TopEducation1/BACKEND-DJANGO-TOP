@@ -448,13 +448,13 @@ def upsert_skill(item: dict) -> tuple[Skills | None, bool]:
 
     if _has_field(Skills, "skill_img"):
         new_img = item.get("skill_img") or item.get("tem_img")
-        if new_img:
-            updates["skill_img"] = new_img
+        ##if new_img:
+        ##    updates["skill_img"] = new_img
 
     if _has_field(Skills, "skill_ico"):
         new_ico = item.get("skill_ico") or item.get("tem_ico")
-        if new_ico:
-            updates["skill_ico"] = new_ico
+        ##if new_ico:
+        ##    updates["skill_ico"] = new_ico
 
     if _has_field(Skills, "skill_col"):
         new_col = _norm(item.get("skill_col"))
@@ -612,8 +612,8 @@ def upsert_universidad(item: dict) -> tuple[Universidades | None, bool]:
         updates["descripcion_institucion"] = new_desc
 
     new_img = item.get("univ_img")
-    if new_img and _has_field(Universidades, "univ_img"):
-        updates["univ_img"] = new_img
+    ##if new_img and _has_field(Universidades, "univ_img"):
+    ##    updates["univ_img"] = new_img
 
     _apply_updates(obj, updates)
     return obj, created
@@ -638,8 +638,8 @@ def upsert_plataforma(item: dict) -> tuple[Plataformas | None, bool]:
 
     updates = {}
     new_img = item.get("plat_img")
-    if new_img and _has_field(Plataformas, "plat_img"):
-        updates["plat_img"] = new_img
+    ##if new_img and _has_field(Plataformas, "plat_img"):
+    ##    updates["plat_img"] = new_img
 
     if _has_field(Plataformas, "source_provider"):
         source_provider = _norm(item.get("source_provider"))
