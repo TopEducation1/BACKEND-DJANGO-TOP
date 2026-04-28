@@ -284,20 +284,9 @@ def extract_certification_skill_names(item: dict | None = None) -> list[str]:
 
     if item:
         for row in (item.get("temas") or []):
-            if not isinstance(row, dict):
-                continue
-
-            nombre = _norm(
-                row.get("nombre")
-                or row.get("name")
-                or row.get("label")
-                or row.get("skill")
-                or row.get("value")
-                or row.get("skill_name")
-                or row.get("subskill_name")
-            )
-            if nombre:
-                out.append(nombre)
+            val = _extract_skill_value(row)
+            if val:
+                out.append(val)
 
     return _dedupe_keep_order(out)
 
@@ -324,13 +313,11 @@ def _extract_skill_names_from_cert(cert: dict | None = None) -> list[str]:
 
     out = []
 
-    # 1) Nueva estructura principal
     for raw in _ensure_list(cert.get("skills_internal")):
         val = _extract_skill_value(raw)
         if val:
             out.append(val)
 
-    # 2) Nueva estructura subskills
     for raw in _ensure_list(
         cert.get("subskills_internal")
         or cert.get("sub_skills_internal")
@@ -340,13 +327,15 @@ def _extract_skill_names_from_cert(cert: dict | None = None) -> list[str]:
         if val:
             out.append(val)
 
-    # 3) Posible array legacy dentro del curso
     for raw in _ensure_list(cert.get("temas")):
         val = _extract_skill_value(raw)
         if val:
             out.append(val)
 
-    # 4) Posible campo texto/array legacy
+    tema_certificacion = _extract_skill_value(cert.get("tema_certificacion"))
+    if tema_certificacion:
+        out.append(tema_certificacion)
+
     raw_habilidades = cert.get("habilidades_certificacion")
     cleaned = clean_habilidades(raw_habilidades)
     if cleaned and cleaned != "NONE":
@@ -358,7 +347,7 @@ def _extract_skill_names_from_cert(cert: dict | None = None) -> list[str]:
     if not out and mapping_status == "uncategorized":
         out = ["Uncategorized"]
 
-    return _dedupe_keep_order(out)
+    return out
 
 def extract_instructors_from_cert(cert: dict | None = None) -> list[dict]:
     out = []
@@ -495,7 +484,9 @@ def upsert_skill(item: dict) -> tuple[Skills | None, bool]:
     if _has_field(Skills, "skill_ico"):
         defaults["skill_ico"] = item.get("skill_ico") or item.get("tem_ico")
     if _has_field(Skills, "skill_type"):
-        defaults["skill_type"] = _norm(item.get("skill_type") or item.get("tem_type"))
+        defaults["skill_type"] = _normalize_skill_type(
+            item.get("skill_type") or item.get("tem_type")
+        )
     if _has_field(Skills, "skill_col"):
         defaults["skill_col"] = _norm(item.get("skill_col"))
     if _has_field(Skills, "estado"):
@@ -1090,6 +1081,16 @@ def save_reconciliation_snapshot(payload: dict, resource: str = "courses", provi
     )
     return snapshot
 
+def _normalize_skill_type(value) -> str:
+    v = _norm(value).lower()
+
+    if v in {"domain", "tema", "topic", "category", "principal"}:
+        return "tema"
+
+    if v in {"subdomain", "habilidad", "skill", "subskill", "secondary"}:
+        return "habilidad"
+
+    return _norm(value)
 
 @transaction.atomic
 def ingest_course_payload(payload: dict, resource: str = "courses", provider_filter: str | None = None) -> dict:
@@ -1237,9 +1238,9 @@ def ingest_course_payload(payload: dict, resource: str = "courses", provider_fil
                     companies_updated += inst_res["companies_updated"]
                     universities_updated += inst_res["universities_updated"]
 
-                    cert_skill_names = _extract_skill_names_from_cert(c)
-                    if not cert_skill_names:
-                        cert_skill_names = legacy_item_skill_names
+                    cert_skill_names = _dedupe_keep_order(
+                        legacy_item_skill_names + _extract_skill_names_from_cert(c)
+                    )
 
                     normalized_names = []
                     for skill_name in cert_skill_names:

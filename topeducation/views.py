@@ -3052,9 +3052,6 @@ logger = logging.getLogger(__name__)
 
 #ACTUALIZACIÓN DE ENDPOINT 20 DE ABRIL
 
-
-LOCK_TTL_SECONDS = 14 * 60  # ~14 min para cron de 15 min
-
 BASE_EXTERNAL_URL = "https://99f51wnzz7.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information"
 LOCK_TTL_SECONDS = 14 * 60
 
@@ -3218,7 +3215,7 @@ def api_run_courses_sync(request):
       "provider": "COURSERA|EDX|MASTERCLASS",
       "specialization_id": "coursera:Specialization~ABC",
       "page": 1,
-      "pageSize": 20,
+      "pageSize": 100,
       "timeout": 30,
       "maxPagesPerRun": 1,
       "resetCursor": false
@@ -3229,7 +3226,7 @@ def api_run_courses_sync(request):
 
     # Tiempo máximo seguro para responder antes de Cloudflare.
     # Ajusta si tu Cloudflare/origen permite más.
-    MAX_HTTP_SECONDS = 45
+    MAX_HTTP_SECONDS = 240
 
     if _is_sync_paused():
         return JsonResponse(
@@ -3318,19 +3315,19 @@ def api_run_courses_sync(request):
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
 
     try:
-        page_size = int(body.get("pageSize", 20) or 20)
+        page_size = int(body.get("pageSize", 50) or 50)
     except Exception:
-        page_size = 20
+        page_size = 50
 
     try:
-        timeout = int(body.get("timeout", 30) or 30)
+        timeout = int(body.get("timeout", 120) or 120)
     except Exception:
-        timeout = 30
+        timeout = 120
 
     try:
-        max_pages_per_run = int(body.get("maxPagesPerRun", 1) or 1)
+        max_pages_per_run = int(body.get("maxPagesPerRun", 3) or 3)
     except Exception:
-        max_pages_per_run = 1
+        max_pages_per_run = 3
 
     reset_cursor = bool(body.get("resetCursor", False))
 
