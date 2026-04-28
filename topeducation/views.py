@@ -3221,7 +3221,7 @@ def api_run_courses_sync(request):
       "provider": "COURSERA|EDX|MASTERCLASS",
       "specialization_id": "coursera:Specialization~ABC",
       "page": 1,
-      "pageSize": 50,
+      "pageSize": 20,
       "timeout": 30,
       "maxPagesPerRun": 1,
       "resetCursor": false
@@ -3229,6 +3229,10 @@ def api_run_courses_sync(request):
     """
     t0 = time.time()
     run_id = uuid.uuid4().hex[:16]
+
+    # Tiempo máximo seguro para responder antes de Cloudflare.
+    # Ajusta si tu Cloudflare/origen permite más.
+    MAX_HTTP_SECONDS = 45
 
     if _is_sync_paused():
         return JsonResponse(
@@ -3261,7 +3265,11 @@ def api_run_courses_sync(request):
 
     if resource not in allowed_resources:
         return JsonResponse(
-            {"ok": False, "error": "invalid_resource", "detail": f"resource inválido: {resource}"},
+            {
+                "ok": False,
+                "error": "invalid_resource",
+                "detail": f"resource inválido: {resource}",
+            },
             status=400,
         )
 
@@ -3294,18 +3302,46 @@ def api_run_courses_sync(request):
         return JsonResponse({"ok": False, "error": "missing_api_key"}, status=500)
 
     try:
-        endpoint = _get_resource_endpoint(resource, specialization_id=specialization_id or None)
+        endpoint = _get_resource_endpoint(
+            resource,
+            specialization_id=specialization_id or None,
+        )
     except ValueError as e:
+        ExternalSyncLog.objects.create(
+            key=state_key,
+            run_id=run_id,
+            page=0,
+            page_size=0,
+            ok=False,
+            took_ms=int((time.time() - t0) * 1000),
+            error="invalid_endpoint",
+            detail=str(e),
+            trace="",
+        )
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
 
-    page_size = int(body.get("pageSize", 50) or 50)
-    timeout = int(body.get("timeout", 30) or 30)
-    max_pages_per_run = int(body.get("maxPagesPerRun", 1) or 1)
+    try:
+        page_size = int(body.get("pageSize", 20) or 20)
+    except Exception:
+        page_size = 20
+
+    try:
+        timeout = int(body.get("timeout", 30) or 30)
+    except Exception:
+        timeout = 30
+
+    try:
+        max_pages_per_run = int(body.get("maxPagesPerRun", 1) or 1)
+    except Exception:
+        max_pages_per_run = 1
+
     reset_cursor = bool(body.get("resetCursor", False))
 
-    max_pages_per_run = max(1, min(max_pages_per_run, 10))
-    page_size = max(1, min(page_size, 100))
-    timeout = max(5, min(timeout, 120))
+    # Límites más seguros para ejecución por inspector/HTTP.
+    # El cron puede correr más veces, pero cada request debe ser corto.
+    max_pages_per_run = max(1, min(max_pages_per_run, 1))
+    page_size = max(1, min(page_size, 20))
+    timeout = max(5, min(timeout, 60))
 
     state, _ = ExternalSyncState.objects.get_or_create(
         key=state_key,
@@ -3320,14 +3356,17 @@ def api_run_courses_sync(request):
 
     state = _acquire_lock(state_key, run_id)
     if not state:
-        return JsonResponse({
-            "ok": True,
-            "message": "Lock activo, ya hay una ejecución en curso",
-            "run_id": run_id,
-            "locked": False,
-            "state_key": state_key,
-            "lock_ttl_seconds": LOCK_TTL_SECONDS,
-        }, status=200)
+        return JsonResponse(
+            {
+                "ok": True,
+                "message": "Lock activo, ya hay una ejecución en curso",
+                "run_id": run_id,
+                "locked": False,
+                "state_key": state_key,
+                "lock_ttl_seconds": LOCK_TTL_SECONDS,
+            },
+            status=200,
+        )
 
     processed_pages = 0
     last_result = None
@@ -3347,8 +3386,67 @@ def api_run_courses_sync(request):
             "x-api-key": api_key,
         }
 
+        ExternalSyncLog.objects.create(
+            key=state_key,
+            run_id=run_id,
+            page=page if uses_cursor else None,
+            page_size=page_size if uses_cursor else None,
+            ok=True,
+            took_ms=int((time.time() - t0) * 1000),
+            detail=(
+                f"RUN_STARTED resource={resource} provider={provider or '-'} "
+                f"endpoint={endpoint} page={page} page_size={page_size} "
+                f"max_pages_per_run={max_pages_per_run}"
+            ),
+        )
+
         for _ in range(max_pages_per_run):
+            elapsed = time.time() - t0
+            if elapsed >= MAX_HTTP_SECONDS:
+                ExternalSyncLog.objects.create(
+                    key=state_key,
+                    run_id=run_id,
+                    page=page if uses_cursor else None,
+                    page_size=page_size if uses_cursor else None,
+                    ok=False,
+                    took_ms=int(elapsed * 1000),
+                    error="http_time_budget_exceeded",
+                    detail=(
+                        f"Se detuvo antes del timeout HTTP. "
+                        f"elapsed={round(elapsed, 2)}s max={MAX_HTTP_SECONDS}s"
+                    ),
+                    trace="",
+                )
+
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "partial": True,
+                        "run_id": run_id,
+                        "resource": resource,
+                        "provider": provider,
+                        "state_key": state_key,
+                        "processed_pages": processed_pages,
+                        "next_page": page if uses_cursor else None,
+                        "message": "Ejecución detenida antes del timeout HTTP. Reintenta para continuar.",
+                    },
+                    status=200,
+                )
+
             params = _build_params(resource, page, page_size, provider)
+
+            ExternalSyncLog.objects.create(
+                key=state_key,
+                run_id=run_id,
+                page=page if uses_cursor else None,
+                page_size=page_size if uses_cursor else None,
+                ok=True,
+                took_ms=int((time.time() - t0) * 1000),
+                detail=(
+                    f"FETCH_START resource={resource} provider={provider or '-'} "
+                    f"page={page} page_size={page_size} params={json.dumps(params, default=str)[:1500]}"
+                ),
+            )
 
             try:
                 resp = requests.get(
@@ -3357,8 +3455,84 @@ def api_run_courses_sync(request):
                     params=params,
                     timeout=timeout,
                 )
-                resp.raise_for_status()
-                payload = resp.json()
+
+                response_text_preview = ""
+                try:
+                    response_text_preview = (resp.text or "")[:3000]
+                except Exception:
+                    response_text_preview = ""
+
+                if resp.status_code >= 400:
+                    took_ms = int((time.time() - t0) * 1000)
+
+                    ExternalSyncLog.objects.create(
+                        key=state_key,
+                        run_id=run_id,
+                        page=page if uses_cursor else None,
+                        page_size=page_size if uses_cursor else None,
+                        ok=False,
+                        took_ms=took_ms,
+                        error="fetch_failed",
+                        detail=(
+                            f"HTTP {resp.status_code}. "
+                            f"url={getattr(resp, 'url', endpoint)} "
+                            f"body={response_text_preview}"
+                        ),
+                        trace="",
+                    )
+
+                    ExternalSyncState.objects.filter(key=state_key).update(
+                        last_error_at=timezone.now(),
+                        last_error=f"fetch_failed HTTP {resp.status_code}",
+                    )
+
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": "fetch_failed",
+                            "status_code": resp.status_code,
+                            "detail": response_text_preview,
+                            "url": getattr(resp, "url", endpoint),
+                        },
+                        status=502,
+                    )
+
+                try:
+                    payload = resp.json()
+                except Exception as e:
+                    took_ms = int((time.time() - t0) * 1000)
+
+                    ExternalSyncLog.objects.create(
+                        key=state_key,
+                        run_id=run_id,
+                        page=page if uses_cursor else None,
+                        page_size=page_size if uses_cursor else None,
+                        ok=False,
+                        took_ms=took_ms,
+                        error="invalid_json",
+                        detail=(
+                            f"No se pudo parsear JSON. "
+                            f"url={getattr(resp, 'url', endpoint)} "
+                            f"body={response_text_preview}"
+                        ),
+                        trace=traceback.format_exc()[:8000],
+                    )
+
+                    ExternalSyncState.objects.filter(key=state_key).update(
+                        last_error_at=timezone.now(),
+                        last_error=f"invalid_json: {e}",
+                    )
+
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": "invalid_json",
+                            "detail": str(e),
+                            "body": response_text_preview,
+                        },
+                        status=502,
+                    )
+
                 if not isinstance(payload, dict):
                     payload = {"data": payload}
 
@@ -3382,11 +3556,68 @@ def api_run_courses_sync(request):
                     last_error=f"fetch_failed: {e}",
                 )
 
-                return JsonResponse({"ok": False, "error": "fetch_failed", "detail": str(e)}, status=502)
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "fetch_failed",
+                        "detail": str(e),
+                    },
+                    status=502,
+                )
 
             items = payload.get("items", [])
             items_len = len(items) if isinstance(items, list) else 0
             total_pages = _extract_total_pages(payload)
+
+            ExternalSyncLog.objects.create(
+                key=state_key,
+                run_id=run_id,
+                page=page if uses_cursor else None,
+                page_size=page_size if uses_cursor else None,
+                ok=True,
+                items_len=items_len,
+                received=items_len,
+                took_ms=int((time.time() - t0) * 1000),
+                detail=(
+                    f"FETCH_OK_BEFORE_INGEST resource={resource} "
+                    f"provider={provider or '-'} page={page} "
+                    f"items_len={items_len} total_pages={total_pages}"
+                ),
+            )
+
+            elapsed = time.time() - t0
+            if elapsed >= MAX_HTTP_SECONDS:
+                ExternalSyncLog.objects.create(
+                    key=state_key,
+                    run_id=run_id,
+                    page=page if uses_cursor else None,
+                    page_size=page_size if uses_cursor else None,
+                    ok=False,
+                    items_len=items_len,
+                    received=items_len,
+                    took_ms=int(elapsed * 1000),
+                    error="http_time_budget_exceeded_before_ingest",
+                    detail=(
+                        f"Fetch terminó, pero no se inicia ingesta para evitar 504. "
+                        f"elapsed={round(elapsed, 2)}s max={MAX_HTTP_SECONDS}s"
+                    ),
+                    trace="",
+                )
+
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "partial": True,
+                        "run_id": run_id,
+                        "resource": resource,
+                        "provider": provider,
+                        "state_key": state_key,
+                        "processed_pages": processed_pages,
+                        "next_page": page if uses_cursor else None,
+                        "message": "Fetch completado, ingesta omitida para evitar timeout. Reintenta.",
+                    },
+                    status=200,
+                )
 
             try:
                 summary = _ingest_by_resource(
@@ -3395,6 +3626,7 @@ def api_run_courses_sync(request):
                     provider=provider,
                     specialization_id=specialization_id or None,
                 )
+
             except Exception as e:
                 took_ms = int((time.time() - t0) * 1000)
 
@@ -3417,10 +3649,33 @@ def api_run_courses_sync(request):
                     last_error=f"ingestion_failed: {e}",
                 )
 
-                return JsonResponse({"ok": False, "error": "ingestion_failed", "detail": str(e)}, status=500)
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "ingestion_failed",
+                        "detail": str(e),
+                    },
+                    status=500,
+                )
+
+            ExternalSyncLog.objects.create(
+                key=state_key,
+                run_id=run_id,
+                page=page if uses_cursor else None,
+                page_size=page_size if uses_cursor else None,
+                ok=True,
+                items_len=items_len,
+                received=items_len,
+                took_ms=int((time.time() - t0) * 1000),
+                detail=(
+                    f"INGEST_OK resource={resource} provider={provider or '-'} "
+                    f"page={page} summary={json.dumps(summary, default=str)[:1500]}"
+                ),
+            )
 
             if uses_cursor:
                 next_page = _compute_next_page(page, payload)
+
                 ExternalSyncState.objects.filter(key=state_key).update(
                     cursor_value=str(next_page),
                     last_ok_at=timezone.now(),
@@ -3429,6 +3684,7 @@ def api_run_courses_sync(request):
                 )
             else:
                 next_page = None
+
                 ExternalSyncState.objects.filter(key=state_key).update(
                     last_ok_at=timezone.now(),
                     last_error="",
@@ -3447,7 +3703,7 @@ def api_run_courses_sync(request):
                 received=items_len,
                 took_ms=took_ms,
                 detail=(
-                    f"resource={resource} provider={provider or '-'} "
+                    f"PAGE_DONE resource={resource} provider={provider or '-'} "
                     f"items_len={items_len} total_pages={total_pages} "
                     f"next_page={next_page} summary={json.dumps(summary, default=str)[:1500]}"
                 ),
@@ -3469,13 +3725,16 @@ def api_run_courses_sync(request):
                 "next_page": next_page,
                 "processed_pages": processed_pages,
                 "summary": summary,
-                "reconciliation": payload.get("reconciliation") if isinstance(payload.get("reconciliation"), dict) else None,
+                "reconciliation": payload.get("reconciliation")
+                if isinstance(payload.get("reconciliation"), dict)
+                else None,
             }
 
             if not uses_cursor:
                 break
 
             page = next_page
+
             if next_page == 1:
                 break
 
