@@ -1067,7 +1067,7 @@ def update_institution_description_from_cert(cert: dict, cert_obj: Certificacion
     }
 
 
-def save_reconciliation_snapshot(payload: dict, resource: str = "courses", provider_filter: str | None = None, page: int = 1, page_size: int = 20):
+def save_reconciliation_snapshot(payload: dict, resource: str = "courses", provider_filter: str | None = None, page: int = 1, page_size: int = 50):
     reconciliation = payload.get("reconciliation")
     if not isinstance(reconciliation, dict):
         return None
@@ -1076,7 +1076,7 @@ def save_reconciliation_snapshot(payload: dict, resource: str = "courses", provi
         resource=resource,
         provider_filter=provider_filter or None,
         page=page or 1,
-        page_size=page_size or 20,
+        page_size=page_size or 50,
         payload=reconciliation,
     )
     return snapshot
@@ -1096,7 +1096,7 @@ def _normalize_skill_type(value) -> str:
 def ingest_course_payload(payload: dict, resource: str = "courses", provider_filter: str | None = None) -> dict:
     items = payload.get("items") or []
     page = payload.get("page") or 1
-    page_size = payload.get("pageSize") or payload.get("page_size") or 20
+    page_size = payload.get("pageSize") or payload.get("page_size") or 50
     reconciliation = payload.get("reconciliation") if isinstance(payload.get("reconciliation"), dict) else {}
 
     save_reconciliation_snapshot(
