@@ -3380,19 +3380,6 @@ def api_run_courses_sync(request):
             "x-api-key": api_key,
         }
 
-        ExternalSyncLog.objects.create(
-            key=state_key,
-            run_id=run_id,
-            page=page if uses_cursor else None,
-            page_size=page_size if uses_cursor else None,
-            ok=True,
-            took_ms=int((time.time() - t0) * 1000),
-            detail=(
-                f"RUN_STARTED resource={resource} provider={provider or '-'} "
-                f"endpoint={endpoint} page={page} page_size={page_size} "
-                f"max_pages_per_run={max_pages_per_run}"
-            ),
-        )
 
         for _ in range(max_pages_per_run):
             elapsed = time.time() - t0
@@ -3428,19 +3415,6 @@ def api_run_courses_sync(request):
                 )
 
             params = _build_params(resource, page, page_size, provider)
-
-            ExternalSyncLog.objects.create(
-                key=state_key,
-                run_id=run_id,
-                page=page if uses_cursor else None,
-                page_size=page_size if uses_cursor else None,
-                ok=True,
-                took_ms=int((time.time() - t0) * 1000),
-                detail=(
-                    f"FETCH_START resource={resource} provider={provider or '-'} "
-                    f"page={page} page_size={page_size} params={json.dumps(params, default=str)[:1500]}"
-                ),
-            )
 
             try:
                 resp = requests.get(
@@ -3563,22 +3537,6 @@ def api_run_courses_sync(request):
             items_len = len(items) if isinstance(items, list) else 0
             total_pages = _extract_total_pages(payload)
 
-            ExternalSyncLog.objects.create(
-                key=state_key,
-                run_id=run_id,
-                page=page if uses_cursor else None,
-                page_size=page_size if uses_cursor else None,
-                ok=True,
-                items_len=items_len,
-                received=items_len,
-                took_ms=int((time.time() - t0) * 1000),
-                detail=(
-                    f"FETCH_OK_BEFORE_INGEST resource={resource} "
-                    f"provider={provider or '-'} page={page} "
-                    f"items_len={items_len} total_pages={total_pages}"
-                ),
-            )
-
             elapsed = time.time() - t0
             if elapsed >= MAX_HTTP_SECONDS:
                 ExternalSyncLog.objects.create(
@@ -3652,20 +3610,6 @@ def api_run_courses_sync(request):
                     status=500,
                 )
 
-            ExternalSyncLog.objects.create(
-                key=state_key,
-                run_id=run_id,
-                page=page if uses_cursor else None,
-                page_size=page_size if uses_cursor else None,
-                ok=True,
-                items_len=items_len,
-                received=items_len,
-                took_ms=int((time.time() - t0) * 1000),
-                detail=(
-                    f"INGEST_OK resource={resource} provider={provider or '-'} "
-                    f"page={page} summary={json.dumps(summary, default=str)[:1500]}"
-                ),
-            )
 
             if uses_cursor:
                 next_page = _compute_next_page(page, payload)
