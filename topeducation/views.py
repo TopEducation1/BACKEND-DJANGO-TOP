@@ -3334,8 +3334,8 @@ def api_run_courses_sync(request):
     # Límites más seguros para ejecución por inspector/HTTP.
     # El cron puede correr más veces, pero cada request debe ser corto.
     max_pages_per_run = max(1, min(max_pages_per_run, 1))
-    page_size = max(1, min(page_size, 20))
-    timeout = max(5, min(timeout, 60))
+    page_size = max(1, min(page_size, 50))
+    timeout = max(5, min(timeout, 120))
 
     state, _ = ExternalSyncState.objects.get_or_create(
         key=state_key,
