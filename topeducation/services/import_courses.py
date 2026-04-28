@@ -302,42 +302,51 @@ def extract_certification_skill_names(item: dict | None = None) -> list[str]:
     return _dedupe_keep_order(out)
 
 
+def _extract_skill_value(raw) -> str:
+    if isinstance(raw, dict):
+        return _norm(
+            raw.get("nombre")
+            or raw.get("name")
+            or raw.get("label")
+            or raw.get("skill")
+            or raw.get("value")
+            or raw.get("skill_name")
+            or raw.get("subskill_name")
+            or raw.get("title")
+        )
+
+    return _norm(raw)
+
+
 def _extract_skill_names_from_cert(cert: dict | None = None) -> list[str]:
     if not cert:
         return []
 
     out = []
 
+    # 1) Nueva estructura principal
     for raw in _ensure_list(cert.get("skills_internal")):
-        if isinstance(raw, dict):
-            val = _norm(
-                raw.get("nombre")
-                or raw.get("name")
-                or raw.get("label")
-                or raw.get("skill")
-                or raw.get("value")
-                or raw.get("skill_name")
-            )
-        else:
-            val = _norm(raw)
+        val = _extract_skill_value(raw)
         if val:
             out.append(val)
 
-    for raw in _ensure_list(cert.get("subskills_internal")):
-        if isinstance(raw, dict):
-            val = _norm(
-                raw.get("nombre")
-                or raw.get("name")
-                or raw.get("label")
-                or raw.get("skill")
-                or raw.get("value")
-                or raw.get("subskill_name")
-            )
-        else:
-            val = _norm(raw)
+    # 2) Nueva estructura subskills
+    for raw in _ensure_list(
+        cert.get("subskills_internal")
+        or cert.get("sub_skills_internal")
+        or cert.get("subSkills_internal")
+    ):
+        val = _extract_skill_value(raw)
         if val:
             out.append(val)
 
+    # 3) Posible array legacy dentro del curso
+    for raw in _ensure_list(cert.get("temas")):
+        val = _extract_skill_value(raw)
+        if val:
+            out.append(val)
+
+    # 4) Posible campo texto/array legacy
     raw_habilidades = cert.get("habilidades_certificacion")
     cleaned = clean_habilidades(raw_habilidades)
     if cleaned and cleaned != "NONE":
@@ -350,7 +359,6 @@ def _extract_skill_names_from_cert(cert: dict | None = None) -> list[str]:
         out = ["Uncategorized"]
 
     return _dedupe_keep_order(out)
-
 
 def extract_instructors_from_cert(cert: dict | None = None) -> list[dict]:
     out = []
