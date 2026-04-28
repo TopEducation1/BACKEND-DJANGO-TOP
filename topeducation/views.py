@@ -1539,56 +1539,57 @@ class BlogDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             ) 
 
-# Esta función obtiene el id de la certificación que el usuario quiere ver en vista especifica y retorna toda su información
+
 class CertificationDetailView(APIView):
     def get(self, request, slug):
         try:
             if not slug:
                 return Response(
-                    {'Error': 'Se requiere el nombre de la certificación'},
+                    {'error': 'Se requiere slug de certificación'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            # Obtener la certificación   
-            certification = Certificaciones.objects.get(slug=slug)
-            
-            # Separar cada instructor y formatear para mayor facilidad de mostrar en el front
-            certification_instructors = certification.instructores_certificacion.split('\n')
-            instructor_links = []
-            
-            # regex para separar link del nombre
-            regex = re.compile(r'^([^,]+),\s*(https?:\/\/[^\s,]+),')
-                
-            
-            for line in certification_instructors:
-                match = regex.match(line)
-                if match:
-                    name = match.group(1)
-                    link = match.group(2)
-                    
-                    # Diccionario con nombre y link
-                    instructor_links.append({
-                        'name': name,
-                        'link': link
-                    })
-                    
-            
-            
-            # Serializar y retornar
-            serializer = CertificationSerializer(certification)
-            data = serializer.data
-            
-        
-            return Response(data) 
+
+            certification = (
+                Certificaciones.objects
+                .select_related(
+                    'tema_certificacion',
+                    'plataforma_certificacion',
+                    'universidad_certificacion',
+                    'empresa_certificacion',
+                    'specialization'
+                )
+                .prefetch_related(
+                    Prefetch(
+                        'skills_rel',
+                        queryset=SkillsCertification.objects.select_related('skill').order_by('orden', 'id'),
+                        to_attr='skills_links_ordered'
+                    ),
+                    Prefetch(
+                        'instructor_links',
+                        queryset=InstructorCertification.objects.select_related('instructor'),
+                        to_attr='instructor_links_prefetched'
+                    )
+                )
+                .get(slug=slug)
+            )
+
+            serializer = CertificationSerializer(
+                certification,
+                context={'request': request}
+            )
+
+            return Response(serializer.data)
+
         except Certificaciones.DoesNotExist:
             return Response(
                 {'error': 'Certificación no encontrada'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        except ValueError:
+
+        except Exception as e:
             return Response(
-                {'error': 'ID Invalido'},
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -1715,7 +1716,7 @@ LANGUAGE_NORMALIZATION = {
     },
 }
 
-IGNORED_LANGUAGE_VALUES = {"", "none", "null", "-"}
+IGNORED_LANGUAGE_VALUES = {"", "none", "null", "-", "n/a"}
 
 
 def normalize_language_value(raw_value):
@@ -1725,11 +1726,19 @@ def normalize_language_value(raw_value):
         return None
 
     for code, config in LANGUAGE_NORMALIZATION.items():
-        if raw in config["values"]:
-            return {
-                "code": code,
-                "label": config["label"],
-            }
+        values = config.get("values", [])
+
+        for value in values:
+            v = str(value or "").strip().lower()
+
+            if not v:
+                continue
+
+            if raw == v or v in raw:
+                return {
+                    "code": code,
+                    "label": config["label"],
+                }
 
     return None
 
@@ -1873,6 +1882,13 @@ class filter_by_tags(APIView):
                             if cleaned:
                                 idioma_codes.append(cleaned)
 
+            tema_slugs = list(dict.fromkeys(tema_slugs))
+            habilidad_slugs = list(dict.fromkeys(habilidad_slugs))
+            plataforma_values = list(dict.fromkeys(plataforma_values))
+            empresa_values = list(dict.fromkeys(empresa_values))
+            universidad_values = list(dict.fromkeys(universidad_values))
+            idioma_codes = list(dict.fromkeys(idioma_codes))
+
             skill_slugs = tema_slugs + habilidad_slugs
 
             first_skill_slug_subquery = SkillsCertification.objects.filter(
@@ -1880,7 +1896,7 @@ class filter_by_tags(APIView):
             ).order_by("orden", "id").values("skill__slug")[:1]
 
             queryset = (
-                Certificaciones.objects.all()
+                Certificaciones.objects
                 .select_related(
                     "plataforma_certificacion",
                     "empresa_certificacion",
@@ -1899,57 +1915,34 @@ class filter_by_tags(APIView):
                 )
             )
 
-            # Plataforma
             if plataforma_values:
                 q_plataforma = Q()
                 for value in plataforma_values:
                     q_plataforma |= Q(plataforma_certificacion__nombre__iexact=value)
                 queryset = queryset.filter(q_plataforma)
 
-            # Empresa
             if empresa_values:
                 q_empresa = Q()
                 for value in empresa_values:
                     q_empresa |= Q(empresa_certificacion__nombre__iexact=value)
                 queryset = queryset.filter(q_empresa)
 
-            # Universidad
             if universidad_values:
                 q_universidad = Q()
                 for value in universidad_values:
                     q_universidad |= Q(universidad_certificacion__nombre__iexact=value)
                 queryset = queryset.filter(q_universidad)
 
-            # Idioma
-            def get_language_values_by_codes(codes):
-                values = []
-
-                for code in codes:
-                    config = LANGUAGE_NORMALIZATION.get(code, {})
-                    values.extend(config.get("values", []))
-
-                # quitar duplicados conservando orden
-                return list(dict.fromkeys(values))
-
+            # Idioma optimizado por campo normalizado
             if idioma_codes:
-                language_values = get_language_values_by_codes(idioma_codes)
+                queryset = queryset.filter(language_normalized__in=idioma_codes)
             else:
-                # default: Español + Inglés
-                language_values = get_language_values_by_codes(["es", "en"])
+                queryset = queryset.filter(language_normalized__in=["es", "en"])
 
-            if language_values:
-                q_language = Q()
-                for value in language_values:
-                    q_language |= Q(lenguaje_certificacion__iexact=value)
-                    q_language |= Q(lenguaje_certificacion__icontains=value)
-
-                queryset = queryset.filter(q_language)
-
-            # Skills
             if skill_slugs:
                 queryset = queryset.filter(
                     skills_rel__skill__slug__in=skill_slugs
-                ).distinct()
+                )
 
                 if len(skill_slugs) == 1:
                     priority_slug = skill_slugs[0]
@@ -1963,14 +1956,19 @@ class filter_by_tags(APIView):
                     ).order_by("skill_priority", "-fecha_creado_cert", "-id")
                 else:
                     queryset = queryset.order_by("-fecha_creado_cert", "-id")
+
+                queryset = queryset.distinct()
             else:
                 queryset = queryset.order_by("-fecha_creado_cert", "-id")
 
-            queryset = queryset.distinct()
-
             paginator = self.pagination_class()
             paginated_queryset = paginator.paginate_queryset(queryset, request)
-            serializer = CertificationSerializer(paginated_queryset, many=True)
+
+            serializer = CertificationSearchSerializer(
+                paginated_queryset,
+                many=True,
+                context={"request": request}
+            )
 
             return paginator.get_paginated_response(serializer.data)
 
@@ -1980,7 +1978,6 @@ class filter_by_tags(APIView):
                 {"error": "Error al filtrar certificaciones"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
 
 class filter_by_search(APIView):
     def post(self, request):

@@ -123,6 +123,96 @@ class InstructorSerializer(serializers.ModelSerializer):
         model = Instructores
         fields = "__all__"
 
+
+## MINI SERIALIZERS
+
+class SkillMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Skills
+        fields = [
+            "id",
+            "nombre",
+            "translate",
+            "skill_col",
+            "skill_img",
+            "skill_ico",
+            "skill_type",
+            "estado",
+        ]
+
+
+class TopicMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Temas
+        fields = [
+            "id",
+            "nombre",
+            "translate",
+            "tem_type",
+            "tem_col",
+            "tem_img",
+            "tem_est",
+        ]
+
+
+class PlataformaMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Plataformas
+        fields = [
+            "id",
+            "nombre",
+            "plat_img",
+            "plat_ico",
+        ]
+
+
+class UniversidadMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Universidades
+        fields = [
+            "id",
+            "nombre",
+            "descripcion_institucion",
+            "univ_img",
+            "univ_ico",
+            "univ_fla",
+            "univ_est",
+            "univ_top",
+        ]
+
+
+class EmpresaMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Empresas
+        fields = [
+            "id",
+            "nombre",
+            "empr_img",
+            "empr_ico",
+            "empr_est",
+            "empr_top",
+            "descripcion_institucion",
+        ]
+
+class CertificationSpecializationCourseSerializer(serializers.ModelSerializer):
+    plataforma_certificacion = PlataformaMiniSerializer(read_only=True)
+    universidad_certificacion = UniversidadMiniSerializer(read_only=True)
+    empresa_certificacion = EmpresaMiniSerializer(read_only=True)
+
+    class Meta:
+        model = Certificaciones
+        fields = [
+            "id",
+            "slug",
+            "nombre",
+            "imagen_final",
+            "metadescripcion_certificacion",
+            "tipo_certificacion",
+            "plataforma_certificacion",
+            "universidad_certificacion",
+            "empresa_certificacion",
+        ]
+
 class CertificationSkillsMixin:
     def _get_ordered_skills(self, instance):
         """
@@ -167,6 +257,8 @@ class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSeriali
     skills = serializers.SerializerMethodField()
     primary_skill = serializers.SerializerMethodField()
     instructores_detalle_certificacion = serializers.SerializerMethodField()
+    specialization_courses = serializers.SerializerMethodField()
+    specialization_detail = serializers.SerializerMethodField()
 
     class Meta:
         model = Certificaciones
@@ -181,7 +273,46 @@ class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSeriali
         if not ordered_skills:
             return None
         return SkillSerializer(ordered_skills[0]).data
-    
+    def get_specialization_detail(self, instance):
+        specialization = getattr(instance, "specialization", None)
+
+        if not specialization:
+            return None
+
+        return {
+            "id": specialization.id,
+            "specialization_id": specialization.specialization_id,
+            "specialization_name": specialization.specialization_name,
+            "provider": specialization.provider,
+        }
+
+
+    def get_specialization_courses(self, instance):
+        specialization = getattr(instance, "specialization", None)
+
+        if not specialization:
+            return []
+
+        qs = (
+            Certificaciones.objects
+            .filter(
+                specialization=specialization,
+                vigente_certificacion=True,
+            )
+            .exclude(id=instance.id)
+            .select_related(
+                "plataforma_certificacion",
+                "universidad_certificacion",
+                "empresa_certificacion",
+            )
+            .order_by("id")[:20]
+        )
+
+        return CertificationSpecializationCourseSerializer(
+            qs,
+            many=True,
+            context=self.context
+        ).data
     def get_instructores_detalle_certificacion(self, instance):
         links = getattr(instance, "instructor_links_prefetched", None)
 
@@ -342,74 +473,6 @@ class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSeriali
 
         return data
 
-## MINI SERIALIZERS
-class SkillMiniSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Skills
-        fields = [
-            "id",
-            "nombre",
-            "translate",
-            "skill_col",
-            "skill_img",
-            "skill_ico",
-            "skill_type",
-            "estado",
-        ]
-
-
-class TopicMiniSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Temas
-        fields = [
-            "id",
-            "nombre",
-            "translate",
-            "tem_type",
-            "tem_col",
-            "tem_img",
-            "tem_est",
-        ]
-
-
-class PlataformaMiniSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Plataformas
-        fields = [
-            "id",
-            "nombre",
-            "plat_img",
-            "plat_ico",
-        ]
-
-
-class UniversidadMiniSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Universidades
-        fields = [
-            "id",
-            "nombre",
-            "descripcion_institucion",
-            "univ_img",
-            "univ_ico",
-            "univ_fla",
-            "univ_est",
-            "univ_top",
-        ]
-
-
-class EmpresaMiniSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Empresas
-        fields = [
-            "id",
-            "nombre",
-            "empr_img",
-            "empr_ico",
-            "empr_est",
-            "empr_top",
-            "descripcion_institucion",
-        ]
 
 class CertificationSearchSerializer(CertificationSkillsMixin, serializers.ModelSerializer):
     tema_certificacion = serializers.SerializerMethodField()
