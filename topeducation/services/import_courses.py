@@ -18,6 +18,76 @@ from topeducation.models import (
     ExternalReconciliationSnapshot,
 )
 
+LANGUAGE_NORMALIZATION = {
+    "es": {
+        "label": "Español",
+        "values": ["es", "spanish", "enseñado en español", "español"],
+    },
+    "en": {
+        "label": "Inglés",
+        "values": ["en", "english", "enseñado en inglés", "inglés"],
+    },
+    "ar": {"label": "Árabe", "values": ["ar", "arabic"]},
+    "bn": {"label": "Bengalí", "values": ["bn", "bengali"]},
+    "ca": {"label": "Catalán", "values": ["ca", "catalan"]},
+    "zh": {
+        "label": "Chino",
+        "values": [
+            "zh",
+            "zh-cn",
+            "zh-tw",
+            "chinese - china",
+            "chinese - mandarin",
+            "chinese - simplified",
+            "chinese",
+        ],
+    },
+    "de": {"label": "Alemán", "values": ["de", "german"]},
+    "nl": {"label": "Neerlandés", "values": ["nl", "dutch"]},
+    "fa": {"label": "Persa", "values": ["fa", "farsi"]},
+    "fr": {"label": "Francés", "values": ["fr", "french"]},
+    "he": {"label": "Hebreo", "values": ["he", "hebrew"]},
+    "hi": {"label": "Hindi", "values": ["hi", "hindi"]},
+    "hu": {"label": "Húngaro", "values": ["hu", "hungarian"]},
+    "id": {"label": "Indonesio", "values": ["id", "indonesian"]},
+    "it": {"label": "Italiano", "values": ["it", "italian"]},
+    "ja": {"label": "Japonés", "values": ["ja", "japanese"]},
+    "kk": {"label": "Kazajo", "values": ["kk", "kazakh"]},
+    "ko": {"label": "Coreano", "values": ["ko", "korean"]},
+    "dv": {"label": "Maldivo", "values": ["dv", "maldivian"]},
+    "pl": {"label": "Polaco", "values": ["pl", "polish"]},
+    "pt": {"label": "Portugués", "values": ["pt", "pt-br", "pt-pt", "portuguese"]},
+    "ru": {"label": "Ruso", "values": ["ru", "russian"]},
+    "sv": {"label": "Sueco", "values": ["sv", "swedish"]},
+    "sw": {"label": "Suajili", "values": ["sw", "swahili"]},
+    "th": {"label": "Tailandés", "values": ["th", "thai"]},
+    "tr": {"label": "Turco", "values": ["tr", "turkish"]},
+    "uk": {"label": "Ucraniano", "values": ["uk", "ukrainian"]},
+    "ur": {"label": "Urdu", "values": ["ur", "urdu"]},
+}
+
+IGNORED_LANGUAGE_VALUES = {"", "none", "null", "-", "n/a"}
+
+
+def normalize_language_value(raw_value):
+    raw = _norm(raw_value).lower()
+
+    if raw in IGNORED_LANGUAGE_VALUES:
+        return None
+
+    for code, config in LANGUAGE_NORMALIZATION.items():
+        for value in config.get("values", []):
+            v = _norm(value).lower()
+            if not v:
+                continue
+
+            if raw == v or v in raw:
+                return {
+                    "code": code,
+                    "label": config["label"],
+                }
+
+    return None
 
 def _norm(s) -> str:
     return (s or "").strip() if isinstance(s, str) else ("" if s is None else str(s).strip())
@@ -778,8 +848,22 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict, reconciliat
     instructores_legacy = build_instructores_legacy_text(cert)
     lenguaje_value = (
         _norm(cert.get("lenguaje_certificacion"))
+        or _norm(cert.get("language"))
         or _norm(cert.get("language_normalized"))
         or "NONE"
+    )
+
+    normalized_language = normalize_language_value(
+        cert.get("language_normalized")
+        or cert.get("lenguaje_certificacion")
+        or cert.get("language")
+        or lenguaje_value
+    )
+
+    language_normalized_value = (
+        normalized_language["code"]
+        if normalized_language
+        else None
     )
 
     defaults = {
@@ -834,7 +918,7 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict, reconciliat
         defaults["mapping_status"] = _norm(cert.get("mapping_status")) or "uncategorized"
 
     if _has_field(Certificaciones, "language_normalized"):
-        defaults["language_normalized"] = _norm(cert.get("language_normalized")) or None
+        defaults["language_normalized"] = language_normalized_value
 
     if _has_field(Certificaciones, "skills_internal_json"):
         defaults["skills_internal_json"] = _ensure_list(cert.get("skills_internal"))
