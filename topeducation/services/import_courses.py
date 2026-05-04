@@ -790,29 +790,42 @@ def _find_existing_certificacion(cert: dict, plat_fk=None, univ_fk=None, empresa
     url_original = _norm(cert.get("url_certificacion_original"))
     nombre = _norm(cert.get("nombre"))
 
+    # Query base optimizada (solo campos necesarios)
+    qs_base = Certificaciones.objects.only(
+        "id",
+        "slug",
+        "nombre",
+        "url_certificacion_original"
+    )
+
+    # 1. Buscar por URL (MEJOR CASO - más exacto)
     if url_original and url_original.lower() != "null":
-        obj = Certificaciones.objects.filter(url_certificacion_original=url_original).order_by("id").first()
+        obj = qs_base.filter(url_certificacion_original=url_original).first()
         if obj:
             return obj
 
-    qs = Certificaciones.objects.filter(nombre=nombre)
+    # 2. Buscar por slug (rápido si está indexado)
+    if nombre:
+        slug = safe_slug_from_name(nombre)
+        if slug:
+            obj = qs_base.filter(slug=slug).first()
+            if obj:
+                return obj
 
-    if plat_fk is not None and _has_field(Certificaciones, "plataforma_certificacion"):
-        qs = qs.filter(plataforma_certificacion=plat_fk)
+    # 3. Buscar por nombre + relaciones (más pesado → dejar de último)
+    if nombre:
+        filters = {"nombre": nombre}
 
-    if univ_fk is not None and _has_field(Certificaciones, "universidad_certificacion"):
-        qs = qs.filter(universidad_certificacion=univ_fk)
+        if plat_fk is not None:
+            filters["plataforma_certificacion"] = plat_fk
 
-    if empresa_fk is not None and _has_field(Certificaciones, "empresa_certificacion"):
-        qs = qs.filter(empresa_certificacion=empresa_fk)
+        if univ_fk is not None:
+            filters["universidad_certificacion"] = univ_fk
 
-    obj = qs.order_by("id").first()
-    if obj:
-        return obj
+        if empresa_fk is not None:
+            filters["empresa_certificacion"] = empresa_fk
 
-    slug = safe_slug_from_name(nombre)
-    if slug:
-        return Certificaciones.objects.filter(slug=slug).order_by("id").first()
+        return qs_base.filter(**filters).first()
 
     return None
 
