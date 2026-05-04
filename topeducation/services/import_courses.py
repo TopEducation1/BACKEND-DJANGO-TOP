@@ -243,6 +243,19 @@ def clean_habilidades(value) -> str:
 
     return s if s else "NONE"
 
+def _get_specialization_display_name(row: dict | None = None) -> str:
+    if not row:
+        return ""
+
+    raw_payload = row.get("raw_payload") if isinstance(row.get("raw_payload"), dict) else {}
+
+    return _norm(
+        row.get("nombre")
+        or row.get("name")
+        or raw_payload.get("nombre")
+        or raw_payload.get("name")
+        or row.get("specialization_name")
+    )
 
 def _dedupe_keep_order(values: list[str]) -> list[str]:
     seen = set()
@@ -753,7 +766,7 @@ def upsert_specialization(cert: dict | None = None) -> tuple[Specialization | No
         return None, False
 
     specialization_id = _norm(cert.get("specialization_id"))
-    specialization_name = _norm(cert.get("specialization_name"))
+    specialization_name = _get_specialization_display_name(cert)
     provider = _infer_provider_from_cert(cert)
 
     if not specialization_id:
@@ -773,18 +786,22 @@ def upsert_specialization(cert: dict | None = None) -> tuple[Specialization | No
     )
 
     updates = {}
+
     if specialization_name:
         updates["specialization_name"] = specialization_name
+
     if provider:
         updates["provider"] = provider
+
     if isinstance(cert, dict) and cert:
         updates["raw_payload"] = cert
+
     if _has_field(Specialization, "estado"):
         updates["estado"] = True
 
     _apply_updates(obj, updates)
-    return obj, created
 
+    return obj, created
 
 def _find_existing_certificacion(cert: dict, plat_fk=None, univ_fk=None, empresa_fk=None):
     url_original = _norm(cert.get("url_certificacion_original"))
@@ -918,7 +935,7 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict, reconciliat
         defaults["specialization_id_external"] = _norm(cert.get("specialization_id")) or None
 
     if _has_field(Certificaciones, "specialization_name_external"):
-        defaults["specialization_name_external"] = _norm(cert.get("specialization_name")) or None
+        defaults["specialization_name_external"] = _get_specialization_display_name(cert) or None
 
     if _has_field(Certificaciones, "country"):
         defaults["country"] = _norm(cert.get("country")) or "Global"
@@ -1413,7 +1430,7 @@ def ingest_specializations_payload(payload: dict, provider_filter: str | None = 
             continue
 
         specialization_id = _norm(row.get("specialization_id"))
-        specialization_name = _norm(row.get("specialization_name"))
+        specialization_name = _get_specialization_display_name(row)
         provider = _norm(row.get("provider")) or provider_filter
 
         if not specialization_id or not specialization_name:
@@ -1466,7 +1483,7 @@ def ingest_specialization_detail_payload(payload: dict, specialization_id: str |
     items = payload.get("items") or []
 
     effective_specialization_id = specialization_id or _norm(specialization.get("specialization_id"))
-    specialization_name = _norm(specialization.get("specialization_name"))
+    specialization_name = _get_specialization_display_name(specialization)
     provider = _norm(specialization.get("provider")) or provider_filter
 
     spec_obj = None
