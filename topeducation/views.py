@@ -122,33 +122,31 @@ def inicio(request):
 
 def dashboard(request):
     certifications = Certificaciones.objects.only(
-        "id", "nombre", "slug", "imagen_certificacion",
+        "id", "nombre", "slug",
         "tipo_certificacion", "plataforma_certificacion"
     ).order_by("-id")[:24]
 
     edx = Certificaciones.objects.filter(
         plataforma_certificacion=1
-    ).only("id", "nombre", "slug", "imagen_certificacion").order_by("-id")[:12]
+    ).only("id", "nombre", "slug").order_by("-id")[:12]
 
     coursera = Certificaciones.objects.filter(
         plataforma_certificacion=2
-    ).only("id", "nombre", "slug", "imagen_certificacion").order_by("-id")[:12]
+    ).only("id", "nombre", "slug").order_by("-id")[:12]
 
     masterclass = Certificaciones.objects.filter(
         plataforma_certificacion=3
-    ).only("id", "nombre", "slug", "imagen_certificacion").order_by("-id")[:12]
+    ).only("id", "nombre", "slug").order_by("-id")[:12]
 
     cursos = Certificaciones.objects.filter(
         tipo_certificacion="Curso"
-    ).only("id", "nombre", "slug", "imagen_certificacion").order_by("-id")[:12]
+    ).only("id", "nombre", "slug").order_by("-id")[:12]
 
     especializaciones = Certificaciones.objects.filter(
         tipo_certificacion="Especialización"
-    ).only("id", "nombre", "slug", "imagen_certificacion").order_by("-id")[:12]
+    ).only("id", "nombre", "slug").order_by("-id")[:12]
 
-    posts = Blog.objects.only(
-        "id", "titulo", "slug", "imagen", "created_at"
-    ).order_by("-id")[:6]
+    posts = Blog.objects.all().order_by("-id")[:6]
 
     return render(request, "pages/dashboard.html", {
         "certifications": certifications,
@@ -159,6 +157,7 @@ def dashboard(request):
         "cursos": cursos,
         "especializaciones": especializaciones,
     })
+
 def signout(request):
     logout(request)
     return redirect('signin')
