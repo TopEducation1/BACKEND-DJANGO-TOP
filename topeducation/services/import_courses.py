@@ -807,21 +807,18 @@ def _find_existing_certificacion(cert: dict, plat_fk=None, univ_fk=None, empresa
     url_original = _norm(cert.get("url_certificacion_original"))
     nombre = _norm(cert.get("nombre"))
 
-    # Query base optimizada (solo campos necesarios)
-    qs_base = Certificaciones.objects.only(
-        "id",
-        "slug",
-        "nombre",
-        "url_certificacion_original"
-    )
+    # IMPORTANTE:
+    # No usar .only() aquí porque luego _apply_updates()
+    # accede muchos campos y Django hace refresh_from_db por cada campo diferido.
+    qs_base = Certificaciones.objects.all()
 
-    # 1. Buscar por URL (MEJOR CASO - más exacto)
     if url_original and url_original.lower() != "null":
-        obj = qs_base.filter(url_certificacion_original=url_original).first()
+        obj = qs_base.filter(
+            url_certificacion_original=url_original
+        ).first()
         if obj:
             return obj
 
-    # 2. Buscar por slug (rápido si está indexado)
     if nombre:
         slug = safe_slug_from_name(nombre)
         if slug:
@@ -829,17 +826,16 @@ def _find_existing_certificacion(cert: dict, plat_fk=None, univ_fk=None, empresa
             if obj:
                 return obj
 
-    # 3. Buscar por nombre + relaciones (más pesado → dejar de último)
     if nombre:
         filters = {"nombre": nombre}
 
-        if plat_fk is not None:
+        if plat_fk is not None and _has_field(Certificaciones, "plataforma_certificacion"):
             filters["plataforma_certificacion"] = plat_fk
 
-        if univ_fk is not None:
+        if univ_fk is not None and _has_field(Certificaciones, "universidad_certificacion"):
             filters["universidad_certificacion"] = univ_fk
 
-        if empresa_fk is not None:
+        if empresa_fk is not None and _has_field(Certificaciones, "empresa_certificacion"):
             filters["empresa_certificacion"] = empresa_fk
 
         return qs_base.filter(**filters).first()
