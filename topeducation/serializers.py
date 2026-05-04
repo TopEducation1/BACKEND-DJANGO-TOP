@@ -273,8 +273,29 @@ class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSeriali
         if not ordered_skills:
             return None
         return SkillSerializer(ordered_skills[0]).data
-    def get_specialization_detail(self, instance):
+    def _resolve_specialization(self, instance):
         specialization = getattr(instance, "specialization", None)
+
+        if specialization:
+            return specialization
+
+        specialization_name = (
+            getattr(instance, "specialization_name_external", None)
+            or getattr(instance, "nombre", None)
+        )
+
+        if not specialization_name:
+            return None
+
+        return (
+            Specialization.objects
+            .filter(specialization_name__iexact=specialization_name)
+            .first()
+        )
+
+
+    def get_specialization_detail(self, instance):
+        specialization = self._resolve_specialization(instance)
 
         if not specialization:
             return None
@@ -286,9 +307,8 @@ class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSeriali
             "provider": specialization.provider,
         }
 
-
     def get_specialization_courses(self, instance):
-        specialization = getattr(instance, "specialization", None)
+        specialization = self._resolve_specialization(instance)
 
         if not specialization:
             return []
