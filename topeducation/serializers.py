@@ -295,7 +295,7 @@ class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSeriali
 
 
     def get_specialization_detail(self, instance):
-        specialization = self._resolve_specialization(instance)
+        specialization = getattr(instance, "specialization", None)
 
         if not specialization:
             return None
@@ -308,15 +308,15 @@ class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSeriali
         }
 
     def get_specialization_courses(self, instance):
-        specialization = self._resolve_specialization(instance)
+        specialization_id = getattr(instance, "specialization_id", None)
 
-        if not specialization:
+        if not specialization_id:
             return []
 
         qs = (
             Certificaciones.objects
             .filter(
-                specialization=specialization,
+                specialization_id=specialization_id,
                 vigente_certificacion=True,
             )
             .exclude(id=instance.id)
@@ -333,6 +333,7 @@ class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSeriali
             many=True,
             context=self.context
         ).data
+    
     def get_instructores_detalle_certificacion(self, instance):
         links = getattr(instance, "instructor_links_prefetched", None)
 
