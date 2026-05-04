@@ -121,15 +121,44 @@ def inicio(request):
     return HttpResponse("<h1>Bienvenido a Top.Education</h1>")
 
 def dashboard(request):
-    certifications = Certificaciones.objects.all()
-    edx = Certificaciones.objects.filter(plataforma_certificacion=1)
-    coursera = Certificaciones.objects.filter(plataforma_certificacion=2)
-    masterclass = Certificaciones.objects.filter(plataforma_certificacion=3)
-    cursos = Certificaciones.objects.filter(tipo_certificacion="Curso")
-    especializaciones = Certificaciones.objects.filter(tipo_certificacion="Especialización")
-    posts = Blog.objects.all()
-    return render(request,'pages/dashboard.html',{'certifications':certifications,'edx':edx,'coursera':coursera,'masterclass':masterclass,'posts':posts,'cursos':cursos,'especializaciones':especializaciones})
+    certifications = Certificaciones.objects.only(
+        "id", "nombre", "slug", "imagen_certificacion",
+        "tipo_certificacion", "plataforma_certificacion"
+    ).order_by("-id")[:24]
 
+    edx = Certificaciones.objects.filter(
+        plataforma_certificacion=1
+    ).only("id", "nombre", "slug", "imagen_certificacion").order_by("-id")[:12]
+
+    coursera = Certificaciones.objects.filter(
+        plataforma_certificacion=2
+    ).only("id", "nombre", "slug", "imagen_certificacion").order_by("-id")[:12]
+
+    masterclass = Certificaciones.objects.filter(
+        plataforma_certificacion=3
+    ).only("id", "nombre", "slug", "imagen_certificacion").order_by("-id")[:12]
+
+    cursos = Certificaciones.objects.filter(
+        tipo_certificacion="Curso"
+    ).only("id", "nombre", "slug", "imagen_certificacion").order_by("-id")[:12]
+
+    especializaciones = Certificaciones.objects.filter(
+        tipo_certificacion="Especialización"
+    ).only("id", "nombre", "slug", "imagen_certificacion").order_by("-id")[:12]
+
+    posts = Blog.objects.only(
+        "id", "titulo", "slug", "imagen", "created_at"
+    ).order_by("-id")[:6]
+
+    return render(request, "pages/dashboard.html", {
+        "certifications": certifications,
+        "edx": edx,
+        "coursera": coursera,
+        "masterclass": masterclass,
+        "posts": posts,
+        "cursos": cursos,
+        "especializaciones": especializaciones,
+    })
 def signout(request):
     logout(request)
     return redirect('signin')
