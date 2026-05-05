@@ -121,13 +121,23 @@ def inicio(request):
     return HttpResponse("<h1>Bienvenido a Top.Education</h1>")
 
 def dashboard(request):
-    certifications = Certificaciones.objects.order_by("-id")
-    edx = Certificaciones.objects.filter(plataforma_certificacion=1).order_by("-id")
-    coursera = Certificaciones.objects.filter(plataforma_certificacion=2).order_by("-id")
-    masterclass = Certificaciones.objects.filter(plataforma_certificacion=3).order_by("-id")
-    cursos = Certificaciones.objects.filter(tipo_certificacion="Curso").order_by("-id")
-    especializaciones = Certificaciones.objects.filter(tipo_certificacion="Especialización").order_by("-id")
-    posts = Blog.objects.order_by("-id")
+    certifications = Certificaciones.objects.count()
+    edx = Certificaciones.objects.filter(
+        plataforma_certificacion=1
+    ).count()
+    coursera = Certificaciones.objects.filter(
+        plataforma_certificacion=2
+    ).count()
+    masterclass = Certificaciones.objects.filter(
+        plataforma_certificacion=3
+    ).count()
+    cursos = Certificaciones.objects.filter(
+        tipo_certificacion="Curso"
+    ).count()
+    especializaciones = Certificaciones.objects.filter(
+        tipo_certificacion="Especialización"
+    ).count()
+    posts = Blog.objects.count()
 
     return render(request, "pages/dashboard.html", {
         "certifications": certifications,
