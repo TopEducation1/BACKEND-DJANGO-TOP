@@ -14,10 +14,9 @@ from .sitemaps import CertificacionSitemap, BlogSitemap
 from .views import api_run_courses_sync
 from .account_views import account_me, account_purchases
 
-
-sitemaps_dict = {
-    'certificaciones': CertificacionSitemap,
-    'recursos': BlogSitemap,
+sitemaps = {
+    "certificaciones": CertificacionSitemap,
+    "blog": BlogSitemap,
 }
 
 urlpatterns = [
@@ -91,7 +90,7 @@ urlpatterns = [
     path("brand/<int:marca_id>/update/", views.brand_update, name="brand_update"),
     path("brand/<int:marca_id>/settings/", views.brand_settings, name="brand_settings"),
     path("api/brand/<slug:slug>/", MarcaPublicBySlugView.as_view(), name="brand_public_slug"),
-    path('sitemap.xml', sitemap, {'sitemaps': sitemaps_dict}, name='sitemap'),
+    path("sitemap.xml", sitemap, {"sitemaps": sitemaps}),
     path("ckeditor/", include("ckeditor_uploader.urls")),
     path("inspector/catalog/", views.catalog_inspector, name="catalog_inspector"),
     path("bussines/purchases/", login_required(views.admin_purchases_page, login_url="/signin/"),name="admin_purchases_page"),

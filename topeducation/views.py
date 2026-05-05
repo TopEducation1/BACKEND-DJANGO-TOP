@@ -121,29 +121,13 @@ def inicio(request):
     return HttpResponse("<h1>Bienvenido a Top.Education</h1>")
 
 def dashboard(request):
-    certifications = Certificaciones.objects.count()
-
-    edx = Certificaciones.objects.filter(
-        plataforma_certificacion=1
-    ).count()
-
-    coursera = Certificaciones.objects.filter(
-        plataforma_certificacion=2
-    ).count()
-
-    masterclass = Certificaciones.objects.filter(
-        plataforma_certificacion=3
-    ).count()
-
-    cursos = Certificaciones.objects.filter(
-        tipo_certificacion="Curso"
-    ).count()
-
-    especializaciones = Certificaciones.objects.filter(
-        tipo_certificacion="Especialización"
-    ).count()
-
-    posts = Blog.objects.count()
+    certifications = Certificaciones.objects.order_by("-id")
+    edx = Certificaciones.objects.filter(plataforma_certificacion=1).order_by("-id")
+    coursera = Certificaciones.objects.filter(plataforma_certificacion=2).order_by("-id")
+    masterclass = Certificaciones.objects.filter(plataforma_certificacion=3).order_by("-id")
+    cursos = Certificaciones.objects.filter(tipo_certificacion="Curso").order_by("-id")
+    especializaciones = Certificaciones.objects.filter(tipo_certificacion="Especialización").order_by("-id")
+    posts = Blog.objects.order_by("-id")
 
     return render(request, "pages/dashboard.html", {
         "certifications": certifications,
@@ -154,6 +138,7 @@ def dashboard(request):
         "cursos": cursos,
         "especializaciones": especializaciones,
     })
+
 def signout(request):
     logout(request)
     return redirect('signin')
@@ -3911,6 +3896,10 @@ def pick_first_instructor_image(cert, request):
     return ""
 
 
+MAX_SKILLS_ON_HOME = 18
+MAX_CERTS_PER_SKILL_SCAN = 120
+
+
 class HomeSkillsGridAPIView(APIView):
     permission_classes = []
 
@@ -3919,19 +3908,29 @@ class HomeSkillsGridAPIView(APIView):
         if cached:
             return Response(cached)
 
-        skills = (
+        skills = list(
             Skills.objects.filter(
                 parent__isnull=True,
                 estado=True,
             )
             .exclude(Q(skill_ico__isnull=True) | Q(skill_ico__exact=""))
-            .order_by("id")
+            .only(
+                "id",
+                "nombre",
+                "translate",
+                "descripcion",
+                "skill_type",
+                "skill_img",
+                "skill_ico",
+                "skill_col",
+            )
+            .order_by("id")[:MAX_SKILLS_ON_HOME]
         )
 
         response_data = []
 
         for skill in skills:
-            certs = (
+            certs_qs = (
                 Certificaciones.objects.filter(
                     skills_rel__skill=skill
                 )
@@ -3940,82 +3939,80 @@ class HomeSkillsGridAPIView(APIView):
                     "empresa_certificacion",
                     "plataforma_certificacion",
                 )
+                .prefetch_related(
+                    "instructoresCertificacion"
+                )
+                .only(
+                    "id",
+                    "nombre",
+                    "slug",
+                    "instructores_certificacion",
+                    "universidad_certificacion__id",
+                    "universidad_certificacion__nombre",
+                    "universidad_certificacion__univ_ico",
+                    "empresa_certificacion__id",
+                    "empresa_certificacion__nombre",
+                    "empresa_certificacion__empr_ico",
+                    "plataforma_certificacion__id",
+                    "plataforma_certificacion__slug",
+                )
                 .distinct()
+                .order_by("-id")[:MAX_CERTS_PER_SKILL_SCAN]
             )
 
-            related_items = []
+            certs = list(certs_qs)
 
+            related_items = []
             seen_universities = set()
             seen_companies = set()
             seen_certs = set()
 
-            # Universidades
             for cert in certs:
                 uni = getattr(cert, "universidad_certificacion", None)
-                if not uni:
-                    continue
 
-                uni_name = getattr(uni, "nombre", "") or ""
-                uni_icon = getattr(uni, "univ_ico", "") or ""
+                if uni:
+                    uni_name = getattr(uni, "nombre", "") or ""
+                    uni_icon = getattr(uni, "univ_ico", "") or ""
+                    uni_id = getattr(uni, "id", uni_name)
 
-                if not uni_name or not uni_icon:
-                    continue
+                    if uni_name and uni_icon and uni_id not in seen_universities:
+                        seen_universities.add(uni_id)
+                        related_items.append({
+                            "name": uni_name,
+                            "type": "Universidades",
+                            "img": normalize_media_url(request, uni_icon),
+                        })
 
-                key = f"uni-{getattr(uni, 'id', uni_name)}"
-                if key in seen_universities:
-                    continue
-
-                seen_universities.add(key)
-                related_items.append({
-                    "name": uni_name,
-                    "type": "Universidades",
-                    "img": normalize_media_url(request, uni_icon),
-                })
-
-            # Empresas
-            for cert in certs:
                 emp = getattr(cert, "empresa_certificacion", None)
-                if not emp:
-                    continue
 
-                emp_name = getattr(emp, "nombre", "") or ""
-                emp_icon = getattr(emp, "empr_ico", "") or ""
+                if emp:
+                    emp_name = getattr(emp, "nombre", "") or ""
+                    emp_icon = getattr(emp, "empr_ico", "") or ""
+                    emp_id = getattr(emp, "id", emp_name)
 
-                if not emp_name or not emp_icon:
-                    continue
+                    if emp_name and emp_icon and emp_id not in seen_companies:
+                        seen_companies.add(emp_id)
+                        related_items.append({
+                            "name": emp_name,
+                            "type": "Empresas",
+                            "img": normalize_media_url(request, emp_icon),
+                        })
 
-                key = f"emp-{getattr(emp, 'id', emp_name)}"
-                if key in seen_companies:
-                    continue
-
-                seen_companies.add(key)
-                related_items.append({
-                    "name": emp_name,
-                    "type": "Empresas",
-                    "img": normalize_media_url(request, emp_icon),
-                })
-
-            # Certificaciones solo si la skill es habilidad
             if str(skill.skill_type or "").strip().lower() == "habilidad":
                 for cert in certs:
                     cert_name = getattr(cert, "nombre", "") or ""
                     cert_link = build_cert_link(cert)
                     instructor_img = pick_first_instructor_image(cert, request)
+                    cert_id = getattr(cert, "id", cert_name)
 
-                    if not cert_name or not cert_link or not instructor_img:
-                        continue
-
-                    key = f"cert-{getattr(cert, 'id', cert_name)}"
-                    if key in seen_certs:
-                        continue
-
-                    seen_certs.add(key)
-                    related_items.append({
-                        "name": cert_name,
-                        "type": "Certificacion",
-                        "img": instructor_img,
-                        "link": cert_link,
-                    })
+                    if cert_name and cert_link and instructor_img and cert_id not in seen_certs:
+                        seen_certs.add(cert_id)
+                        related_items.append({
+                            "name": cert_name,
+                            "type": "Certificacion",
+                            "img": instructor_img,
+                            "link": cert_link,
+                        })
 
             random.shuffle(related_items)
             related_items = related_items[:MAX_ITEMS_PER_SKILL]
