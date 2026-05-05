@@ -122,22 +122,22 @@ def inicio(request):
 
 def dashboard(request):
     certifications = Certificaciones.objects.count()
-    edx = Certificaciones.objects.filter(
-        plataforma_certificacion=1
-    ).count()
-    coursera = Certificaciones.objects.filter(
-        plataforma_certificacion=2
-    ).count()
-    masterclass = Certificaciones.objects.filter(
-        plataforma_certificacion=3
-    ).count()
-    cursos = Certificaciones.objects.filter(
-        tipo_certificacion="Curso"
-    ).count()
-    especializaciones = Certificaciones.objects.filter(
-        tipo_certificacion="Especialización"
-    ).count()
+    edx = Certificaciones.objects.filter(plataforma_certificacion=1).count()
+    coursera = Certificaciones.objects.filter(plataforma_certificacion=2).count()
+    masterclass = Certificaciones.objects.filter(plataforma_certificacion=3).count()
+    cursos = Certificaciones.objects.filter(tipo_certificacion="Curso").count()
+    especializaciones = Certificaciones.objects.filter(tipo_certificacion="Especialización").count()
     posts = Blog.objects.count()
+
+    return render(request, "pages/dashboard.html", {
+        "certifications": certifications,
+        "edx": edx,
+        "coursera": coursera,
+        "masterclass": masterclass,
+        "posts": posts,
+        "cursos": cursos,
+        "especializaciones": especializaciones,
+    })
 
     return render(request, "pages/dashboard.html", {
         "certifications": certifications,
