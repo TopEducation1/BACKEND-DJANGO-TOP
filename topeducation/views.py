@@ -1195,43 +1195,49 @@ def proxy_json(request):
     if not url:
         return HttpResponseBadRequest("Missing url")
 
-    # Parse host
     try:
         parsed = urlparse(url)
-        host = (parsed.netloc or "").lower()
-        host = host.split(":")[0]  # ✅ quita :443, :80, etc.
+        host = (parsed.netloc or "").lower().split(":")[0]
     except Exception:
         return HttpResponseBadRequest("Invalid url")
 
-    # ✅ Whitelist por seguridad (opcional pero recomendado)
     allowed_hosts = set((getattr(settings, "PROXY_HEADERS", {}) or {}).keys())
     if host not in allowed_hosts:
         return HttpResponseBadRequest("URL not allowed")
 
-    # Headers base + headers del host
     headers = {"Accept": "application/json"}
     extra = (getattr(settings, "PROXY_HEADERS", {}) or {}).get(host, {}) or {}
     headers.update(extra)
 
-    # ✅ Si la key está vacía, mejor falla claro (evita 403 confuso)
     if "x-api-key" in headers and not headers["x-api-key"]:
         return JsonResponse(
-            {"error": "missing_api_key_env", "detail": "AWS_COURSES_API_KEY is empty in this environment"},
+            {
+                "error": "missing_api_key_env",
+                "detail": "AWS_COURSES_API_KEY is empty in this environment",
+            },
             status=500,
         )
 
     try:
-        r = requests.get(url, headers=headers, timeout=60)
-        content_type = (r.headers.get("content-type") or "").lower()
+        timeout = int(request.GET.get("timeout") or 180)
 
-        # Si no es JSON, devolvemos el raw para debug
+        r = requests.get(
+            url,
+            headers=headers,
+            timeout=timeout,
+        )
+
+        content_type = (r.headers.get("content-type") or "").lower()
+        text_preview = (r.text or "")[:8000]
+
         if "application/json" not in content_type:
             return JsonResponse(
                 {
                     "error": "upstream_not_json",
                     "status": r.status_code,
                     "url": url,
-                    "raw": (r.text or "")[:4000],
+                    "content_type": content_type,
+                    "raw": text_preview,
                 },
                 status=502 if r.status_code >= 400 else 200,
             )
@@ -1239,10 +1245,35 @@ def proxy_json(request):
         data = r.json()
         return JsonResponse(data, status=r.status_code, safe=isinstance(data, dict))
 
+    except requests.exceptions.Timeout:
+        return JsonResponse(
+            {
+                "error": "proxy_timeout",
+                "detail": f"El proxy esperó {timeout}s y el endpoint no respondió.",
+                "url": url,
+            },
+            status=504,
+        )
+
+    except requests.exceptions.RequestException as e:
+        return JsonResponse(
+            {
+                "error": "proxy_request_failed",
+                "detail": str(e),
+                "url": url,
+            },
+            status=502,
+        )
+
     except Exception as e:
-        return JsonResponse({"error": "proxy_failed", "detail": str(e)}, status=500)
-
-
+        return JsonResponse(
+            {
+                "error": "proxy_failed",
+                "detail": str(e),
+                "url": url,
+            },
+            status=500,
+        )
 class CustomPagination(PageNumberPagination):
     page_size = 12
     page_size_query_param = 'page_size'

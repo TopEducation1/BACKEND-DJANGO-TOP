@@ -293,7 +293,7 @@
     let url = "";
 
     if (resource === "specialization-detail") {
-      url = `${base}/specializations/${encodeURIComponent(specializationId)}`;
+      url = `${base}/specializations/${specializationId}`;
     } else {
       url = `${base}/${resource}`;
     }
@@ -332,7 +332,7 @@
 
     try {
       const res = await fetch(
-        `${PROXY_PATH}?url=${encodeURIComponent(url)}`,
+        `${PROXY_PATH}?timeout=180&url=${encodeURIComponent(url)}`,
         { headers: { "Accept": "application/json" } }
       );
 
