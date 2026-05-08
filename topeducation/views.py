@@ -50,6 +50,7 @@ from django.forms import modelformset_factory
 import os
 from collections import defaultdict
 from django.db.models import Count
+import hashlib
 
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden
 import requests
@@ -1315,6 +1316,56 @@ class FastNoCountPagination:
             "results": data,
         })
 
+class FastCachedCountPagination:
+    page_size = 16
+    page_size_query_param = "page_size"
+    max_page_size = 50
+    count_cache_timeout = 60 * 15  # 15 minutos
+
+    def paginate_queryset(self, queryset, request):
+        self.request = request
+
+        try:
+            self.page = max(1, int(request.query_params.get("page", 1)))
+        except Exception:
+            self.page = 1
+
+        try:
+            self.page_size = int(request.query_params.get(self.page_size_query_param, self.page_size))
+        except Exception:
+            self.page_size = 16
+
+        self.page_size = max(1, min(self.page_size, self.max_page_size))
+
+        cache_raw_key = f"cert_count:{request.get_full_path()}"
+        cache_key = hashlib.md5(cache_raw_key.encode("utf-8")).hexdigest()
+        cache_key = f"cert_count:{cache_key}"
+
+        cached_count = cache.get(cache_key)
+
+        if cached_count is None:
+            cached_count = queryset.count()
+            cache.set(cache_key, cached_count, self.count_cache_timeout)
+
+        self.count = cached_count
+        self.total_pages = max(1, (self.count + self.page_size - 1) // self.page_size)
+
+        start = (self.page - 1) * self.page_size
+        end = start + self.page_size
+
+        return list(queryset[start:end])
+
+    def get_paginated_response(self, data):
+        return Response({
+            "count": self.count,
+            "current_page": self.page,
+            "page_size": self.page_size,
+            "total_pages": self.total_pages,
+            "has_next": self.page < self.total_pages,
+            "has_previous": self.page > 1,
+            "results": data,
+        })
+
 class CustomPagination(PageNumberPagination):
     page_size = 12
     page_size_query_param = 'page_size'
@@ -1904,7 +1955,7 @@ def get_language_values_by_codes(codes):
     return list(dict.fromkeys(values))
 
 class filter_by_tags(APIView):
-    pagination_class = FastNoCountPagination
+    pagination_class = FastCachedCountPagination
 
     def get(self, request):
         try:
