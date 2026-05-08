@@ -1274,6 +1274,47 @@ def proxy_json(request):
             },
             status=500,
         )
+    
+class FastNoCountPagination:
+    page_size = 16
+    page_size_query_param = "page_size"
+    max_page_size = 50
+
+    def paginate_queryset(self, queryset, request):
+        self.request = request
+
+        try:
+            self.page = max(1, int(request.query_params.get("page", 1)))
+        except Exception:
+            self.page = 1
+
+        try:
+            self.page_size = int(request.query_params.get(self.page_size_query_param, self.page_size))
+        except Exception:
+            self.page_size = 16
+
+        self.page_size = max(1, min(self.page_size, self.max_page_size))
+
+        start = (self.page - 1) * self.page_size
+        end = start + self.page_size + 1
+
+        rows = list(queryset[start:end])
+
+        self.has_next = len(rows) > self.page_size
+        self.has_previous = self.page > 1
+
+        return rows[:self.page_size]
+
+    def get_paginated_response(self, data):
+        return Response({
+            "count": None,
+            "current_page": self.page,
+            "page_size": self.page_size,
+            "has_next": self.has_next,
+            "has_previous": self.has_previous,
+            "results": data,
+        })
+
 class CustomPagination(PageNumberPagination):
     page_size = 12
     page_size_query_param = 'page_size'
@@ -1803,29 +1844,29 @@ def split_language_values(raw_value):
         if item and item.strip()
     ]
 
-
 class CertificationLanguagesList(APIView):
     def get(self, request):
         try:
+            cache_key = "certification_languages_v2"
+            cached = cache.get(cache_key)
+
+            if cached is not None:
+                return Response(cached, status=status.HTTP_200_OK)
+
             rows = (
                 Certificaciones.objects
-                .exclude(lenguaje_certificacion__isnull=True)
-                .exclude(lenguaje_certificacion__exact="")
-                .values_list("lenguaje_certificacion", flat=True)
+                .exclude(language_normalized__isnull=True)
+                .exclude(language_normalized__exact="")
+                .values("language_normalized")
+                .annotate(count=Count("id"))
+                .order_by("language_normalized")
             )
 
-            grouped = defaultdict(int)
-
-            for raw in rows:
-                normalized_codes_in_row = set()
-
-                for item in split_language_values(raw):
-                    normalized = normalize_language_value(item)
-                    if normalized:
-                        normalized_codes_in_row.add(normalized["code"])
-
-                for code in normalized_codes_in_row:
-                    grouped[code] += 1
+            grouped = {
+                row["language_normalized"]: row["count"]
+                for row in rows
+                if row["language_normalized"] in LANGUAGE_NORMALIZATION
+            }
 
             ordered_codes = ["es", "en"] + sorted(
                 [code for code in grouped.keys() if code not in {"es", "en"}]
@@ -1841,6 +1882,8 @@ class CertificationLanguagesList(APIView):
                 for code in ordered_codes
                 if code in grouped
             ]
+
+            cache.set(cache_key, data, 60 * 60 * 6)
 
             return Response(data, status=status.HTTP_200_OK)
 
@@ -1861,7 +1904,7 @@ def get_language_values_by_codes(codes):
     return list(dict.fromkeys(values))
 
 class filter_by_tags(APIView):
-    pagination_class = CustomPagination
+    pagination_class = FastNoCountPagination
 
     def get(self, request):
         try:
@@ -1878,59 +1921,35 @@ class filter_by_tags(APIView):
                 if key in ["page", "page_size"]:
                     continue
 
+                target = None
+
                 if key in ["Tema", "temas"]:
-                    for value in value_list:
-                        if not isinstance(value, str):
-                            continue
-                        for v in value.split(","):
-                            cleaned = v.strip()
-                            if cleaned:
-                                tema_slugs.append(cleaned)
-
+                    target = tema_slugs
                 elif key in ["Habilidad", "habilidades"]:
-                    for value in value_list:
-                        if not isinstance(value, str):
-                            continue
-                        for v in value.split(","):
-                            cleaned = v.strip()
-                            if cleaned:
-                                habilidad_slugs.append(cleaned)
-
+                    target = habilidad_slugs
                 elif key in ["Plataforma", "plataforma", "Aliados", "aliados"]:
-                    for value in value_list:
-                        if not isinstance(value, str):
-                            continue
-                        for v in value.split(","):
-                            cleaned = v.strip()
-                            if cleaned:
-                                plataforma_values.append(cleaned)
-
+                    target = plataforma_values
                 elif key in ["Empresa", "empresas", "Empresas"]:
-                    for value in value_list:
-                        if not isinstance(value, str):
-                            continue
-                        for v in value.split(","):
-                            cleaned = v.strip()
-                            if cleaned:
-                                empresa_values.append(cleaned)
-
+                    target = empresa_values
                 elif key in ["Universidad", "universidades", "Universidades"]:
-                    for value in value_list:
-                        if not isinstance(value, str):
-                            continue
-                        for v in value.split(","):
-                            cleaned = v.strip()
-                            if cleaned:
-                                universidad_values.append(cleaned)
-
+                    target = universidad_values
                 elif key in ["Idioma", "idioma"]:
-                    for value in value_list:
-                        if not isinstance(value, str):
-                            continue
-                        for v in value.split(","):
-                            cleaned = v.strip().lower()
-                            if cleaned:
-                                idioma_codes.append(cleaned)
+                    target = idioma_codes
+
+                if target is None:
+                    continue
+
+                for value in value_list:
+                    if not isinstance(value, str):
+                        continue
+
+                    for v in value.split(","):
+                        cleaned = v.strip()
+                        if key in ["Idioma", "idioma"]:
+                            cleaned = cleaned.lower()
+
+                        if cleaned:
+                            target.append(cleaned)
 
             tema_slugs = list(dict.fromkeys(tema_slugs))
             habilidad_slugs = list(dict.fromkeys(habilidad_slugs))
@@ -1940,10 +1959,6 @@ class filter_by_tags(APIView):
             idioma_codes = list(dict.fromkeys(idioma_codes))
 
             skill_slugs = tema_slugs + habilidad_slugs
-
-            first_skill_slug_subquery = SkillsCertification.objects.filter(
-                certificacion_id=OuterRef("pk")
-            ).order_by("orden", "id").values("skill__slug")[:1]
 
             queryset = (
                 Certificaciones.objects
@@ -1959,9 +1974,6 @@ class filter_by_tags(APIView):
                         queryset=SkillsCertification.objects.select_related("skill").order_by("orden", "id"),
                         to_attr="skills_links_ordered",
                     )
-                )
-                .annotate(
-                    first_skill_slug=Subquery(first_skill_slug_subquery)
                 )
             )
 
@@ -1983,13 +1995,20 @@ class filter_by_tags(APIView):
                     q_universidad |= Q(universidad_certificacion__nombre__iexact=value)
                 queryset = queryset.filter(q_universidad)
 
-            # Idioma optimizado por campo normalizado
             if idioma_codes:
                 queryset = queryset.filter(language_normalized__in=idioma_codes)
             else:
                 queryset = queryset.filter(language_normalized__in=["es", "en"])
 
             if skill_slugs:
+                first_skill_slug_subquery = SkillsCertification.objects.filter(
+                    certificacion_id=OuterRef("pk")
+                ).order_by("orden", "id").values("skill__slug")[:1]
+
+                queryset = queryset.annotate(
+                    first_skill_slug=Subquery(first_skill_slug_subquery)
+                )
+
                 queryset = queryset.filter(
                     skills_rel__skill__slug__in=skill_slugs
                 )
