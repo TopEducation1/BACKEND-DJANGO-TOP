@@ -4117,6 +4117,7 @@ class HomeSkillsGridAPIView(APIView):
             response_data.append({
                 "id": skill.id,
                 "name": (skill.translate or skill.nombre or "").strip(),
+                "slug": skill.slug,
                 "type": normalize_skill_type_for_filter(skill.skill_type),
                 "img": normalize_media_url(request, skill.skill_img),
                 "color": COLOR_MAP.get(skill.skill_col, "#034694"),
