@@ -3822,6 +3822,9 @@ MAX_ITEMS_PER_SKILL = 8
 CACHE_KEY = "home_skills_grid_v1"
 CACHE_TIMEOUT = 60 * 30  # 30 minutos
 
+MAX_SKILLS_ON_HOME = 18
+MAX_CERTS_PER_SKILL_SCAN = 120
+
 
 def normalize_media_url(request, value):
     if not value:
@@ -3835,17 +3838,14 @@ def normalize_media_url(request, value):
     if low in {"none", "null", "false"}:
         return ""
 
-    # Ya es absoluta
     if value.startswith("http://") or value.startswith("https://"):
         return value
 
-    # Assets del frontend
     if value.startswith("/assets/") or value.startswith("assets/"):
         frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
         clean_path = value if value.startswith("/") else f"/{value}"
         return f"{frontend_url}{clean_path}"
 
-    # Media/archivos del backend
     return request.build_absolute_uri(value)
 
 
@@ -3860,16 +3860,22 @@ def normalize_skill_type_for_filter(skill_type):
 
     return "Skills"
 
-def build_cert_link(cert):
-    slug = getattr(cert, "slug", "") or ""
-    slug = str(slug).strip()
 
+def build_cert_link(cert):
+    slug = str(getattr(cert, "slug", "") or "").strip()
     if not slug:
         return None
 
     plataforma = getattr(cert, "plataforma_certificacion", None)
-    plataforma_slug = getattr(plataforma, "slug", "") if plataforma else ""
-    plataforma_slug = str(plataforma_slug or "").strip()
+    plataforma_nombre = str(getattr(plataforma, "nombre", "") or "").strip().lower()
+
+    platform_map = {
+        "edx": "edx",
+        "coursera": "coursera",
+        "masterclass": "masterclass",
+    }
+
+    plataforma_slug = platform_map.get(plataforma_nombre, "")
 
     if plataforma_slug:
         return f"/certificacion/{plataforma_slug}/{slug}"
@@ -3906,11 +3912,6 @@ def normalize_instructor_image(item):
 
 
 def parse_instructors_text(raw):
-    """
-    Fallback mínimo si instructores_certificacion viene como string.
-    Solo devuelve nombres; sin imagen no nos sirve para el home,
-    pero se deja por robustez.
-    """
     if not raw or not isinstance(raw, str):
         return []
 
@@ -3918,26 +3919,16 @@ def parse_instructors_text(raw):
     if not text or text.lower() in {"none", "null", "[]"}:
         return []
 
-    parts = (
-        text.replace(" y ", ",")
-        .replace(" and ", ",")
-        .split(",")
-    )
+    parts = text.replace(" y ", ",").replace(" and ", ",").split(",")
 
     return [{"name": p.strip(), "img": ""} for p in parts if p.strip()]
 
 
 def get_certification_instructors(cert):
-    """
-    Unifica instructores sin importar si vienen:
-    - en un JSON/lista dentro de instructores_certificacion
-    - en una relación instructoresCertificacion
-    - o en otros formatos mixtos
-    """
     normalized = []
 
-    # Caso 1: cert.instructores_certificacion ya viene como lista/json
     raw = getattr(cert, "instructores_certificacion", None)
+
     if isinstance(raw, list):
         for item in raw:
             if isinstance(item, dict):
@@ -3946,26 +3937,20 @@ def get_certification_instructors(cert):
                     "img": normalize_instructor_image(item),
                 })
 
-    # Caso 2: cert.instructores_certificacion viene como string
     elif isinstance(raw, str):
         normalized.extend(parse_instructors_text(raw))
 
-    # Caso 3: relación aparte tipo instructoresCertificacion
-    related = getattr(cert, "instructoresCertificacion", None)
+    related = getattr(cert, "instructor_links", None)
+
     if related is not None:
         try:
-            for ins in related.all():
-                name = (
-                    getattr(ins, "nombre", None)
-                    or getattr(ins, "name", None)
-                    or ""
-                )
-                img = (
-                    getattr(ins, "foto", None)
-                    or getattr(ins, "image", None)
-                    or getattr(ins, "img", None)
-                    or ""
-                )
+            for link in related.all():
+                instructor = getattr(link, "instructor", None)
+                if not instructor:
+                    continue
+
+                name = getattr(instructor, "nombre", "") or ""
+                img = getattr(instructor, "imagen", "") or ""
 
                 normalized.append({
                     "name": str(name).strip(),
@@ -3974,7 +3959,6 @@ def get_certification_instructors(cert):
         except Exception:
             pass
 
-    # Limpieza
     clean = []
     seen = set()
 
@@ -3985,6 +3969,7 @@ def get_certification_instructors(cert):
         key = f"{name.lower()}|{img}"
         if key in seen:
             continue
+
         seen.add(key)
 
         if name or img:
@@ -4005,10 +3990,6 @@ def pick_first_instructor_image(cert, request):
             return normalize_media_url(request, img)
 
     return ""
-
-
-MAX_SKILLS_ON_HOME = 18
-MAX_CERTS_PER_SKILL_SCAN = 120
 
 
 class HomeSkillsGridAPIView(APIView):
@@ -4051,7 +4032,7 @@ class HomeSkillsGridAPIView(APIView):
                     "plataforma_certificacion",
                 )
                 .prefetch_related(
-                    "instructoresCertificacion"
+                    "instructor_links__instructor"
                 )
                 .only(
                     "id",
@@ -4065,7 +4046,7 @@ class HomeSkillsGridAPIView(APIView):
                     "empresa_certificacion__nombre",
                     "empresa_certificacion__empr_ico",
                     "plataforma_certificacion__id",
-                    "plataforma_certificacion__slug",
+                    "plataforma_certificacion__nombre",
                 )
                 .distinct()
                 .order_by("-id")[:MAX_CERTS_PER_SKILL_SCAN]
