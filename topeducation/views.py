@@ -4022,36 +4022,42 @@ class HomeSkillsGridAPIView(APIView):
         response_data = []
 
         for skill in skills:
-            certs_qs = (
-                Certificaciones.objects.filter(
-                    skills_rel__skill=skill
-                )
-                .select_related(
-                    "universidad_certificacion",
-                    "empresa_certificacion",
-                    "plataforma_certificacion",
-                )
-                .prefetch_related(
-                    "instructor_links__instructor"
-                )
-                .only(
-                    "id",
-                    "nombre",
-                    "slug",
-                    "instructores_certificacion",
-                    "universidad_certificacion__id",
-                    "universidad_certificacion__nombre",
-                    "universidad_certificacion__univ_ico",
-                    "empresa_certificacion__id",
-                    "empresa_certificacion__nombre",
-                    "empresa_certificacion__empr_ico",
-                    "plataforma_certificacion__id",
-                    "plataforma_certificacion__nombre",
-                )
-                .order_by("-id")[:MAX_CERTS_PER_SKILL_SCAN]
+            cert_ids = list(
+                SkillsCertification.objects
+                .filter(skill_id=skill.id)
+                .order_by("-certificacion_id")
+                .values_list("certificacion_id", flat=True)[:MAX_CERTS_PER_SKILL_SCAN]
             )
 
-            certs = list(certs_qs)
+            if not cert_ids:
+                certs = []
+            else:
+                certs_qs = (
+                    Certificaciones.objects
+                    .filter(id__in=cert_ids)
+                    .select_related(
+                        "universidad_certificacion",
+                        "empresa_certificacion",
+                        "plataforma_certificacion",
+                    )
+                    .only(
+                        "id",
+                        "nombre",
+                        "slug",
+                        "instructores_certificacion",
+                        "universidad_certificacion__id",
+                        "universidad_certificacion__nombre",
+                        "universidad_certificacion__univ_ico",
+                        "empresa_certificacion__id",
+                        "empresa_certificacion__nombre",
+                        "empresa_certificacion__empr_ico",
+                        "plataforma_certificacion__id",
+                        "plataforma_certificacion__nombre",
+                    )
+                )
+
+                cert_map = {cert.id: cert for cert in certs_qs}
+                certs = [cert_map[cid] for cid in cert_ids if cid in cert_map]
 
             related_items = []
             seen_universities = set()
