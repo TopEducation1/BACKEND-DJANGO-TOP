@@ -3822,8 +3822,8 @@ MAX_ITEMS_PER_SKILL = 8
 CACHE_KEY = "home_skills_grid_v1"
 CACHE_TIMEOUT = 60 * 30  # 30 minutos
 
-MAX_SKILLS_ON_HOME = 18
-MAX_CERTS_PER_SKILL_SCAN = 120
+MAX_SKILLS_ON_HOME = 12
+MAX_CERTS_PER_SKILL_SCAN = 30
 
 
 def normalize_media_url(request, value):
@@ -4048,7 +4048,6 @@ class HomeSkillsGridAPIView(APIView):
                     "plataforma_certificacion__id",
                     "plataforma_certificacion__nombre",
                 )
-                .distinct()
                 .order_by("-id")[:MAX_CERTS_PER_SKILL_SCAN]
             )
 
