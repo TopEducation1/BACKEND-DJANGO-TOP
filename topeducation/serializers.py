@@ -123,7 +123,6 @@ class InstructorSerializer(serializers.ModelSerializer):
         model = Instructores
         fields = "__all__"
 
-
 ## MINI SERIALIZERS
 
 class SkillMiniSerializer(serializers.ModelSerializer):
@@ -133,6 +132,7 @@ class SkillMiniSerializer(serializers.ModelSerializer):
             "id",
             "nombre",
             "translate",
+            "slug",
             "skill_col",
             "skill_img",
             "skill_ico",

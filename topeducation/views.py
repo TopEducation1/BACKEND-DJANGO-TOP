@@ -2025,6 +2025,49 @@ class filter_by_tags(APIView):
                         queryset=SkillsCertification.objects.select_related("skill").order_by("orden", "id"),
                         to_attr="skills_links_ordered",
                     )
+                ).only(
+                    "id",
+                    "slug",
+                    "nombre",
+                    "metadescripcion_certificacion",
+                    "imagen_final",
+                    "tipo_certificacion",
+                    "fecha_creado_cert",
+                    "language_normalized",
+                    "plataforma_certificacion_id",
+                    "empresa_certificacion_id",
+                    "universidad_certificacion_id",
+                    "tema_certificacion_id",
+
+                    "plataforma_certificacion__id",
+                    "plataforma_certificacion__nombre",
+                    "plataforma_certificacion__plat_img",
+                    "plataforma_certificacion__plat_ico",
+
+                    "empresa_certificacion__id",
+                    "empresa_certificacion__nombre",
+                    "empresa_certificacion__empr_img",
+                    "empresa_certificacion__empr_ico",
+                    "empresa_certificacion__empr_est",
+                    "empresa_certificacion__empr_top",
+                    "empresa_certificacion__descripcion_institucion",
+
+                    "universidad_certificacion__id",
+                    "universidad_certificacion__nombre",
+                    "universidad_certificacion__descripcion_institucion",
+                    "universidad_certificacion__univ_img",
+                    "universidad_certificacion__univ_ico",
+                    "universidad_certificacion__univ_fla",
+                    "universidad_certificacion__univ_est",
+                    "universidad_certificacion__univ_top",
+
+                    "tema_certificacion__id",
+                    "tema_certificacion__nombre",
+                    "tema_certificacion__translate",
+                    "tema_certificacion__tem_type",
+                    "tema_certificacion__tem_col",
+                    "tema_certificacion__tem_img",
+                    "tema_certificacion__tem_est",
                 )
             )
 
