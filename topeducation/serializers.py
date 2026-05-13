@@ -293,46 +293,142 @@ class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSeriali
             .first()
         )
 
+def _is_specialization_type(self, instance):
+    tipo = (getattr(instance, "tipo_certificacion", "") or "").strip().lower()
+    return tipo in ["especialización", "especializacion", "specialization"]
 
-    def get_specialization_detail(self, instance):
-        specialization = getattr(instance, "specialization", None)
+def _resolve_specialization(self, instance):
+    """
+    Prioridad:
+    1. FK directa Certificaciones.specialization
+    2. specialization_id_external contra Specialization.specialization_id
+    3. specialization_name_external / nombre como fallback
+    """
+    specialization = getattr(instance, "specialization", None)
+    if specialization:
+        return specialization
 
-        if not specialization:
-            return None
+    specialization_id_external = (
+        getattr(instance, "specialization_id_external", None) or ""
+    ).strip()
 
-        return {
-            "id": specialization.id,
-            "specialization_id": specialization.specialization_id,
-            "specialization_name": specialization.specialization_name,
-            "provider": specialization.provider,
-        }
-
-    def get_specialization_courses(self, instance):
-        specialization_id = getattr(instance, "specialization_id", None)
-
-        if not specialization_id:
-            return []
-
-        qs = (
-            Certificaciones.objects
-            .filter(
-                specialization_id=specialization_id,
-                vigente_certificacion=True,
-            )
-            .exclude(id=instance.id)
-            .select_related(
-                "plataforma_certificacion",
-                "universidad_certificacion",
-                "empresa_certificacion",
-            )
-            .order_by("id")[:20]
+    if specialization_id_external:
+        specialization = (
+            Specialization.objects
+            .filter(specialization_id=specialization_id_external)
+            .only("id", "specialization_id", "specialization_name", "provider")
+            .first()
         )
+        if specialization:
+            return specialization
 
-        return CertificationSpecializationCourseSerializer(
-            qs,
-            many=True,
-            context=self.context
-        ).data
+    specialization_name = (
+        getattr(instance, "specialization_name_external", None)
+        or getattr(instance, "nombre", None)
+        or ""
+    ).strip()
+
+    if not specialization_name:
+        return None
+
+    qs = Specialization.objects.filter(
+        specialization_name__iexact=specialization_name
+    )
+
+    provider = (
+        getattr(instance, "source_provider", None)
+        or getattr(getattr(instance, "plataforma_certificacion", None), "nombre", None)
+        or ""
+    ).strip()
+
+    if provider:
+        qs = qs.filter(provider__iexact=provider)
+
+    return (
+        qs.only("id", "specialization_id", "specialization_name", "provider")
+        .first()
+    )
+
+
+def get_specialization_detail(self, instance):
+    if not self._is_specialization_type(instance):
+        return None
+
+    specialization = self._resolve_specialization(instance)
+
+    if not specialization:
+        return None
+
+    return {
+        "id": specialization.id,
+        "specialization_id": specialization.specialization_id,
+        "specialization_name": specialization.specialization_name,
+        "provider": specialization.provider,
+    }
+
+
+def get_specialization_courses(self, instance):
+    if not self._is_specialization_type(instance):
+        return []
+
+    specialization = self._resolve_specialization(instance)
+
+    if not specialization:
+        return []
+
+    qs = (
+        specialization.certificaciones
+        .filter(vigente_certificacion=True)
+        .exclude(id=instance.id)
+        .exclude(tipo_certificacion__iexact="Especialización")
+        .select_related(
+            "plataforma_certificacion",
+            "universidad_certificacion",
+            "empresa_certificacion",
+        )
+        .only(
+            "id",
+            "slug",
+            "nombre",
+            "imagen_final",
+            "metadescripcion_certificacion",
+            "tipo_certificacion",
+            "vigente_certificacion",
+            "fecha_creado_cert",
+            "plataforma_certificacion_id",
+            "universidad_certificacion_id",
+            "empresa_certificacion_id",
+
+            "plataforma_certificacion__id",
+            "plataforma_certificacion__nombre",
+            "plataforma_certificacion__plat_img",
+            "plataforma_certificacion__plat_ico",
+
+            "universidad_certificacion__id",
+            "universidad_certificacion__nombre",
+            "universidad_certificacion__descripcion_institucion",
+            "universidad_certificacion__univ_img",
+            "universidad_certificacion__univ_ico",
+            "universidad_certificacion__univ_fla",
+            "universidad_certificacion__univ_est",
+            "universidad_certificacion__univ_top",
+
+            "empresa_certificacion__id",
+            "empresa_certificacion__nombre",
+            "empresa_certificacion__empr_img",
+            "empresa_certificacion__empr_ico",
+            "empresa_certificacion__empr_est",
+            "empresa_certificacion__empr_top",
+            "empresa_certificacion__descripcion_institucion",
+        )
+        .order_by("fecha_creado_cert", "id")[:20]
+    )
+
+    return CertificationSpecializationCourseSerializer(
+        qs,
+        many=True,
+        context=self.context,
+    ).data
     
     def get_instructores_detalle_certificacion(self, instance):
         links = getattr(instance, "instructor_links_prefetched", None)
