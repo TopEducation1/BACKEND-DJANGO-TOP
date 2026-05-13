@@ -140,15 +140,6 @@ def dashboard(request):
         "especializaciones": especializaciones,
     })
 
-    return render(request, "pages/dashboard.html", {
-        "certifications": certifications,
-        "edx": edx,
-        "coursera": coursera,
-        "masterclass": masterclass,
-        "posts": posts,
-        "cursos": cursos,
-        "especializaciones": especializaciones,
-    })
 
 def signout(request):
     logout(request)
@@ -1681,59 +1672,65 @@ class BlogDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             ) 
 
-
 class CertificationDetailView(APIView):
     def get(self, request, slug):
-        try:
-            if not slug:
-                return Response(
-                    {'error': 'Se requiere slug de certificación'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        if not slug:
+            return Response(
+                {"error": "Se requiere slug de certificación"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+        try:
             certification = (
                 Certificaciones.objects
                 .select_related(
-                    'tema_certificacion',
-                    'plataforma_certificacion',
-                    'universidad_certificacion',
-                    'empresa_certificacion',
-                    'specialization'
+                    "tema_certificacion",
+                    "plataforma_certificacion",
+                    "universidad_certificacion",
+                    "empresa_certificacion",
+                    "specialization",
                 )
                 .prefetch_related(
                     Prefetch(
-                        'skills_rel',
-                        queryset=SkillsCertification.objects.select_related('skill').order_by('orden', 'id'),
-                        to_attr='skills_links_ordered'
+                        "skills_rel",
+                        queryset=(
+                            SkillsCertification.objects
+                            .select_related("skill")
+                            .order_by("orden", "id")
+                        ),
+                        to_attr="skills_links_ordered",
                     ),
                     Prefetch(
-                        'instructor_links',
-                        queryset=InstructorCertification.objects.select_related('instructor'),
-                        to_attr='instructor_links_prefetched'
-                    )
+                        "instructor_links",
+                        queryset=(
+                            InstructorCertification.objects
+                            .select_related("instructor")
+                        ),
+                        to_attr="instructor_links_prefetched",
+                    ),
                 )
                 .get(slug=slug)
             )
 
             serializer = CertificationSerializer(
                 certification,
-                context={'request': request}
+                context={"request": request}
             )
 
-            return Response(serializer.data)
+            return Response(serializer.data, status=status.HTTP_200_OK)
 
         except Certificaciones.DoesNotExist:
             return Response(
-                {'error': 'Certificación no encontrada'},
+                {"error": "Certificación no encontrada"},
                 status=status.HTTP_404_NOT_FOUND
             )
 
         except Exception as e:
+            print(f"Error en CertificationDetailView: {str(e)}")
             return Response(
-                {'error': str(e)},
+                {"error": "Error al cargar la certificación"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
 
 LANGUAGE_NORMALIZATION = {
     "es": {
