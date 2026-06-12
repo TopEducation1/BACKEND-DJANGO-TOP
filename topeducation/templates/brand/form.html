@@ -1,145 +1,318 @@
 {# marca_blanca/marca_form.html #}
 {% extends "base.html" %}
 
-{% block title %} {% if marca %}Editar marca{% else %}Crear marca blanca{% endif %} {% endblock %}
-{% block header %} {% if marca %}Editar marca{% else %}Crear marca blanca{% endif %}
-  <p class="text-[16px] text-gray-200">
-    Define el nombre, slug, colores y descripción de la marca.
-  </p> 
+{% block title %}
+  {% if marca %}Editar marca{% else %}Crear marca blanca{% endif %}
+{% endblock %}
+
+{% block header %}
+  {% if marca %}Editar marca{% else %}Crear marca blanca{% endif %}
 {% endblock %}
 
 {% block botons %}
-<a href="{% url 'brand_list' %}"
-    class="text-sm text-gray-300 hover:text-gray-200">
-  &larr; Volver al listado
-</a>
+  <a
+    href="{% url 'brand_list' %}"
+    class="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-100"
+  >
+    ← Volver al listado
+  </a>
 {% endblock %}
 
 {% block content %}
-<div class="p-6 max-w-4xl mx-auto space-y-6">
+<form id="brand-form" method="post" enctype="multipart/form-data">
+  {% csrf_token %}
 
-  <section class="bg-neutral-700 shadow-sm rounded-lg border border-gray-200">
-    <form method="post" enctype="multipart/form-data" class="space-y-6 p-6">
-      {% csrf_token %}
+  <div class="relative rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
 
-      {% if form.non_field_errors %}
-        <div class="rounded-md bg-red-50 p-3 text-sm text-red-800 mb-2">
-          {{ form.non_field_errors }}
-        </div>
-      {% endif %}
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-200">
-            Nombre de la marca
-          </label>
-          {{ form.nombre }}
-          {{ form.nombre.errors }}
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-200">
-            Slug de la marca
-          </label>
-          {{ form.slug }}
-          {{ form.slug.errors }}
-          <p class="mt-1 text-xs text-gray-300">
-            URL: https://top.education/brand/
-            <span class="font-mono text-gray-200">
-              {{ form.slug.value|default:"mi-marca" }}
-            </span>
-          </p>
+    <!-- Loading overlay -->
+    <div
+      id="brand-form-loading"
+      class="fixed inset-0 z-[9999] hidden items-center justify-center bg-slate-950/50 px-4 backdrop-blur-sm"
+    >
+      <div class="w-full max-w-md rounded-[2rem] bg-white p-6 text-center shadow-[0_24px_80px_rgba(15,23,42,0.25)]">
+        <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#034694]/10 text-[#034694]">
+          <i class="fa-solid fa-spinner fa-spin text-2xl"></i>
         </div>
 
-        <div>
-          <label class="block text-sm font-medium text-gray-200">
-            Logo
-          </label>
-          {{ form.logo }}
-          {{ form.logo.errors }}
-          <p class="mt-1 text-xs text-gray-300">
-            Ej: /brand/logos/mi-logo.png
-          </p>
-        </div>
+        <h3 class="mt-5 text-xl font-black text-slate-950">
+          Guardando información
+        </h3>
 
-        <div>
-          <label class="block text-sm font-medium text-gray-200">
-            Estado
-          </label>
-          {{ form.estado }}
-          {{ form.estado.errors }}
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-gray-200">
-            Color principal
-          </label>
-          <div class="mt-1 flex items-center gap-2">
-            <input type="color"
-                   value="{{ form.color_principal.value|default:'#0F090B' }}"
-                   class="h-9 w-9 rounded-md border border-gray-300 cursor-pointer"
-                   onchange="document.getElementById('id_color_principal').value = this.value;">
-            {{ form.color_principal }}
-          </div>
-          {{ form.color_principal.errors }}
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-gray-200">
-            Color secundario
-          </label>
-          <div class="mt-1 flex items-center gap-2">
-            <input type="color"
-                   value="{{ form.color_secundario.value|default:'#F6F4EF' }}"
-                   class="h-9 w-9 rounded-md border border-gray-300 cursor-pointer"
-                   onchange="document.getElementById('id_color_secundario').value = this.value;">
-            {{ form.color_secundario }}
-          </div>
-          {{ form.color_secundario.errors }}
-        </div>
+        <p class="mt-2 text-sm leading-6 text-slate-500">
+          No cierres esta ventana mientras se procesa la solicitud.
+        </p>
       </div>
+    </div>
+
+    <div class="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
       <div>
-        <label class="block text-sm font-medium text-gray-200">
-          Descripción
-        </label>
-        {{ form.descripcion }}
-        {{ form.descripcion.errors }}
+        <p class="text-xs font-black uppercase tracking-[0.22em] text-[#034694]">
+          Marca blanca
+        </p>
+
+        <h3 class="mt-1 text-2xl font-black text-slate-950">
+          {% if marca %}Datos de la marca{% else %}Nueva marca blanca{% endif %}
+        </h3>
+
+        <p class="mt-2 text-sm text-slate-500">
+          Define el nombre, slug, colores, descripción y contenido principal de la marca.
+        </p>
       </div>
-      <hr class="text-gray-100" />
-      <div>
-          <label class="block text-sm font-medium text-gray-200">
-            Frase introductoria
-          </label>
-          {{ form.phrase }}
-          {{ form.phrase.errors }}
-        </div>
-      <div>
-        <label class="block text-sm font-medium text-gray-200">
-          ¿Quienes somos?
-        </label>
-        {{ form.about_us }}
-        {{ form.about_us.errors }}
-      </div>
-      <div>
-          <label class="block text-sm font-medium text-gray-200">
-            Banner de bienvenida
-          </label>
-          {{ form.banner }}
-          {{ form.banner.errors }}
-          <p class="mt-1 text-xs text-gray-300">
-            Ej: /brand/banners/mi-banner.png
-          </p>
-        </div>
-      <div class="flex justify-end gap-2 pt-2 border-t border-gray-100">
-        <a href="{% url 'brand_list' %}"
-           class="inline-flex items-center rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-200 hover:bg-gray-750">
+
+      <div class="flex flex-wrap gap-3">
+        <button
+          id="submit-brand-btn"
+          type="submit"
+          form="brand-form"
+          class="inline-flex items-center gap-2 rounded-full bg-[#034694] px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          <i id="submit-brand-spinner" class="fa-solid fa-spinner fa-spin hidden"></i>
+          <span id="submit-brand-text">
+            {% if marca %}Guardar cambios{% else %}Crear marca{% endif %}
+          </span>
+        </button>
+
+        <a
+          id="cancel-brand-btn"
+          href="{% url 'brand_list' %}"
+          class="rounded-full bg-slate-100 px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+        >
           Cancelar
         </a>
-        <button type="submit"
-                class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm pointer font-medium text-white shadow hover:bg-blue-700">
-          {% if marca %}Guardar cambios{% else %}Crear marca{% endif %}
-        </button>
       </div>
-    </form>
-  </section>
-</div>
+    </div>
+
+    {% if form.non_field_errors %}
+      <div class="mb-6 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-4 py-3 text-sm font-bold text-[#D33B3E]">
+        {{ form.non_field_errors }}
+      </div>
+    {% endif %}
+
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-12 cont-form">
+
+      <section class="xl:col-span-8">
+        <div class="grid grid-cols-1 gap-5 md:grid-cols-2">
+
+          <div>
+            <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ form.nombre.id_for_label }}">
+              Nombre de la marca
+            </label>
+            {{ form.nombre }}
+            {% if form.nombre.errors %}
+              <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                {{ form.nombre.errors }}
+              </div>
+            {% endif %}
+          </div>
+
+          <div>
+            <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ form.slug.id_for_label }}">
+              Slug de la marca
+            </label>
+            {{ form.slug }}
+
+            <p class="mt-2 rounded-2xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
+              URL:
+              <span class="font-mono font-bold text-slate-700">
+                https://top.education/brand/{{ form.slug.value|default:"mi-marca" }}
+              </span>
+            </p>
+
+            {% if form.slug.errors %}
+              <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                {{ form.slug.errors }}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="md:col-span-2">
+            <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ form.descripcion.id_for_label }}">
+              Descripción
+            </label>
+            {{ form.descripcion }}
+            {% if form.descripcion.errors %}
+              <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                {{ form.descripcion.errors }}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="md:col-span-2">
+            <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ form.phrase.id_for_label }}">
+              Frase introductoria
+            </label>
+            {{ form.phrase }}
+            {% if form.phrase.errors %}
+              <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                {{ form.phrase.errors }}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="md:col-span-2">
+            <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ form.about_us.id_for_label }}">
+              ¿Quiénes somos?
+            </label>
+            {{ form.about_us }}
+            {% if form.about_us.errors %}
+              <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                {{ form.about_us.errors }}
+              </div>
+            {% endif %}
+          </div>
+
+        </div>
+      </section>
+
+      <aside class="xl:col-span-4">
+        <div class="sticky top-24 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
+          <div class="mb-5">
+            <p class="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+              Configuración
+            </p>
+
+            <h4 class="mt-1 text-lg font-black text-slate-950">
+              Identidad visual
+            </h4>
+          </div>
+
+          <div class="grid grid-cols-1 gap-5">
+
+            <div>
+              <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ form.logo.id_for_label }}">
+                Logo
+              </label>
+              {{ form.logo }}
+
+              <p class="mt-2 text-xs text-slate-400">
+                Ej: /brand/logos/mi-logo.png
+              </p>
+
+              {% if form.logo.errors %}
+                <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                  {{ form.logo.errors }}
+                </div>
+              {% endif %}
+            </div>
+
+            <div>
+              <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ form.banner.id_for_label }}">
+                Banner de bienvenida
+              </label>
+              {{ form.banner }}
+
+              <p class="mt-2 text-xs text-slate-400">
+                Ej: /brand/banners/mi-banner.png
+              </p>
+
+              {% if form.banner.errors %}
+                <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                  {{ form.banner.errors }}
+                </div>
+              {% endif %}
+            </div>
+
+            <div>
+              <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ form.estado.id_for_label }}">
+                Estado
+              </label>
+              {{ form.estado }}
+              {% if form.estado.errors %}
+                <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                  {{ form.estado.errors }}
+                </div>
+              {% endif %}
+            </div>
+
+            <div>
+              <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ form.color_principal.id_for_label }}">
+                Color principal
+              </label>
+
+              <div class="flex items-center gap-3">
+                <input
+                  type="color"
+                  value="{{ form.color_principal.value|default:'#0F090B' }}"
+                  class="h-12 w-12 cursor-pointer rounded-2xl border border-slate-200 bg-white p-1"
+                  onchange="document.getElementById('id_color_principal').value = this.value;"
+                >
+                {{ form.color_principal }}
+              </div>
+
+              {% if form.color_principal.errors %}
+                <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                  {{ form.color_principal.errors }}
+                </div>
+              {% endif %}
+            </div>
+
+            <div>
+              <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ form.color_secundario.id_for_label }}">
+                Color secundario
+              </label>
+
+              <div class="flex items-center gap-3">
+                <input
+                  type="color"
+                  value="{{ form.color_secundario.value|default:'#F6F4EF' }}"
+                  class="h-12 w-12 cursor-pointer rounded-2xl border border-slate-200 bg-white p-1"
+                  onchange="document.getElementById('id_color_secundario').value = this.value;"
+                >
+                {{ form.color_secundario }}
+              </div>
+
+              {% if form.color_secundario.errors %}
+                <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                  {{ form.color_secundario.errors }}
+                </div>
+              {% endif %}
+            </div>
+
+          </div>
+        </div>
+      </aside>
+
+    </div>
+  </div>
+</form>
+
+<script>
+  function initBrandFormLoading() {
+    const form = document.getElementById('brand-form');
+    const loading = document.getElementById('brand-form-loading');
+    const submitBtn = document.getElementById('submit-brand-btn');
+    const submitText = document.getElementById('submit-brand-text');
+    const spinner = document.getElementById('submit-brand-spinner');
+    const cancelBtn = document.getElementById('cancel-brand-btn');
+
+    if (!form) return;
+
+    form.addEventListener('submit', function () {
+      if (submitBtn) {
+        submitBtn.disabled = true;
+      }
+
+      if (submitText) {
+        submitText.textContent = 'Guardando...';
+      }
+
+      if (spinner) {
+        spinner.classList.remove('hidden');
+      }
+
+      if (cancelBtn) {
+        cancelBtn.classList.add('pointer-events-none', 'opacity-60');
+      }
+
+      if (loading) {
+        loading.classList.remove('hidden');
+        loading.classList.add('flex');
+      }
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    initBrandFormLoading();
+  });
+</script>
 {% endblock %}

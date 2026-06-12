@@ -1,98 +1,251 @@
 {% load static %}
-  {{ ranking_form.media }}
-  {{ formset.media }}
+{{ ranking_form.media }}
+{{ formset.media }}
 
-<form enctype="multipart/form-data" method="POST">
+<form id="ranking-form" enctype="multipart/form-data" method="POST">
   {% csrf_token %}
 
-  <div class="grid grid-cols-2 gap-6 cont-form text-white">
-    <!-- Columna izquierda: datos del ranking -->
-    <div>
-      <h3 class="my-2 text-xl font-bold">Datos del Ranking</h3>
-      <div class="flex flex-wrap gap-2">
-        {% for field in ranking_form %}
-          {% if field.name == "image" %}
-            <div class="w-full ">
-              {{ field.label_tag }}
-              {% if field.value %}
-                <img id="preview-{{ field.name }}" class="rounded-lg mb-2 w-full" src="{{ field.value.url }}" />
-              {% else %}
-                <img id="preview-{{ field.name }}" class="rounded-lg mb-2 hidden w-full" />
-              {% endif %}
-              {{ field }}
-            </div>
-          {% elif field.name == "tipo" or field.name == "estado" %}
-            <div class="w-[48%]">
-              {{ field.label_tag }} {{ field }}
-            </div>
-          {% else %}
-            <div class="w-full">
-              {{ field.label_tag }} {{ field }}
-            </div>
-          {% endif %}
-          {% for error in field.errors %}
-            <div class="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded mt-1">{{ error }}</div>
-          {% endfor %}
-        {% endfor %}
-      </div>
+  <div class="relative rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
 
-      <div class="flex gap-3 w-full mt-8">
-        <button class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded" type="submit">Guardar</button>
-        <a class="bg-neutral-400 hover:bg-neutral-300 text-neutral-900 font-semibold py-2 px-4 rounded" href="{% url 'rankings' %}">Cancelar</a>
+    <!-- Loading overlay -->
+    <div
+      id="ranking-form-loading"
+      class="fixed inset-0 z-[9999] hidden items-center justify-center bg-slate-950/50 px-4 backdrop-blur-sm"
+    >
+      <div class="w-full max-w-md rounded-[2rem] bg-white p-6 text-center shadow-[0_24px_80px_rgba(15,23,42,0.25)]">
+        <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#034694]/10 text-[#034694]">
+          <i class="fa-solid fa-spinner fa-spin text-2xl"></i>
+        </div>
+
+        <h3 class="mt-5 text-xl font-black text-slate-950">
+          Guardando información
+        </h3>
+
+        <p class="mt-2 text-sm leading-6 text-slate-500">
+          No cierres esta ventana mientras se procesa la solicitud.
+        </p>
       </div>
     </div>
 
-    <!-- Columna derecha: listado del ranking -->
-    <div>
-      <h3 class="my-2 text-xl font-bold">Listado del Ranking</h3>
+    <div class="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div>
+        <p class="text-xs font-black uppercase tracking-[0.22em] text-[#034694]">
+          Gestión de rankings
+        </p>
 
-      {# ¡Crítico! management form del formset #}
-      {{ formset.management_form }}
+        <h3 class="mt-1 text-2xl font-black text-slate-950">
+          Datos del ranking
+        </h3>
 
-      <table id="ranking-entries" class="w-full text-sm">
-        {% for subform in formset %}
-          <tr class="align-top">
-            {{ subform.id }}
-            <td class="universidad-select w-[80%] py-1 px-2">
-              <span class="block text-xs text-neutral-300">{{ subform.universidad.label }}</span>
-              {{ subform.universidad }}
-            </td>
-            <td class="empresa-select w-[80%] py-1 px-2">
-              <span class="block text-xs text-neutral-300">{{ subform.empresa.label }}</span>
-              {{ subform.empresa }}
-            </td>
-            <td class="py-1 w-[10%] px-2">
-              <span class="block text-xs text-neutral-300">{{ subform.posicion.label }}</span>
-              {{ subform.posicion }}
-            </td>
-            <td class="pt-6 w-[5%] px-2">
-              <label class="inline-flex items-center gap-2 bg-red-400/10 px-2 py-1 rounded text-red-400">
-                Eliminar {{ subform.DELETE }}
-              </label>
-            </td>
-          </tr>
-        {% endfor %}
-      </table>
-      {# --- CLAVE: usar <template> para que NO se inicialicen los select2 antes de clonar --- #}
-      <template id="empty-form-row-template">
-        <tr class="align-top">
-          <td class="universidad-select w-[80%] p-2">{{ formset.empty_form.universidad }}</td>
-          <td class="empresa-select w-[80%] p-2">{{ formset.empty_form.empresa }}</td>
-          <td class="p-2 w-[10%]">{{ formset.empty_form.posicion }}</td>
-          <td class="p-2 w-[5%]">
-            <label class="inline-flex items-center gap-2 bg-red-400/10 px-2 py-1 rounded text-red-400">
-              Eliminar {{ formset.empty_form.DELETE }}
-            </label>
-            {{ formset.empty_form.id }}
-          </td>
-        </tr>
-      </template>
+        <p class="mt-2 text-sm text-slate-500">
+          Configura el ranking y organiza sus universidades o empresas asociadas.
+        </p>
+      </div>
 
-      <button type="button" id="add-row"
-        class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 mt-4 rounded">
-        + Agregar elemento
-      </button>
+      <div class="flex flex-wrap gap-3">
+        <button
+          id="submit-ranking-btn"
+          type="submit"
+          form="ranking-form"
+          class="inline-flex items-center gap-2 rounded-full bg-[#034694] px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          <i id="submit-ranking-spinner" class="fa-solid fa-spinner fa-spin hidden"></i>
+          <span id="submit-ranking-text">Guardar ranking</span>
+        </button>
+
+        <a
+          id="cancel-ranking-btn"
+          class="rounded-full bg-slate-100 px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+          href="{% url 'rankings' %}"
+        >
+          Cancelar
+        </a>
+      </div>
     </div>
+
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-12 cont-form">
+
+      <!-- Datos del ranking -->
+      <aside class="xl:col-span-4">
+        <div class="sticky top-24 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
+          <div class="mb-5">
+            <p class="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+              Configuración
+            </p>
+
+            <h4 class="mt-1 text-lg font-black text-slate-950">
+              Información principal
+            </h4>
+          </div>
+
+          <div class="grid grid-cols-1 gap-5">
+            {% for field in ranking_form %}
+              <div class="{% if field.name == 'tipo' or field.name == 'estado' %}sm:col-span-1{% endif %}">
+                <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ field.id_for_label }}">
+                  {{ field.label }}
+                </label>
+
+                {% if field.name == "image" %}
+                  {% if field.value %}
+                    <img
+                      id="preview-{{ field.name }}"
+                      class="mb-3 max-h-56 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
+                      src="{{ field.value.url }}"
+                      alt="{{ field.label }}"
+                    />
+                  {% else %}
+                    <img
+                      id="preview-{{ field.name }}"
+                      class="mb-3 hidden max-h-56 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
+                      alt="{{ field.label }}"
+                    />
+                  {% endif %}
+
+                  {{ field }}
+
+                {% else %}
+                  {{ field }}
+                {% endif %}
+
+                {% if field.help_text %}
+                  <p class="mt-2 text-xs text-slate-400">
+                    {{ field.help_text }}
+                  </p>
+                {% endif %}
+
+                {% for error in field.errors %}
+                  <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                    {{ error }}
+                  </div>
+                {% endfor %}
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      </aside>
+
+      <!-- Listado -->
+      <section class="xl:col-span-8">
+        <div class="rounded-[1.5rem] border border-slate-200 bg-white p-5">
+          <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p class="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                Elementos
+              </p>
+
+              <h4 class="mt-1 text-lg font-black text-slate-950">
+                Listado del ranking
+              </h4>
+            </div>
+
+            <button
+              type="button"
+              id="add-row"
+              class="rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-black"
+            >
+              + Agregar elemento
+            </button>
+          </div>
+
+          {{ formset.management_form }}
+
+          <div class="overflow-x-auto">
+            <table id="ranking-entries" class="w-full min-w-[760px] text-left text-sm">
+              <thead>
+                <tr class="border-b border-slate-200 bg-slate-50 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                  <th class="px-4 py-3">Universidad</th>
+                  <th class="px-4 py-3">Empresa</th>
+                  <th class="px-4 py-3">Posición</th>
+                  <th class="px-4 py-3 text-right">Eliminar</th>
+                </tr>
+              </thead>
+
+              <tbody class="divide-y divide-slate-100">
+                {% for subform in formset %}
+                  <tr class="align-top transition hover:bg-slate-50">
+                    {{ subform.id }}
+
+                    <td class="universidad-select px-4 py-4">
+                      <span class="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-400">
+                        {{ subform.universidad.label }}
+                      </span>
+                      {{ subform.universidad }}
+                    </td>
+
+                    <td class="empresa-select px-4 py-4">
+                      <span class="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-400">
+                        {{ subform.empresa.label }}
+                      </span>
+                      {{ subform.empresa }}
+                    </td>
+
+                    <td class="px-4 py-4">
+                      <span class="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-400">
+                        {{ subform.posicion.label }}
+                      </span>
+                      {{ subform.posicion }}
+                    </td>
+
+                    <td class="px-4 py-4 text-right">
+                      <label class="inline-flex items-center gap-2 rounded-full bg-[#D33B3E]/10 px-3 py-1.5 text-xs font-bold text-[#D33B3E]">
+                        Eliminar {{ subform.DELETE }}
+                      </label>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <template id="empty-form-row-template">
+            <tr class="align-top transition hover:bg-slate-50">
+              <td class="universidad-select px-4 py-4">
+                <span class="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-400">
+                  Universidad
+                </span>
+                {{ formset.empty_form.universidad }}
+              </td>
+
+              <td class="empresa-select px-4 py-4">
+                <span class="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-400">
+                  Empresa
+                </span>
+                {{ formset.empty_form.empresa }}
+              </td>
+
+              <td class="px-4 py-4">
+                <span class="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-400">
+                  Posición
+                </span>
+                {{ formset.empty_form.posicion }}
+              </td>
+
+              <td class="px-4 py-4 text-right">
+                <label class="inline-flex items-center gap-2 rounded-full bg-[#D33B3E]/10 px-3 py-1.5 text-xs font-bold text-[#D33B3E]">
+                  Eliminar {{ formset.empty_form.DELETE }}
+                </label>
+                {{ formset.empty_form.id }}
+              </td>
+            </tr>
+          </template>
+
+        </div>
+      </section>
+
+    </div>
+
+    {% if ranking_form.non_field_errors %}
+      <div class="mt-6 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-4 py-3 text-sm font-bold text-[#D33B3E]">
+        {{ ranking_form.non_field_errors }}
+      </div>
+    {% endif %}
+
+    {% if formset.non_form_errors %}
+      <div class="mt-6 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-4 py-3 text-sm font-bold text-[#D33B3E]">
+        {{ formset.non_form_errors }}
+      </div>
+    {% endif %}
+
   </div>
 </form>
 
@@ -103,35 +256,33 @@
       setTimeout(() => initSelect2ForContext(ctx), 50);
       return;
     }
+
     jQuery(ctx).find('select.django-select2, select.django-select2-heavy').each(function() {
       const $el = jQuery(this);
+
       if ($el.data('select2')) {
-        // destruye instancia previa por si acaso
         $el.select2('destroy');
       }
-      $el.djangoSelect2(); // ← esto añade ?field_id=TOKEN automáticamente
+
+      $el.djangoSelect2();
     });
-    try { (ctx || document).dispatchEvent(new Event('django.select2.init', { bubbles: true })); } catch (e) {}
+
+    try {
+      (ctx || document).dispatchEvent(new Event('django.select2.init', { bubbles: true }));
+    } catch (e) {}
   }
 
-  // NO alterar data-field_id (es un token firmado). Solo reemplaza __prefix__ y limpia.
+  // NO alterar data-field_id. Solo reemplaza __prefix__ y limpia.
   function patchFormsetAttrs(el, index) {
     if (el.name) el.name = el.name.replace(/__prefix__/g, index);
     if (el.id) el.id = el.id.replace(/__prefix__/g, index);
     if (el.htmlFor) el.htmlFor = el.htmlFor.replace(/__prefix__/g, index);
 
     if (el.tagName === 'SELECT') {
-      // limpia rastros de select2 en el clon
       el.removeAttribute('data-select2-id');
       el.removeAttribute('tabindex');
       el.classList.remove('select2-hidden-accessible');
       el.selectedIndex = -1;
-
-      // IMPORTANTE: NO hagas el.setAttribute('data-field_id', ...).
-      // Deja el token tal cual vino en el <template> (django-select2 lo generó en el servidor).
-
-      // Si tu plantilla trae data-ajax--url con field_id, no hace falta tocarlo.
-      // El plugin usa data-field_id para construir la URL final.
     } else if (el.type === 'checkbox') {
       el.checked = false;
     } else if (el.type && el.type !== 'hidden') {
@@ -157,44 +308,96 @@
     }
   }
 
-  document.getElementById('add-row').addEventListener('click', function () {
+  function initRankingFormset() {
+    const addRowBtn = document.getElementById('add-row');
     const table = document.getElementById('ranking-entries');
     const template = document.getElementById('empty-form-row-template');
     const totalFormsInput = document.querySelector('input[name$="-TOTAL_FORMS"]');
-    const index = parseInt(totalFormsInput.value, 10);
 
-    const newRow = template.content.firstElementChild.cloneNode(true);
+    if (!addRowBtn || !table || !template || !totalFormsInput) return;
 
-    newRow.querySelectorAll('input, select, textarea, label').forEach(el => patchFormsetAttrs(el, index));
+    addRowBtn.addEventListener('click', function () {
+      const index = parseInt(totalFormsInput.value, 10);
+      const tbody = table.querySelector('tbody');
 
-    // limpia PK oculto
-    const hiddenPk = newRow.querySelector(`input[name$="-${index}-id"]`);
-    if (hiddenPk) hiddenPk.value = "";
+      const newRow = template.content.firstElementChild.cloneNode(true);
 
-    table.appendChild(newRow);
-    totalFormsInput.value = index + 1;
+      newRow.querySelectorAll('input, select, textarea, label').forEach(el => patchFormsetAttrs(el, index));
 
-    // Re-init solo en la fila nueva
-    initSelect2ForContext(newRow);
-    toggleSelects();
-  });
+      const hiddenPk = newRow.querySelector(`input[name$="-${index}-id"]`);
+      if (hiddenPk) hiddenPk.value = "";
 
-  document.addEventListener('DOMContentLoaded', function () {
-    initSelect2ForContext(document.body); // inicializa filas existentes
-    const tipoRanking = document.getElementById('id_tipo');
-    if (tipoRanking) tipoRanking.addEventListener('change', toggleSelects);
-    toggleSelects();
-  });
+      tbody.appendChild(newRow);
+      totalFormsInput.value = index + 1;
 
-  // Preview imagen (igual que tenías)
+      initSelect2ForContext(newRow);
+      toggleSelects();
+    });
+  }
+
   function previewImage(event, fieldName) {
-    const input = event.target, img = document.getElementById('preview-' + fieldName);
+    const input = event.target;
+    const img = document.getElementById('preview-' + fieldName);
+
+    if (!img) return;
+
     if (input.files && input.files[0]) {
       const reader = new FileReader();
-      reader.onload = e => { img.src = e.target.result; img.classList.remove('hidden'); };
+
+      reader.onload = e => {
+        img.src = e.target.result;
+        img.classList.remove('hidden');
+      };
+
       reader.readAsDataURL(input.files[0]);
     }
   }
+
+  function initRankingFormLoading() {
+    const form = document.getElementById('ranking-form');
+    const loading = document.getElementById('ranking-form-loading');
+    const submitBtn = document.getElementById('submit-ranking-btn');
+    const submitText = document.getElementById('submit-ranking-text');
+    const spinner = document.getElementById('submit-ranking-spinner');
+    const cancelBtn = document.getElementById('cancel-ranking-btn');
+
+    if (!form) return;
+
+    form.addEventListener('submit', function () {
+      if (submitBtn) {
+        submitBtn.disabled = true;
+      }
+
+      if (submitText) {
+        submitText.textContent = 'Guardando...';
+      }
+
+      if (spinner) {
+        spinner.classList.remove('hidden');
+      }
+
+      if (cancelBtn) {
+        cancelBtn.classList.add('pointer-events-none', 'opacity-60');
+      }
+
+      if (loading) {
+        loading.classList.remove('hidden');
+        loading.classList.add('flex');
+      }
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    initSelect2ForContext(document.body);
+    initRankingFormset();
+    initRankingFormLoading();
+
+    const tipoRanking = document.getElementById('id_tipo');
+
+    if (tipoRanking) {
+      tipoRanking.addEventListener('change', toggleSelects);
+    }
+
+    toggleSelects();
+  });
 </script>
-
-

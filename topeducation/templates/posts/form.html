@@ -1,112 +1,290 @@
-<form enctype="multipart/form-data" method="POST">
-    {% csrf_token %}
-    <div class="grid grid-cols-4 gap-4 mt-4 cont-form">
-        <!-- 🧱 Columna izquierda (3/4) -->
-        <div class="col-span-3 space-y-4 grid grid-cols-2 gap-3 ">
-            {% for field in form %}
-                {% if field.name == "nombre_blog" or field.name == "slug" or field.name == "contenido" %}
-                <div {% if field.name == "contenido" %} class="col-span-2" {%endif%} >
-                    <label class="text-white font-bold w-full block mb-1" for="{{ field.id_for_label }}">{{ field.label }}</label>
-                    
-                    {% if field.name == "contenido" %}
-                        <textarea class="w-full border border-white rounded-lg px-4 py-2" name="{{ field.name }}" id="{{ field.id_for_label }}" rows="6">{{ field.value|safe }}</textarea>
-                    {% else %}
-                        <input class="w-full border-1 border-white rounded-lg text-white px-4 py-1" type="{{ field.type }}" name="{{ field.name }}" id="{{ field.id_for_label }}" value="{{ field.value}}" class="form-control">
-                    {% endif %}
+<form id="post-form" enctype="multipart/form-data" method="POST">
+  {% csrf_token %}
 
-                    {% if field.errors %}
-                        <div class="text-danger text-white">
-                            {{ field.errors }}
-                        </div>
-                    {% endif %}
-                </div>
-                {% endif %}
-            {% endfor %}
+  <div class="relative rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+
+    <!-- Loading overlay -->
+    <div
+      id="post-form-loading"
+      class="fixed inset-0 z-[9999] hidden items-center justify-center bg-slate-950/50 px-4 backdrop-blur-sm"
+    >
+      <div class="w-full max-w-md rounded-[2rem] bg-white p-6 text-center shadow-[0_24px_80px_rgba(15,23,42,0.25)]">
+        <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#034694]/10 text-[#034694]">
+          <i class="fa-solid fa-spinner fa-spin text-2xl"></i>
         </div>
 
-        <!-- 🎛️ Columna derecha (1/4) -->
-        <div class="col-span-1 space-y-4">
-            {% for field in form %}
-                {% if field.name != "nombre_blog" and field.name != "slug" and field.name != "contenido" %}
-                <div>
-                    <label class="text-white font-bold w-full block mb-1" for="{{ field.id_for_label }}">{{ field.label }}</label>
+        <h3 class="mt-5 text-xl font-black text-slate-950">
+          Guardando información
+        </h3>
 
-                    {% if field.name == "miniatura_blog" or field.name == "url_img_cta" %}
-                        {% if field.value %}
-                            <img id="preview-{{ field.name }}" src="{{ field.value.url }}" class="rounded-lg mb-2 w-full"/>
-                        {% else %}
-                            <img id="preview-{{ field.name }}" src="#" class="rounded-lg mb-2 hidden w-full" />
-                        {% endif %}
-                        <input 
-                        type="file" 
-                        name="{{ field.name }}" 
-                        id="{{ field.id_for_label }}" 
-                        class="w-full border border-white bg-white rounded-lg px-4 py-1" 
-                        onchange="previewImage(event, '{{ field.name }}')"
-                        />
-                    {% elif field.name == "fecha_redaccion_blog" %}
-                        <input class="w-full border border-white rounded-lg px-4 py-1" type="date" name="{{ field.name }}" id="{{ field.id_for_label }}" value="{{ field.value|date:'Y-m-d' }}">
-                    {% else %}
-                        {{ field }}
-                    {% endif %}
-
-                    {% if field.errors %}
-                        <div class="text-danger text-white">
-                            {{ field.errors }}
-                        </div>
-                    {% endif %}
-                </div>
-                {% endif %}
-            {% endfor %}
-            <div class="flex flex-wrap justify-end gap-3 w-full py-5 sticky top-1 bg-neutral-800">
-          <p class="w-full text-white">Verifique que la información esta completa antes de guardar los cambios.</p>
-          <a class="bg-neutral-500 hover:bg-neutral-400 text-neutral-950 font-bold py-2 px-4 rounded-lg" href="{% url 'posts' %}">Cancelar</a>
-          <input class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg" value="Guardar" type="submit" />
-        </div>
-        </div>
+        <p class="mt-2 text-sm leading-6 text-slate-500">
+          No cierres esta ventana mientras se procesa la solicitud.
+        </p>
+      </div>
     </div>
+
+    <div class="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div>
+        <p class="text-xs font-black uppercase tracking-[0.22em] text-[#034694]">
+          Gestión de blogs
+        </p>
+
+        <h3 class="mt-1 text-2xl font-black text-slate-950">
+          Datos del blog
+        </h3>
+
+        <p class="mt-2 text-sm text-slate-500">
+          Verifique que la información esté completa antes de guardar los cambios.
+        </p>
+      </div>
+
+      <div class="flex flex-wrap gap-3">
+        <button
+          id="submit-post-btn"
+          type="submit"
+          form="post-form"
+          class="inline-flex items-center gap-2 rounded-full bg-[#034694] px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          <i id="submit-post-spinner" class="fa-solid fa-spinner fa-spin hidden"></i>
+          <span id="submit-post-text">Guardar blog</span>
+        </button>
+
+        <a
+          id="cancel-post-btn"
+          class="rounded-full bg-slate-100 px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+          href="{% url 'posts' %}"
+        >
+          Cancelar
+        </a>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-12 cont-form">
+
+      <div class="xl:col-span-8">
+        <div class="grid grid-cols-1 gap-5 md:grid-cols-2">
+
+          {% for field in form %}
+            {% if field.name == "nombre_blog" or field.name == "slug" or field.name == "contenido" %}
+              <div class="{% if field.name == 'contenido' %}md:col-span-2{% endif %}">
+                <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ field.id_for_label }}">
+                  {{ field.label }}
+                </label>
+
+                {% if field.name == "contenido" %}
+                  <textarea
+                    class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10"
+                    name="{{ field.name }}"
+                    id="{{ field.id_for_label }}"
+                    rows="8"
+                  >{{ field.value|default_if_none:""|safe }}</textarea>
+                {% else %}
+                  <input
+                    class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10"
+                    type="{{ field.field.widget.input_type|default:'text' }}"
+                    name="{{ field.name }}"
+                    id="{{ field.id_for_label }}"
+                    value="{{ field.value|default_if_none:'' }}"
+                  >
+                {% endif %}
+
+                {% if field.help_text %}
+                  <p class="mt-2 text-xs text-slate-400">
+                    {{ field.help_text }}
+                  </p>
+                {% endif %}
+
+                {% if field.errors %}
+                  <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                    {{ field.errors }}
+                  </div>
+                {% endif %}
+              </div>
+            {% endif %}
+          {% endfor %}
+
+        </div>
+      </div>
+
+      <div class="xl:col-span-4">
+        <div class="sticky top-24 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
+          <div class="mb-5">
+            <p class="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+              Configuración
+            </p>
+
+            <h4 class="mt-1 text-lg font-black text-slate-950">
+              Datos adicionales
+            </h4>
+          </div>
+
+          <div class="grid grid-cols-1 gap-5">
+            {% for field in form %}
+              {% if field.name != "nombre_blog" and field.name != "slug" and field.name != "contenido" %}
+                <div>
+                  <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ field.id_for_label }}">
+                    {{ field.label }}
+                  </label>
+
+                  {% if field.name == "miniatura_blog" or field.name == "url_img_cta" %}
+                    {% if field.value %}
+                      <img
+                        id="preview-{{ field.name }}"
+                        src="https://app.top.education/{{ field.value }}"
+                        class="mb-3 max-h-52 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
+                        alt="{{ field.label }}"
+                      />
+                    {% else %}
+                      <img
+                        id="preview-{{ field.name }}"
+                        src="#"
+                        class="mb-3 hidden max-h-52 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
+                        alt="{{ field.label }}"
+                      />
+                    {% endif %}
+
+                    <input
+                      type="file"
+                      name="{{ field.name }}"
+                      id="{{ field.id_for_label }}"
+                      class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition file:mr-4 file:rounded-full file:border-0 file:bg-[#034694] file:px-4 file:py-2 file:text-sm file:font-bold file:text-white hover:file:bg-blue-900 focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10"
+                      onchange="previewImage(event, '{{ field.name }}')"
+                    />
+
+                  {% elif field.name == "fecha_redaccion_blog" %}
+                    <input
+                      class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10"
+                      type="date"
+                      name="{{ field.name }}"
+                      id="{{ field.id_for_label }}"
+                      value="{{ field.value|date:'Y-m-d' }}"
+                    >
+
+                  {% else %}
+                    {{ field }}
+                  {% endif %}
+
+                  {% if field.help_text %}
+                    <p class="mt-2 text-xs text-slate-400">
+                      {{ field.help_text }}
+                    </p>
+                  {% endif %}
+
+                  {% if field.errors %}
+                    <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                      {{ field.errors }}
+                    </div>
+                  {% endif %}
+                </div>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    {% if form.non_field_errors %}
+      <div class="mt-6 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-4 py-3 text-sm font-bold text-[#D33B3E]">
+        {{ form.non_field_errors }}
+      </div>
+    {% endif %}
+
+  </div>
 </form>
 
 <script type="text/javascript">
+  function initBlogEditor() {
+    const element = document.querySelector('#id_contenido');
+
+    if (!element) return;
+
     ClassicEditor
-    .create(document.querySelector('#id_contenido'), {
+      .create(element, {
         ckfinder: {
-            uploadUrl: '/ckeditor/upload/'
+          uploadUrl: '/ckeditor/upload/'
         },
         toolbar: [
-            'heading', '|',
-            'bold', 'italic', 'link', 'bulletedList', 'numberedList', '|',
-            'imageUpload', 'blockQuote', 'undo', 'redo'
+          'heading', '|',
+          'bold', 'italic', 'link', 'bulletedList', 'numberedList', '|',
+          'imageUpload', 'blockQuote', 'undo', 'redo'
         ],
         heading: {
-            options: [
-                { model: 'paragraph', title: 'Párrafo', class: 'ck-heading_paragraph' },
-                { model: 'heading2', view: 'h2', title: 'Encabezado 2', class: 'ck-heading_heading2' },
-                { model: 'heading3', view: 'h3', title: 'Encabezado 3', class: 'ck-heading_heading3' },
-                // puedes agregar más si quieres: h4, h5, etc.
-            ]
+          options: [
+            { model: 'paragraph', title: 'Párrafo', class: 'ck-heading_paragraph' },
+            { model: 'heading2', view: 'h2', title: 'Encabezado 2', class: 'ck-heading_heading2' },
+            { model: 'heading3', view: 'h3', title: 'Encabezado 3', class: 'ck-heading_heading3' },
+          ]
         }
-    })
-    .then(editor => {
-            editor.editing.view.change(writer => {
-                writer.setStyle('min-height', '200vh', editor.editing.view.document.getRoot());
-            });
-        })
-    .catch(error => {
+      })
+      .then(editor => {
+        editor.editing.view.change(writer => {
+          writer.setStyle(
+            'min-height',
+            '520px',
+            editor.editing.view.document.getRoot()
+          );
+        });
+      })
+      .catch(error => {
         console.error(error);
-    });
-      
-    function previewImage(event, fieldName) {
-        const input = event.target;
-        const imgPreview = document.getElementById('preview-' + fieldName);
+      });
+  }
 
-        if (input.files && input.files[0]) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                imgPreview.src = e.target.result;
-                imgPreview.classList.remove('hidden'); // por si estaba oculta
-            }
-            reader.readAsDataURL(input.files[0]);
-        }
+  function previewImage(event, fieldName) {
+    const input = event.target;
+    const imgPreview = document.getElementById('preview-' + fieldName);
+
+    if (!imgPreview) return;
+
+    if (input.files && input.files[0]) {
+      const reader = new FileReader();
+
+      reader.onload = function(e) {
+        imgPreview.src = e.target.result;
+        imgPreview.classList.remove('hidden');
+      };
+
+      reader.readAsDataURL(input.files[0]);
     }
+  }
+
+  function initPostFormLoading() {
+    const form = document.getElementById('post-form');
+    const loading = document.getElementById('post-form-loading');
+    const submitBtn = document.getElementById('submit-post-btn');
+    const submitText = document.getElementById('submit-post-text');
+    const spinner = document.getElementById('submit-post-spinner');
+    const cancelBtn = document.getElementById('cancel-post-btn');
+
+    if (!form) return;
+
+    form.addEventListener('submit', function () {
+      if (submitBtn) {
+        submitBtn.disabled = true;
+      }
+
+      if (submitText) {
+        submitText.textContent = 'Guardando...';
+      }
+
+      if (spinner) {
+        spinner.classList.remove('hidden');
+      }
+
+      if (cancelBtn) {
+        cancelBtn.classList.add('pointer-events-none', 'opacity-60');
+      }
+
+      if (loading) {
+        loading.classList.remove('hidden');
+        loading.classList.add('flex');
+      }
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    initBlogEditor();
+    initPostFormLoading();
+  });
 </script>

@@ -1,269 +1,506 @@
 {% load static %}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="google-site-verification" content="5ldRGz6YBhz4b8M6_bfGRhBAJUYvQwvUOFMfeaZAFro" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="google-site-verification" content="5ldRGz6YBhz4b8M6_bfGRhBAJUYvQwvUOFMfeaZAFro" />
 
-    <link rel="icon" href="https://top.education/favicon.ico">
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-    <title>{% block title %}  {% endblock %} | Top.Education</title>
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.datatables.net/2.3.1/css/dataTables.dataTables.css" />
-    <link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet" />
-    <script src="https://cdn.datatables.net/2.3.1/js/dataTables.js"></script>
+  <link rel="icon" href="https://top.education/favicon.ico">
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 
-    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v6.3.0/css/all.css">
-    <script src="https://cdn.ckeditor.com/ckeditor5/35.4.0/classic/ckeditor.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.min.js" integrity="sha512-L0Shl7nXXzIlBSUUPpxrokqq4ojqgZFQczTYlGjzONGTDAcLremjwaWv5A+EDLnxhQzY5xUZPWLOLqYRkY0Cbw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <title>{% block title %}{% endblock %} | Top.Education</title>
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.datatables.net/2.3.1/css/dataTables.dataTables.css" />
+  <link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet" />
+  <script src="https://cdn.datatables.net/2.3.1/js/dataTables.js"></script>
+
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v6.3.0/css/all.css">
+  <script src="https://cdn.ckeditor.com/ckeditor5/35.4.0/classic/ckeditor.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.min.js"></script>
 </head>
+
 <style>
-    .select2-container{
-        width: 100% !important;
-    }
-    select, ::picker(select){
-        appearance: base-select;
-    }
-    select option{
-        background: #000;
-        color: #fff;
-    }
-    #menu-user{
-        display: none;
-    }
-    #btn-menu:hover #menu-user{
-        display: block;
-    }
-    .ck h2{
-        font-size: 1.5em !important;
-        font-weight: bold !important;
-    }
-    .ck h3{
-        font-size: 1.17em !important;
-        font-weight: bold !important;
-    }
-    .ck h4{
-        font-weight: bold !important;
-    }
-    .cont-form input[type=text],.cont-form input[type=date], .cont-form select,.cont-form textarea,.cont-form input[type=number]{
-        width: 100%;
-        padding: 5px 10px;
-        border-radius: 10px;
-        color: #fff;
-        border: 1px solid #fff;
-    }
-    .cont-form .ck-editor{
-        width: 100%;
-    }
-    .ck-editor__editable{
-        height: 200px;
-    }
+  .select2-container {
+    width: 100% !important;
+  }
+
+  select,
+  ::picker(select) {
+    appearance: base-select;
+  }
+
+  select option {
+    background: #fff;
+    color: #111827;
+  }
+
+  .ck h2 {
+    font-size: 1.5em !important;
+    font-weight: bold !important;
+  }
+
+  .ck h3 {
+    font-size: 1.17em !important;
+    font-weight: bold !important;
+  }
+
+  .ck h4 {
+    font-weight: bold !important;
+  }
+
+  .cont-form input[type=text],
+  .cont-form input[type=date],
+  .cont-form select,
+  .cont-form textarea,
+  .cont-form input[type=number] {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 14px;
+    color: #0f172a;
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    outline: none;
+  }
+
+  .cont-form input:focus,
+  .cont-form select:focus,
+  .cont-form textarea:focus {
+    border-color: #034694;
+    box-shadow: 0 0 0 4px rgba(3, 70, 148, .10);
+  }
+
+  .cont-form .ck-editor {
+    width: 100%;
+  }
+
+  .ck-editor__editable {
+    height: 200px;
+  }
+
+  .nav-dropdown:hover .nav-dropdown-menu {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
 </style>
-<body class="bg-neutral-800" id="page-">
-    {% if user.is_authenticated %}
-    <div class="min-h-full">
-        <nav class="bg-neutral-950">
-        <div class="mx-auto container px-4 sm:px-6 lg:px-8">
-            <div class="flex h-16 items-center justify-between">
-            <div class="flex items-center">
-                <div class="shrink-0">
-                <img class="h-9 w-auto" src="https://top.education/assets/logos/TOPEDUCATIONLOGONAV.png" alt="Top.Education">
-                </div>
-                <div class="hidden md:block">
-                <div class="ml-10 flex items-baseline space-x-4">
-                    <a href="{% url 'dashboard' %}" class="rounded-3xl {% if request.path == '/dashboard/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-white" aria-current="page">Escritorio</a>
-                    <a href="{% url 'certifications' %}" class="rounded-3xl {% if request.path == '/certifications/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Certificaciones</a>
-                    <a href="{% url 'posts' %}" class="rounded-3xl {% if request.path == '/posts/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Blogs</a>
-                    <a href="{% url 'categories' %}" class="rounded-3xl {% if request.path == '/category/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Categorias</a>
-                    <a href="{% url 'brand_list' %}" class="rounded-3xl {% if request.path == '/brand/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Marca blanca</a>
-                    <a href="{% url 'admin_purchases_page' %}" class="rounded-3xl {% if request.path == '/bussines/purchases' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Historial de compras</a>
-                    <a href="{% url 'catalog_inspector' %}" class="rounded-3xl {% if request.path == '/inspector/catalog/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Sincronizar</a>
-                </div>
-                </div>
-            </div>
 
-            <div class="hidden md:block">
-                <div class="ml-4 flex items-center md:ml-6">
-                <button type="button" class="relative rounded-full bg-gray-800 p-1 text-gray-400 hover:text-white focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-800 focus:outline-hidden">
-                    <span class="absolute -inset-1.5"></span>
-                    <span class="sr-only">View notifications</span>
-                    <svg class="size-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
-                    </svg>
-                </button>
+<body class="min-h-screen bg-[#F8FAFC] text-slate-900">
 
-                <!-- Profile dropdown -->
-                <div class="relative ml-3" id="btn-menu">
-                    <button type="button" class="relative flex max-w-xs items-center rounded-full bg-gray-800 text-sm focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-800 focus:outline-hidden" id="user-menu-button" aria-expanded="false" aria-haspopup="true">
-                        <span class="absolute -inset-1.5"></span>
-                        <span class="sr-only">Open user menu</span>
-                        <img class="size-8 rounded-full" src="https://top.education/assets/logos/logo-responsive.png" alt="">
-                    </button>
+{% if user.is_authenticated %}
+<div class="min-h-screen">
 
-                    <div id="menu-user" class="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white py-1 shadow-lg ring-1 ring-black/5 focus:outline-hidden" role="menu" aria-orientation="vertical" aria-labelledby="user-menu-button" tabindex="-1">
-                        <a href="#" class="block px-4 py-2 text-sm text-gray-700" role="menuitem" tabindex="-1" id="user-menu-item-0">Perfil</a>
-                        <a href="#" class="block px-4 py-2 text-sm text-gray-700" role="menuitem" tabindex="-1" id="user-menu-item-1">Configuración</a>
-                        <a href="/logout" class="block px-4 py-2 text-sm text-gray-700" role="menuitem" tabindex="-1" id="user-menu-item-2">Cerrar sesión</a>
+  <nav class="sticky top-0 z-50 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
+    <div class="mx-auto container px-4 sm:px-6 lg:px-8">
+      <div class="flex h-18 items-center justify-between gap-4">
+
+        <div class="flex items-center gap-8">
+          <a href="{% url 'dashboard' %}" class="shrink-0">
+            <img
+              class="h-10 w-auto invert"
+              src="https://top.education/assets/logos/TOPEDUCATIONLOGONAV.png"
+              alt="Top.Education"
+            >
+          </a>
+
+          <div class="hidden lg:flex items-center gap-2">
+
+            <a href="{% url 'dashboard' %}"
+              class="rounded-full px-4 py-2 text-sm font-bold transition
+              {% if request.path == '/dashboard/' %}
+                bg-[#034694] text-white shadow-[0_12px_30px_rgba(3,70,148,0.25)]
+              {% else %}
+                text-slate-600 hover:bg-slate-100 hover:text-slate-950
+              {% endif %}">
+              Escritorio
+            </a>
+
+            <a href="{% url 'certifications' %}"
+              class="rounded-full px-4 py-2 text-sm font-bold transition
+              {% if request.path == '/certifications/' %}
+                bg-[#034694] text-white shadow-[0_12px_30px_rgba(3,70,148,0.25)]
+              {% else %}
+                text-slate-600 hover:bg-slate-100 hover:text-slate-950
+              {% endif %}">
+              Certificaciones
+            </a>
+
+            <a href="{% url 'posts' %}"
+              class="rounded-full px-4 py-2 text-sm font-bold transition
+              {% if request.path == '/posts/' %}
+                bg-[#034694] text-white shadow-[0_12px_30px_rgba(3,70,148,0.25)]
+              {% else %}
+                text-slate-600 hover:bg-slate-100 hover:text-slate-950
+              {% endif %}">
+              Blogs
+            </a>
+
+            <!-- Categorías dropdown -->
+            <div class="nav-dropdown relative">
+              <a href="{% url 'categories' %}"
+                class="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold transition
+                {% if request.path == '/category/' %}
+                  bg-[#034694] text-white shadow-[0_12px_30px_rgba(3,70,148,0.25)]
+                {% else %}
+                  text-slate-600 hover:bg-slate-100 hover:text-slate-950
+                {% endif %}">
+                Categorías
+                <i class="fa-solid fa-chevron-down text-[10px]"></i>
+              </a>
+
+              <div class="nav-dropdown-menu invisible absolute left-0 top-full z-50 mt-4 w-[680px] translate-y-3 rounded-[2rem] border border-slate-200 bg-white p-5 opacity-0 shadow-[0_24px_80px_rgba(15,23,42,0.14)] transition-all duration-200">
+
+                <div class="mb-4 flex items-center justify-between border-b border-slate-100 pb-4">
+                  <div>
+                    <p class="text-xs font-black uppercase tracking-[0.22em] text-[#034694]">
+                      Gestión rápida
+                    </p>
+                    <h3 class="text-lg font-black text-slate-950">
+                      Categorías y recursos
+                    </h3>
+                  </div>
+
+                  <a href="{% url 'categories' %}" class="rounded-full bg-slate-950 px-4 py-2 text-xs font-bold text-white transition hover:bg-black">
+                    Ver panel
+                  </a>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                  <a href="{% url 'universities' %}" class="group rounded-2xl border border-slate-100 bg-slate-50 p-4 transition hover:border-[#034694]/20 hover:bg-[#034694]/5">
+                    <div class="flex items-center gap-3">
+                      <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#034694]/10 text-[#034694]">
+                        <i class="fa-solid fa-graduation-cap"></i>
+                      </span>
+                      <div>
+                        <p class="font-bold text-slate-900">Universidades</p>
+                        <p class="text-xs text-slate-500">Gestionar instituciones</p>
+                      </div>
                     </div>
+                  </a>
+
+                  <a href="{% url 'companies' %}" class="group rounded-2xl border border-slate-100 bg-slate-50 p-4 transition hover:border-[#5CC781]/20 hover:bg-[#5CC781]/10">
+                    <div class="flex items-center gap-3">
+                      <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#5CC781]/15 text-[#199653]">
+                        <i class="fa-solid fa-briefcase"></i>
+                      </span>
+                      <div>
+                        <p class="font-bold text-slate-900">Empresas</p>
+                        <p class="text-xs text-slate-500">Aliados y marcas</p>
+                      </div>
+                    </div>
+                  </a>
+
+                  <a href="{% url 'platforms' %}" class="group rounded-2xl border border-slate-100 bg-slate-50 p-4 transition hover:border-[#D33B3E]/20 hover:bg-[#D33B3E]/5">
+                    <div class="flex items-center gap-3">
+                      <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#D33B3E]/10 text-[#D33B3E]">
+                        <i class="fa-solid fa-layer-group"></i>
+                      </span>
+                      <div>
+                        <p class="font-bold text-slate-900">Plataformas</p>
+                        <p class="text-xs text-slate-500">Proveedores de cursos</p>
+                      </div>
+                    </div>
+                  </a>
+
+                  <a href="{% url 'skills' %}" class="group rounded-2xl border border-slate-100 bg-slate-50 p-4 transition hover:border-[#034694]/20 hover:bg-[#034694]/5">
+                    <div class="flex items-center gap-3">
+                      <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#034694]/10 text-[#034694]">
+                        <i class="fa-solid fa-bolt"></i>
+                      </span>
+                      <div>
+                        <p class="font-bold text-slate-900">Skills</p>
+                        <p class="text-xs text-slate-500">Temas y Habilidades</p>
+                      </div>
+                    </div>
+                  </a>
+
+                  <a href="{% url 'tags' %}" class="group rounded-2xl border border-slate-100 bg-slate-50 p-4 transition hover:border-[#D33B3E]/20 hover:bg-[#D33B3E]/5">
+                    <div class="flex items-center gap-3">
+                      <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#D33B3E]/10 text-[#D33B3E]">
+                        <i class="fa-solid fa-signs-post"></i>
+                      </span>
+                      <div>
+                        <p class="font-bold text-slate-900">Categorías blog</p>
+                        <p class="text-xs text-slate-500">Clasificación editorial</p>
+                      </div>
+                    </div>
+                  </a>
+
+                  <a href="{% url 'originals' %}" class="group rounded-2xl border border-slate-100 bg-slate-50 p-4 transition hover:border-[#5CC781]/20 hover:bg-[#5CC781]/10">
+                    <div class="flex items-center gap-3">
+                      <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#5CC781]/15 text-[#199653]">
+                        <i class="fa-solid fa-users"></i>
+                      </span>
+                      <div>
+                        <p class="font-bold text-slate-900">Originals</p>
+                        <p class="text-xs text-slate-500">Contenido propio</p>
+                      </div>
+                    </div>
+                  </a>
+
+                  <a href="{% url 'rankings' %}" class="group col-span-2 rounded-2xl border border-slate-100 bg-gradient-to-r from-[#034694]/5 via-[#D33B3E]/5 to-[#5CC781]/10 p-4 transition hover:border-slate-200">
+                    <div class="flex items-center gap-3">
+                      <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white">
+                        <i class="fa-solid fa-ranking-star"></i>
+                      </span>
+                      <div>
+                        <p class="font-bold text-slate-900">Rankings</p>
+                        <p class="text-xs text-slate-500">Listados destacados y posiciones</p>
+                      </div>
+                    </div>
+                  </a>
                 </div>
-                </div>
+              </div>
             </div>
 
-            <div class="-mr-2 flex md:hidden">
-                <!-- Mobile menu button -->
-                <button
-                  id="mobile-menu-button"
-                  type="button"
-                  class="relative inline-flex items-center justify-center rounded-md bg-neutral-800 p-1 text-neutral-200 hover:bg-neutral-700 hover:text-white focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-800 focus:outline-hidden"
-                  aria-controls="mobile-menu"
-                  aria-expanded="false"
-                >
-                <span class="absolute -inset-0.5"></span>
-                <span class="sr-only">Open main menu</span>
+            <a href="{% url 'brand_list' %}"
+              class="rounded-full px-4 py-2 text-sm font-bold transition
+              {% if request.path == '/brand/' %}
+                bg-[#034694] text-white shadow-[0_12px_30px_rgba(3,70,148,0.25)]
+              {% else %}
+                text-slate-600 hover:bg-slate-100 hover:text-slate-950
+              {% endif %}">
+              Marca blanca
+            </a>
 
-                <!-- Menu closed icon -->
-                <svg id="icon-menu" class="block size-8" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-                </svg>
+            <a href="{% url 'admin_purchases_page' %}"
+              class="rounded-full px-4 py-2 text-sm font-bold transition
+              {% if request.path == '/bussines/purchases' %}
+                bg-[#034694] text-white shadow-[0_12px_30px_rgba(3,70,148,0.25)]
+              {% else %}
+                text-slate-600 hover:bg-slate-100 hover:text-slate-950
+              {% endif %}">
+              Compras
+            </a>
 
-                <!-- Menu open icon -->
-                <svg id="icon-close" class="hidden size-8" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
-                </svg>
-                </button>
-            </div>
+            <a href="{% url 'catalog_inspector' %}"
+              class="rounded-full px-4 py-2 text-sm font-bold transition
+              {% if request.path == '/inspector/catalog/' %}
+                bg-[#034694] text-white shadow-[0_12px_30px_rgba(3,70,148,0.25)]
+              {% else %}
+                text-slate-600 hover:bg-slate-100 hover:text-slate-950
+              {% endif %}">
+              Sincronizar
+            </a>
 
-            </div>
+          </div>
         </div>
 
-        <!-- Mobile menu, show/hide based on menu state. -->
-        <div class="md:hidden hidden" id="mobile-menu">
-            <div class="space-y-1 px-2 pt-2 pb-3 sm:px-3">
-                <a href="{% url 'dashboard' %}" class="block rounded-3xl {% if request.path == '/dashboard/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white" aria-current="page">Escritorio</a>
-                <a href="{% url 'certifications' %}" class="block rounded-3xl {% if request.path == '/certifications/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Certificaciones</a>
-                <a href="{% url 'posts' %}" class="block rounded-3xl {% if request.path == '/posts/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %} px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Blogs</a>
-                <a href="{% url 'categories' %}" class="block rounded-3xl {% if request.path == '/category/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Categorias</a>
-                <a href="{% url 'brand_list' %}" class="block rounded-3xl {% if request.path == '/brand/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Marca blanca</a>
-                <a href="{% url 'admin_purchases_page' %}" class="block rounded-3xl {% if request.path == '/bussines/purchases' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-neutral-600 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-neutral-600 hover:text-white">Historial de compras</a>
-                <a href="{% url 'catalog_inspector' %}" class="block rounded-3xl {% if request.path == '/inspector/catalog/' %}shadow-[0px_0px_10px_3px_#F6F4EF] bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c]{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}  px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white">Sincronizar</a>
-            </div>
+        <div class="hidden lg:flex items-center gap-3">
+          <div class="text-right">
+            <p class="text-sm font-black text-slate-900">
+              {{ user.get_full_name|default:user.username }}
+            </p>
+            <p class="text-xs text-slate-400">
+              {{ user.email|default:"Administrador" }}
+            </p>
+          </div>
 
-            <div class="border-t border-gray-700 pt-4 pb-3">
-            <div class="flex items-center px-5">
-                <div class="shrink-0">
-                    <img class="size-8 rounded-full" src="https://top.education/assets/logos/logo-responsive.png" alt="">
-                </div>
-                <div class="ml-3">
-                  <div class="text-base/5 font-medium text-white">
-                    {{ user.get_full_name|default:user.username }}
-                  </div>
-                  <div class="text-sm font-medium text-gray-400">
-                    {{ user.email|default:"" }}
-                  </div>
-                </div>
-                <button type="button" class="relative ml-auto shrink-0 rounded-full bg-gray-800 p-1 text-gray-400 hover:text-white focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-gray-800 focus:outline-hidden">
-                <span class="absolute -inset-1.5"></span>
-                <span class="sr-only">View notifications</span>
-                    <svg class="size-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
-                    </svg>
-                </button>
-            </div>
-
-            <div class="mt-3 space-y-1 px-2">
-                <a href="#" class="block px-4 py-2 text-sm text-neutral-200" role="menuitem" tabindex="-1" id="user-menu-item-0">Perfil</a>
-                <a href="#" class="block px-4 py-2 text-sm text-neutral-200" role="menuitem" tabindex="-1" id="user-menu-item-1">Configuración</a>
-                <a href="/logout" class="block px-4 py-2 text-sm text-neutral-200" role="menuitem" tabindex="-1" id="user-menu-item-2">Cerrar sesión</a>
-            </div>
-            </div>
+          <a href="/logout" class="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 transition hover:border-[#D33B3E]/30 hover:bg-[#D33B3E]/10 hover:text-[#D33B3E]">
+            Cerrar sesión
+          </a>
         </div>
-        </nav>
 
-        <header class="bg-neutral-700 shadow-sm">
-            <div class="mx-auto container px-5 flex flex-wrap items-center justify-between">
-                <div class="max-w-5xl w-full md:w-auto px-1 pt-3 md:py-3 sm:px-1 lg:px-1">
-                    <h1 class="text-[20px] font-bold tracking-tight text-gray-100">{% block header %}  {% endblock %}</h1>
-                </div>
-                <div class="max-w-2xl px-1 pb-3 md:py-3 sm:px-1 lg:px-1 flex flex-wrap items-center gap-x-3">
-                    {% block botons %} {% endblock %}
-                </div>
-            </div>
-        </header>
-        {% endif %}
-        <main>
-        <div class="mx-auto container px-4 py-3 sm:px-3 lg:px-3">
-            {% if messages %}
-                {% for message in messages %}
-                    {% if message.tags == "success" %}
-                        <div id="alerta" class="bg-teal-100 border border-teal-400 text-teal-700 px-4 py-2 mb-1 rounded relative" role="alert">
-                            <span class="block sm:inline">{{ message|safe }}</span>
-                            <span class="absolute top-0 bottom-0 right-0 px-4 py-3 cursor-pointer" onclick="cerrarAlerta()">
-                            <svg class="fill-current h-6 w-6 text-teal-500" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Close</title><path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z"/></svg>
-                            </span>
-                        </div>
-                    {% endif %}
-                    {% if message.tags == "warning"  %}
-                        <div id="alerta" class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 mb-1 rounded relative" role="alert">
-                            <strong class="font-bold">Error!</strong>
-                            <span class="block sm:inline">{{ message|safe }}</span>
-                            <span class="absolute top-0 bottom-0 right-0 px-4 py-3 cursor-pointer" onclick="cerrarAlerta()">
-                            <svg class="fill-current h-6 w-6 text-red-500" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Close</title><path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z"/></svg>
-                            </span>
-                        </div>
-                    {% endif %}
-                {% endfor %}
-            {% endif %}
-            {% block content %}  {% endblock %}
-        </div>
-        </main>
+        <button
+          id="mobile-menu-button"
+          type="button"
+          class="relative inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white p-2 text-slate-700 shadow-sm transition hover:bg-slate-50 lg:hidden"
+          aria-controls="mobile-menu"
+          aria-expanded="false"
+        >
+          <span class="sr-only">Abrir menú</span>
+
+          <svg id="icon-menu" class="block size-7" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+          </svg>
+
+          <svg id="icon-close" class="hidden size-7" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+
+      </div>
     </div>
-</body>
+
+    <!-- Mobile menu -->
+    <div class="hidden border-t border-slate-200 bg-white lg:hidden" id="mobile-menu">
+      <div class="space-y-2 px-4 py-4">
+
+        <a href="{% url 'dashboard' %}" class="block rounded-2xl px-4 py-3 text-sm font-bold {% if request.path == '/dashboard/' %}bg-[#034694] text-white{% else %}text-slate-700 hover:bg-slate-100{% endif %}">
+          Escritorio
+        </a>
+
+        <a href="{% url 'certifications' %}" class="block rounded-2xl px-4 py-3 text-sm font-bold {% if request.path == '/certifications/' %}bg-[#034694] text-white{% else %}text-slate-700 hover:bg-slate-100{% endif %}">
+          Certificaciones
+        </a>
+
+        <a href="{% url 'posts' %}" class="block rounded-2xl px-4 py-3 text-sm font-bold {% if request.path == '/posts/' %}bg-[#034694] text-white{% else %}text-slate-700 hover:bg-slate-100{% endif %}">
+          Blogs
+        </a>
+
+        <button
+          type="button"
+          id="mobile-category-button"
+          class="flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left text-sm font-bold {% if request.path == '/category/' %}bg-[#034694] text-white{% else %}text-slate-700 hover:bg-slate-100{% endif %}"
+        >
+          Categorías
+          <i id="mobile-category-icon" class="fa-solid fa-chevron-down text-xs transition"></i>
+        </button>
+
+        <div id="mobile-category-menu" class="hidden rounded-[1.5rem] border border-slate-200 bg-slate-50 p-3">
+          <div class="grid grid-cols-1 gap-2">
+            <a href="{% url 'categories' %}" class="rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">Panel de categorías</a>
+            <a href="{% url 'universities' %}" class="rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">Universidades</a>
+            <a href="{% url 'companies' %}" class="rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">Empresas</a>
+            <a href="{% url 'platforms' %}" class="rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">Plataformas</a>
+            <a href="{% url 'skills' %}" class="rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">Skills</a>
+            <a href="{% url 'tags' %}" class="rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">Categorías blog</a>
+            <a href="{% url 'originals' %}" class="rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">Originals</a>
+            <a href="{% url 'rankings' %}" class="rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">Rankings</a>
+          </div>
+        </div>
+
+        <a href="{% url 'brand_list' %}" class="block rounded-2xl px-4 py-3 text-sm font-bold {% if request.path == '/brand/' %}bg-[#034694] text-white{% else %}text-slate-700 hover:bg-slate-100{% endif %}">
+          Marca blanca
+        </a>
+
+        <a href="{% url 'admin_purchases_page' %}" class="block rounded-2xl px-4 py-3 text-sm font-bold {% if request.path == '/bussines/purchases' %}bg-[#034694] text-white{% else %}text-slate-700 hover:bg-slate-100{% endif %}">
+          Historial de compras
+        </a>
+
+        <a href="{% url 'catalog_inspector' %}" class="block rounded-2xl px-4 py-3 text-sm font-bold {% if request.path == '/inspector/catalog/' %}bg-[#034694] text-white{% else %}text-slate-700 hover:bg-slate-100{% endif %}">
+          Sincronizar
+        </a>
+
+      </div>
+
+      <div class="border-t border-slate-200 px-4 py-4">
+        <div class="rounded-[1.5rem] bg-slate-50 p-4">
+          <p class="text-sm font-black text-slate-900">
+            {{ user.get_full_name|default:user.username }}
+          </p>
+          <p class="text-xs text-slate-500">
+            {{ user.email|default:"Administrador" }}
+          </p>
+
+          <a href="/logout" class="mt-4 flex w-full justify-center rounded-full bg-[#D33B3E] px-4 py-3 text-sm font-bold text-white transition hover:bg-red-700">
+            Cerrar sesión
+          </a>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <header class="relative overflow-hidden border-b border-slate-200 bg-white">
+    <div class="pointer-events-none absolute inset-0">
+      <div class="absolute -left-20 top-0 h-40 w-40 rounded-full bg-[#D33B3E]/10 blur-3xl"></div>
+      <div class="absolute right-20 top-0 h-40 w-40 rounded-full bg-[#034694]/10 blur-3xl"></div>
+      <div class="absolute bottom-0 left-1/2 h-32 w-32 rounded-full bg-[#5CC781]/10 blur-3xl"></div>
+    </div>
+
+    <div class="relative mx-auto container flex flex-wrap items-center justify-between gap-4 px-5 py-3">
+      <div>
+        <p class="text-xs font-black uppercase tracking-[0.22em] text-[#034694]">
+          Administración
+        </p>
+        <h1 class="text-2xl font-black tracking-tight text-slate-950">
+          {% block header %}{% endblock %}
+        </h1>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3">
+        {% block botons %}{% endblock %}
+      </div>
+    </div>
+  </header>
+{% endif %}
+
+<main class="{% if user.is_authenticated %}py-6{% endif %}">
+  <div class="mx-auto container px-4 sm:px-6 lg:px-8">
+
+    {% if messages %}
+      {% for message in messages %}
+        {% if message.tags == "success" %}
+          <div id="alerta" class="mb-4 rounded-2xl border border-[#5CC781]/30 bg-[#5CC781]/10 px-5 py-4 text-sm font-semibold text-[#199653]">
+            {{ message|safe }}
+          </div>
+        {% endif %}
+
+        {% if message.tags == "warning" %}
+          <div id="alerta" class="mb-4 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-5 py-4 text-sm font-semibold text-[#D33B3E]">
+            <strong>Error:</strong> {{ message|safe }}
+          </div>
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </div>
+</main>
+
+</div>
 
 <script>
-    function cerrarAlerta() {
-        const alerta = document.getElementById('alerta');
-        if (alerta) alerta.style.display = 'none';
+  function cerrarAlerta() {
+    const alerta = document.getElementById('alerta');
+    if (alerta) alerta.style.display = 'none';
+  }
+
+  (function () {
+    const btn = document.getElementById('mobile-menu-button');
+    const menu = document.getElementById('mobile-menu');
+    const iconMenu = document.getElementById('icon-menu');
+    const iconClose = document.getElementById('icon-close');
+
+    if (!btn || !menu) return;
+
+    function setOpen(isOpen) {
+      menu.classList.toggle('hidden', !isOpen);
+      if (iconMenu) iconMenu.classList.toggle('hidden', isOpen);
+      if (iconClose) iconClose.classList.toggle('hidden', !isOpen);
+      btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
     }
 
-    // ✅ Mobile menu toggle (open/close)
-    (function () {
-        const btn = document.getElementById('mobile-menu-button');
-        const menu = document.getElementById('mobile-menu');
-        const iconMenu = document.getElementById('icon-menu');
-        const iconClose = document.getElementById('icon-close');
+    setOpen(false);
 
-        if (!btn || !menu) return;
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const isOpen = !menu.classList.contains('hidden');
+      setOpen(!isOpen);
+    });
 
-        function setOpen(isOpen) {
-            menu.classList.toggle('hidden', !isOpen);
-            if (iconMenu) iconMenu.classList.toggle('hidden', isOpen);
-            if (iconClose) iconClose.classList.toggle('hidden', !isOpen);
-            btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-        }
+    document.addEventListener('click', function (e) {
+      const isOpen = !menu.classList.contains('hidden');
+      if (!isOpen) return;
+      if (menu.contains(e.target) || btn.contains(e.target)) return;
+      setOpen(false);
+    });
 
-        // inicia cerrado
-        setOpen(false);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') setOpen(false);
+    });
+  })();
 
-        btn.addEventListener('click', function (e) {
-            e.stopPropagation();
-            const isOpen = !menu.classList.contains('hidden');
-            setOpen(!isOpen);
-        });
+  (function () {
+    const btn = document.getElementById('mobile-category-button');
+    const menu = document.getElementById('mobile-category-menu');
+    const icon = document.getElementById('mobile-category-icon');
 
-        // click fuera => cierra
-        document.addEventListener('click', function (e) {
-            const isOpen = !menu.classList.contains('hidden');
-            if (!isOpen) return;
-            if (menu.contains(e.target) || btn.contains(e.target)) return;
-            setOpen(false);
-        });
+    if (!btn || !menu) return;
 
-        // ESC => cierra
-        document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') setOpen(false);
-        });
-    })();
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const isOpen = !menu.classList.contains('hidden');
+
+      menu.classList.toggle('hidden', isOpen);
+
+      if (icon) {
+        icon.classList.toggle('rotate-180', !isOpen);
+      }
+    });
+  })();
 </script>
 
+</body>
 </html>

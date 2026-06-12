@@ -71,6 +71,11 @@ class CompaniesForm(forms.ModelForm):
         model = Empresas
         fields = '__all__'
 
+class PlatformsForm(forms.ModelForm):
+    class Meta:
+        model = Plataformas
+        fields = '__all__'
+
 class TopicsForm(forms.ModelForm):
     class Meta:
         model = Temas

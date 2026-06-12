@@ -1,0 +1,163 @@
+{% load static %}
+
+{{ form.media }}
+
+<div class="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+
+  <div class="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div>
+      <p class="text-xs font-black uppercase tracking-[0.22em] text-[#034694]">
+        Gestión de plataformas
+      </p>
+
+      <h3 class="mt-1 text-2xl font-black text-slate-950">
+        Datos de la plataforma
+      </h3>
+
+      <p class="mt-2 text-sm text-slate-500">
+        Completa la información principal para mostrar esta plataforma en Top.Education.
+      </p>
+    </div>
+
+    <div class="flex flex-wrap gap-3">
+      <button
+        type="submit"
+        form="platform-form"
+        class="rounded-full bg-[#034694] px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-900"
+      >
+        Guardar plataforma
+      </button>
+
+      <a
+        class="rounded-full bg-slate-100 px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+        href="{% url 'platforms' %}"
+      >
+        Cancelar
+      </a>
+    </div>
+  </div>
+
+  <form id="platform-form" enctype="multipart/form-data" method="POST">
+    {% csrf_token %}
+
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2 cont-form">
+
+      {% for field in form %}
+
+        {% if field.name == "plat_img" or field.name == "plat_ico" %}
+          <div class="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
+            <label class="mb-2 block text-sm font-bold text-slate-700">
+              {{ field.label }}
+            </label>
+
+            {% if field.value %}
+              <img
+                id="preview-{{ field.name }}"
+                class="mb-3 max-h-48 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
+                src="https://top.education{{ field.value }}"
+                alt="{{ field.label }}"
+              />
+            {% else %}
+              <img
+                id="preview-{{ field.name }}"
+                class="mb-3 hidden max-h-48 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
+                alt="{{ field.label }}"
+              />
+            {% endif %}
+
+            {{ field }}
+
+            {% if field.help_text %}
+              <p class="mt-2 text-xs text-slate-400">
+                {{ field.help_text }}
+              </p>
+            {% endif %}
+
+            {% for error in field.errors %}
+              <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                {{ error }}
+              </div>
+            {% endfor %}
+          </div>
+
+        {% elif field.name == "plat_est" or field.name == "plat_top" %}
+          <div class="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
+            <label class="flex items-center gap-3 text-sm font-bold text-slate-700">
+              {{ field }}
+              <span>{{ field.label }}</span>
+            </label>
+
+            {% if field.help_text %}
+              <p class="mt-2 text-xs text-slate-400">
+                {{ field.help_text }}
+              </p>
+            {% endif %}
+
+            {% for error in field.errors %}
+              <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                {{ error }}
+              </div>
+            {% endfor %}
+          </div>
+
+        {% else %}
+          <div class="{% if field.name == 'descripcion' or field.name == 'description' %}lg:col-span-2{% endif %}">
+            <label class="mb-2 block text-sm font-bold text-slate-700">
+              {{ field.label }}
+            </label>
+
+            {{ field }}
+
+            {% if field.help_text %}
+              <p class="mt-2 text-xs text-slate-400">
+                {{ field.help_text }}
+              </p>
+            {% endif %}
+
+            {% for error in field.errors %}
+              <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                {{ error }}
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+      {% endfor %}
+
+    </div>
+
+    {% if form.non_field_errors %}
+      <div class="mt-6 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-4 py-3 text-sm font-bold text-[#D33B3E]">
+        {{ form.non_field_errors }}
+      </div>
+    {% endif %}
+  </form>
+</div>
+
+<script>
+  function previewImage(event, fieldName) {
+    const input = event.target;
+    const img = document.getElementById('preview-' + fieldName);
+
+    if (!img) return;
+
+    if (input.files && input.files[0]) {
+      const reader = new FileReader();
+
+      reader.onload = function (e) {
+        img.src = e.target.result;
+        img.classList.remove('hidden');
+      };
+
+      reader.readAsDataURL(input.files[0]);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('input[type="file"]').forEach(function (input) {
+      input.addEventListener('change', function (event) {
+        previewImage(event, input.name);
+      });
+    });
+  });
+</script>

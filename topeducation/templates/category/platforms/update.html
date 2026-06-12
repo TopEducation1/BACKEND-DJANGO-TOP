@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+
+{% block title %} Editar plataforma {% endblock %}
+{% block header %} Editar plataforma: <p class="text-[16px] leading-[1em] font-normal">{{ form.nombre.value }}</p> {% endblock %}
+
+{% block content %}
+{% include 'category/platforms/form.html' %}
+{% endblock %}

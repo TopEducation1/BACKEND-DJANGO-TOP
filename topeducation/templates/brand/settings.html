@@ -1,83 +1,173 @@
 {# marca_blanca/marca_configurar.html #}
 {% extends "base.html" %}
 
+{% block title %} Configurar secciones {% endblock %}
+{% block header %} Configurar secciones {% endblock %}
+
+{% block botons %}
+  <a
+    href="{% url 'brand_list' %}"
+    class="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-100"
+  >
+    ← Volver al listado
+  </a>
+{% endblock %}
+
 {% block content %}
-<div class="p-6 max-w-4xl mx-auto space-y-6">
-  <div class="flex items-center justify-between">
-    <div>
-      <h1 class="text-2xl font-semibold text-gray-100">
-        Configurar secciones · {{ marca.nombre }}
-      </h1>
-      <p class="text-sm text-gray-200">
-        Activa / desactiva y ordena las secciones que se mostrarán en la subpágina de esta marca.
-      </p>
-    </div>
-    <a href="{% url 'brand_list' %}"
-       class="text-sm text-gray-200 hover:text-gray-700">
-      &larr; Volver al listado
-    </a>
-  </div>
+<form id="brand-sections-form" method="post">
+  {% csrf_token %}
 
-  <section class="bg-neutral-700 shadow-sm rounded-lg border border-gray-200">
-    <form method="post" class="space-y-4 p-6">
-      {% csrf_token %}
-      {{ formset.management_form }}
+  <div class="relative rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
 
-      {% if formset.non_form_errors %}
-        <div class="rounded-md bg-red-50 p-3 text-sm text-red-800 mb-2">
-          {{ formset.non_form_errors }}
+    <div
+      id="brand-sections-form-loading"
+      class="fixed inset-0 z-[9999] hidden items-center justify-center bg-slate-950/50 px-4 backdrop-blur-sm"
+    >
+      <div class="w-full max-w-sm rounded-[2rem] bg-white p-6 text-center shadow-[0_24px_80px_rgba(15,23,42,0.25)]">
+        <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#034694]/10 text-[#034694]">
+          <i class="fa-solid fa-spinner fa-spin text-2xl"></i>
         </div>
-      {% endif %}
 
-      <div class="space-y-2">
-        {% for form in formset %}
-          <div class="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2">
-            <div class="flex-1 flex items-center gap-3">
+        <h3 class="mt-5 text-xl font-black text-slate-950">
+          Guardando configuración
+        </h3>
+
+        <p class="mt-2 text-sm leading-6 text-slate-500">
+          No cierres esta ventana mientras se procesa la solicitud.
+        </p>
+      </div>
+    </div>
+
+    <div class="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div>
+        <p class="text-xs font-black uppercase tracking-[0.22em] text-[#034694]">
+          Marca blanca
+        </p>
+
+        <h3 class="mt-1 text-2xl font-black text-slate-950">
+          Configurar secciones · {{ marca.nombre }}
+        </h3>
+
+        <p class="mt-2 text-sm text-slate-500">
+          Activa, desactiva y ordena las secciones que se mostrarán en la subpágina de esta marca.
+        </p>
+      </div>
+
+      <div class="flex flex-wrap gap-3">
+        <button
+          id="submit-brand-sections-btn"
+          type="submit"
+          form="brand-sections-form"
+          class="inline-flex items-center gap-2 rounded-full bg-[#034694] px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          <i id="submit-brand-sections-spinner" class="fa-solid fa-spinner fa-spin hidden"></i>
+          <span id="submit-brand-sections-text">Guardar configuración</span>
+        </button>
+
+        <a
+          id="cancel-brand-sections-btn"
+          href="{% url 'brand_list' %}"
+          class="rounded-full bg-slate-100 px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+        >
+          Cancelar
+        </a>
+      </div>
+    </div>
+
+    {{ formset.management_form }}
+
+    {% if formset.non_form_errors %}
+      <div class="mb-6 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-4 py-3 text-sm font-bold text-[#D33B3E]">
+        {{ formset.non_form_errors }}
+      </div>
+    {% endif %}
+
+    <div class="space-y-3">
+      {% for form in formset %}
+        <div class="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4 transition hover:bg-white">
+          <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
+            <div class="flex flex-1 items-start gap-3">
               {{ form.id }}
 
-              <div class="flex items-center gap-2">
+              <div class="mt-1">
                 {{ form.visible }}
-                <div class="flex flex-col">
-                  <span class="text-sm font-medium text-gray-100">
-                    {% with key=form.nombre_permiso.value %}
-                      {{ section_labels.key|default:form.nombre_permiso.value }}
-                    {% endwith %}
-                  </span>
-                  <span class="text-xs text-gray-400">
-                    clave: {{ form.nombre_permiso.value }}
-                  </span>
-                </div>
+              </div>
+
+              <div>
+                <p class="text-sm font-black text-slate-950">
+                  {% with key=form.nombre_permiso.value %}
+                    {{ section_labels.key|default:form.nombre_permiso.value }}
+                  {% endwith %}
+                </p>
+
+                <p class="mt-1 text-xs font-medium text-slate-400">
+                  clave: {{ form.nombre_permiso.value }}
+                </p>
+
+                {% if form.visible.errors %}
+                  <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                    {{ form.visible.errors }}
+                  </div>
+                {% endif %}
               </div>
             </div>
 
-            <div class="flex items-center gap-3">
-              <div class="flex items-center gap-1">
-                <span class="text-xs text-gray-200">Orden</span>
+            <div class="flex flex-wrap items-center gap-3">
+              <div>
+                <label class="mb-1 block text-xs font-black uppercase tracking-[0.12em] text-slate-400">
+                  Orden
+                </label>
                 {{ form.orden }}
+
+                {% if form.orden.errors %}
+                  <div class="mt-2 rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                    {{ form.orden.errors }}
+                  </div>
+                {% endif %}
               </div>
 
               {% if form.DELETE %}
-                <div class="flex items-center gap-1">
-                  <span class="text-xs text-gray-200">Eliminar</span>
-                  {{ form.DELETE }}
-                </div>
+                <label class="mt-5 inline-flex items-center gap-2 rounded-full bg-[#D33B3E]/10 px-3 py-2 text-xs font-bold text-[#D33B3E]">
+                  Eliminar {{ form.DELETE }}
+                </label>
               {% endif %}
             </div>
-          </div>
-        {% endfor %}
-      </div>
 
-      <div class="flex justify-end gap-2 pt-2 border-t border-gray-100">
-        <a href="{% url 'brand_list' %}"
-           class="inline-flex items-center rounded-md border border-gray-100 px-4 py-2 text-sm font-medium text-gray-950 bg-gray-50 hover:bg-gray-350">
-          Cancelar
-        </a>
-        <button type="submit"
-                class="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-blue-700">
-          Guardar configuración
-        </button>
-      </div>
-    </form>
-  </section>
-</div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+  </div>
+</form>
+
+<script>
+  function initBrandSectionsFormLoading() {
+    const form = document.getElementById('brand-sections-form');
+    const loading = document.getElementById('brand-sections-form-loading');
+    const submitBtn = document.getElementById('submit-brand-sections-btn');
+    const submitText = document.getElementById('submit-brand-sections-text');
+    const spinner = document.getElementById('submit-brand-sections-spinner');
+    const cancelBtn = document.getElementById('cancel-brand-sections-btn');
+
+    if (!form) return;
+
+    form.addEventListener('submit', function () {
+      if (submitBtn) submitBtn.disabled = true;
+      if (submitText) submitText.textContent = 'Guardando...';
+      if (spinner) spinner.classList.remove('hidden');
+      if (cancelBtn) cancelBtn.classList.add('pointer-events-none', 'opacity-60');
+
+      if (loading) {
+        loading.classList.remove('hidden');
+        loading.classList.add('flex');
+      }
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    initBrandSectionsFormLoading();
+  });
+</script>
 {% endblock %}

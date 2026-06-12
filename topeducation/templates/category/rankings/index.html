@@ -4,159 +4,230 @@
 {% block header %} Rankings {% endblock %}
 
 {% block botons %}
-  <p class="text-white">Total de Rankings: {{ paginator.count }}</p>
-  <a class="bg-[#F6F4EF] transition duration-300 hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full"
-     href="{% url 'createRanking' %}">
-    Crear nuevo
-  </a>
+  <div class="flex w-full flex-wrap items-center gap-3 md:w-auto">
+    <span class="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-600 shadow-sm ring-1 ring-slate-200">
+      Total: {{ paginator.count }}
+    </span>
+
+    <a class="rounded-full bg-slate-950 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-black"
+       href="{% url 'createRanking' %}">
+      Crear nuevo
+    </a>
+  </div>
 {% endblock %}
 
 {% block content %}
 
   {% if paginator.num_pages > 0 %}
-    <div class="flex items-center justify-between gap-4 mb-4 flex-wrap">
-      <div class="flex gap-3 items-center">
-        <div class="text-sm text-neutral-300">
-          Página {{ page_obj.number }} de {{ paginator.num_pages }} · {{ paginator.count }} items
-        </div>
+    <div class="mb-5 rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
+      <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
 
-        <nav class="flex items-center gap-2 flex-wrap">
-          {% if show_inicio %}
-            <a class="px-3 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white"
-              title="Ir al inicio"
-              href="?page=1&per_page={{ per_page }}{% if q %}&q={{ q|urlencode }}{% endif %}">
-              <!-- ⏮ -->
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M11 19l-7-7 7-7"/>
-                <path d="M20 19l-7-7 7-7"/>
-              </svg>
-            </a>
-          {% endif %}
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="rounded-full bg-slate-100 px-4 py-2 text-sm font-bold text-slate-600">
+            Página {{ page_obj.number }} de {{ paginator.num_pages }} · {{ paginator.count }} items
+          </div>
 
-          {% for p in page_numbers %}
-            {% if p == page_obj.number %}
-              <span class="px-3 py-1 rounded-full bg-white text-neutral-900 font-bold">{{ p }}</span>
-            {% else %}
-              <a class="px-3 py-1 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white"
-                 href="?page={{ p }}&per_page={{ per_page }}{% if q %}&q={{ q|urlencode }}{% endif %}">
-                {{ p }}
+          <nav class="flex flex-wrap items-center gap-2">
+            {% if show_inicio %}
+              <a class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-600 ring-1 ring-slate-200 transition hover:bg-[#034694] hover:text-white"
+                 title="Ir al inicio"
+                 href="?page=1&per_page={{ per_page }}{% if q %}&q={{ q|urlencode }}{% endif %}">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M11 19l-7-7 7-7"/>
+                  <path d="M20 19l-7-7 7-7"/>
+                </svg>
               </a>
             {% endif %}
-          {% endfor %}
 
-          {% if show_final %}
-            <a class="px-3 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white"
-              title="Ir al final"
-              href="?page={{ paginator.num_pages }}&per_page={{ per_page }}{% if q %}&q={{ q|urlencode }}{% endif %}">
-              <!-- ⏭ -->
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M13 5l7 7-7 7"/>
-                <path d="M4 5l7 7-7 7"/>
-              </svg>
-            </a>
-          {% endif %}
-        </nav>
-
-        <!-- per_page -->
-        <form method="get" class="flex items-center gap-2">
-          <input type="hidden" name="page" value="1">
-          {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
-          <label class="text-sm text-neutral-300">Por página</label>
-          <select name="per_page" onchange="this.form.submit()"
-                  class="bg-neutral-700 text-white rounded-full px-3 py-1">
-            {% for n in per_page_options %}
-              <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+            {% for p in page_numbers %}
+              {% if p == page_obj.number %}
+                <span class="inline-flex h-9 min-w-9 items-center justify-center rounded-full bg-[#034694] px-3 text-sm font-black text-white shadow-[0_10px_25px_rgba(3,70,148,0.22)]">
+                  {{ p }}
+                </span>
+              {% else %}
+                <a class="inline-flex h-9 min-w-9 items-center justify-center rounded-full bg-white px-3 text-sm font-bold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-100"
+                   href="?page={{ p }}&per_page={{ per_page }}{% if q %}&q={{ q|urlencode }}{% endif %}">
+                  {{ p }}
+                </a>
+              {% endif %}
             {% endfor %}
-          </select>
-        </form>
-      </div>
 
-      <!-- buscador -->
-      <form method="get" class="flex items-center gap-2">
-        <input type="hidden" name="per_page" value="{{ per_page }}">
-        <input type="hidden" name="page" value="1">
+            {% if show_final %}
+              <a class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-600 ring-1 ring-slate-200 transition hover:bg-[#034694] hover:text-white"
+                 title="Ir al final"
+                 href="?page={{ paginator.num_pages }}&per_page={{ per_page }}{% if q %}&q={{ q|urlencode }}{% endif %}">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M13 5l7 7-7 7"/>
+                  <path d="M4 5l7 7-7 7"/>
+                </svg>
+              </a>
+            {% endif %}
+          </nav>
 
-        <div class="relative">
-          <input
-            name="q"
-            value="{{ q }}"
-            placeholder="Buscar rankings..."
-            class="w-64 bg-neutral-700 text-white rounded-full pl-10 pr-4 py-2 outline-none ring-1 ring-neutral-600 focus:ring-2 focus:ring-neutral-400"
-          />
-          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-300">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M12.9 14.32a8 8 0 111.414-1.414l3.387 3.387a1 1 0 01-1.414 1.414l-3.387-3.387zM14 8a6 6 0 11-12 0 6 6 0 0112 0z" clip-rule="evenodd" />
-            </svg>
-          </span>
+          <form method="get" class="flex items-center gap-2">
+            <input type="hidden" name="page" value="1">
+            {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+
+            <label class="text-sm font-bold text-slate-500">Por página</label>
+
+            <select name="per_page" onchange="this.form.submit()"
+                    class="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10">
+              {% for n in per_page_options %}
+                <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+              {% endfor %}
+            </select>
+          </form>
         </div>
 
-        <button type="submit" class="px-4 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white">
-          Buscar
-        </button>
+        <form method="get" class="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input type="hidden" name="per_page" value="{{ per_page }}">
+          <input type="hidden" name="page" value="1">
 
-        {% if q %}
-          <a class="px-4 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white"
-            href="?page=1&per_page={{ per_page }}">
-            Limpiar
-          </a>
-        {% endif %}
-      </form>
+          <div class="relative">
+            <input
+              name="q"
+              value="{{ q }}"
+              placeholder="Buscar rankings..."
+              class="w-full rounded-full border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm font-medium text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10 sm:w-72"
+            />
+
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M12.9 14.32a8 8 0 111.414-1.414l3.387 3.387a1 1 0 01-1.414 1.414l-3.387-3.387zM14 8a6 6 0 11-12 0 6 6 0 0112 0z" clip-rule="evenodd" />
+              </svg>
+            </span>
+          </div>
+
+          <button type="submit" class="rounded-full bg-[#034694] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-blue-900">
+            Buscar
+          </button>
+
+          {% if q %}
+            <a class="rounded-full bg-slate-100 px-5 py-2.5 text-center text-sm font-bold text-slate-600 transition hover:bg-slate-200"
+               href="?page=1&per_page={{ per_page }}">
+              Limpiar
+            </a>
+          {% endif %}
+        </form>
+
+      </div>
     </div>
   {% endif %}
 
-  <div class="relative flex flex-col w-full h-full text-neutral-100 bg-neutral-800 shadow-md rounded-lg bg-clip-border">
-    <table class="!w-full text-left table-auto text-neutral-200">
-      <thead>
-        <tr class="text-neutral-300 border-b border-neutral-500 bg-neutral-500">
-          <th class="px-2 py-1"><p class="text-md leading-none">#</p></th>
-          <th class="px-2 py-1"><p class="text-md leading-none">Nombre</p></th>
-          <th class="px-2 py-1"><p class="text-md leading-none">Tipo</p></th>
-          <th class="px-2 py-1"><p class="text-md leading-none">Estado</p></th>
-          <th class="px-2 py-1"><p class="text-md leading-none">Fecha</p></th>
-          <th class="px-2 py-1"><p>Opciones</p></th>
-        </tr>
-      </thead>
+  <div class="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+    <div class="overflow-x-auto">
+      <table class="w-full min-w-[900px] text-left">
+        <thead>
+          <tr class="border-b border-slate-200 bg-slate-50 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+            <th class="px-4 py-4">#</th>
+            <th class="px-4 py-4">Nombre</th>
+            <th class="px-4 py-4">Tipo</th>
+            <th class="px-4 py-4">Estado</th>
+            <th class="px-4 py-4">Fecha</th>
+            <th class="px-4 py-4 text-right">Opciones</th>
+          </tr>
+        </thead>
 
-      <tbody>
-        {% for ranking in rankings %}
-          <tr class="odd:bg-neutral-800 even:bg-neutral-700 hover:bg-neutral-600 transition-colors !rounded-xl overflow-hidden">
-            <td class="p-2"><p class="text-sm font-bold">{{ ranking.id }}</p></td>
-            <td class="p-2"><p class="text-sm font-bold">{{ ranking.nombre }}</p></td>
-            <td class="p-2"><p class="text-sm">{{ ranking.tipo }}</p></td>
-            <td class="p-2"><p class="text-sm">{{ ranking.estado }}</p></td>
-            <td class="p-2"><p class="text-sm">{{ ranking.fecha }}</p></td>
-            <td class="p-2">
-              <div class="flex gap-2">
-                <a class="bg-[#F6F4EF] transition duration-300 hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-2 px-4 rounded-full"
-                   href="{% url 'updateRanking' ranking.id %}" title="Editar">
-                  <i class="fa-regular fa-pen-to-square"></i>
-                </a>
-                <button onclick="openDeleteModal({{ ranking.id }})"
-                        class="bg-red-500 hover:bg-red-700 text-white cursor-pointer font-bold py-2 px-4 rounded-full"
-                        title="Eliminar">
-                  <i class="fa-regular fa-trash-can"></i>
-                </button>
-              </div>
-            </td>
-          </tr>
-        {% empty %}
-          <tr>
-            <td colspan="6" class="p-4 text-neutral-300">No hay rankings para mostrar.</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+        <tbody class="divide-y divide-slate-100">
+          {% for ranking in rankings %}
+            <tr class="transition hover:bg-slate-50">
+              <td class="px-4 py-4">
+                <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">
+                  {{ ranking.id }}
+                </span>
+              </td>
+
+              <td class="px-4 py-4">
+                <p class="max-w-[360px] text-sm font-black leading-5 text-slate-950">
+                  {{ ranking.nombre }}
+                </p>
+              </td>
+
+              <td class="px-4 py-4">
+                <span class="rounded-full bg-[#034694]/10 px-3 py-1 text-xs font-bold text-[#034694]">
+                  {{ ranking.tipo }}
+                </span>
+              </td>
+
+              <td class="px-4 py-4">
+                {% if ranking.estado %}
+                  <span class="rounded-full bg-[#5CC781]/15 px-3 py-1 text-xs font-bold text-[#199653]">
+                    Activo
+                  </span>
+                {% else %}
+                  <span class="rounded-full bg-[#D33B3E]/10 px-3 py-1 text-xs font-bold text-[#D33B3E]">
+                    Inactivo
+                  </span>
+                {% endif %}
+              </td>
+
+              <td class="px-4 py-4">
+                <p class="text-sm font-medium text-slate-500">
+                  {{ ranking.fecha }}
+                </p>
+              </td>
+
+              <td class="px-4 py-4">
+                <div class="flex justify-end gap-2">
+                  <a class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-700 transition hover:bg-[#5CC781] hover:text-slate-950"
+                     href="{% url 'updateRanking' ranking.id %}"
+                     title="Editar">
+                    <i class="fa-regular fa-pen-to-square"></i>
+                  </a>
+
+                  <button onclick="openDeleteModal({{ ranking.id }})"
+                          class="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-[#D33B3E]/10 text-[#D33B3E] transition hover:bg-[#D33B3E] hover:text-white"
+                          title="Eliminar">
+                    <i class="fa-regular fa-trash-can"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="6" class="px-4 py-10 text-center">
+                <div class="mx-auto max-w-md">
+                  <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+                    <i class="fa-solid fa-ranking-star text-xl"></i>
+                  </div>
+
+                  <p class="mt-4 text-sm font-bold text-slate-600">
+                    No hay rankings para mostrar.
+                  </p>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+
+      </table>
+    </div>
   </div>
 
-  <!-- Modal de confirmación -->
-  <div id="deleteModal" class="fixed inset-0 bg-neutral-800/60 backdrop-blur-sm bg-opacity-50 flex items-center justify-center hidden z-50">
-    <div class="bg-white p-6 rounded-lg shadow-lg text-center w-80">
-      <p class="text-lg font-semibold mb-4">¿Estás seguro de que deseas eliminar este ranking?</p>
-      <div class="flex justify-center gap-4">
-        <button onclick="closeModal()" class="bg-gray-300 hover:bg-gray-400 px-4 py-2 rounded">Cancelar</button>
+  <div id="deleteModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/50 px-4 backdrop-blur-sm">
+    <div class="w-full max-w-md rounded-[2rem] bg-white p-6 text-center shadow-[0_24px_80px_rgba(15,23,42,0.25)]">
+      <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#D33B3E]/10 text-[#D33B3E]">
+        <i class="fa-regular fa-trash-can text-xl"></i>
+      </div>
+
+      <h3 class="mt-5 text-xl font-black text-slate-950">
+        Eliminar ranking
+      </h3>
+
+      <p class="mt-2 text-sm leading-6 text-slate-500">
+        ¿Estás seguro de que deseas eliminar este ranking? Esta acción no se puede deshacer.
+      </p>
+
+      <div class="mt-6 flex justify-center gap-3">
+        <button onclick="closeModal()" class="rounded-full bg-slate-100 px-5 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-200">
+          Cancelar
+        </button>
+
         <form id="deleteForm" method="post" action="">
           {% csrf_token %}
-          <button type="submit" class="bg-red-500 hover:bg-red-700 text-white px-4 py-2 rounded">Eliminar</button>
+          <button type="submit" class="rounded-full bg-[#D33B3E] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-red-700">
+            Eliminar
+          </button>
         </form>
       </div>
     </div>
@@ -167,13 +238,17 @@
       const modal = document.getElementById("deleteModal");
       const form = document.getElementById("deleteForm");
 
-      // TODO: ajusta a tu ruta real de delete de rankings
       form.action = `/rankings/${rankingId}/delete/`;
+
       modal.classList.remove("hidden");
+      modal.classList.add("flex");
     }
 
     function closeModal() {
-      document.getElementById("deleteModal").classList.add("hidden");
+      const modal = document.getElementById("deleteModal");
+
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
     }
   </script>
 

@@ -1,140 +1,218 @@
 {% extends "base.html" %}
 
-{% block title %} Categorias {% endblock %}
-{% block header %} Categorias {% endblock %}
+{% block title %} Categorías {% endblock %}
+{% block header %} Categorías {% endblock %}
+
 {% block botons %}
-<a class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full" href="{% url 'createUniversity' %}">Crear universidad</a>
-<a class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full" href="{% url 'createTopic' %}">Crear tema o habilidad</a>
-<a class="bg-[#F6F4EF] transition duration-300  hover:text-shadow-[0_35px_35px_rgb(255_255_255_/_0.25)] !text-[#1c1c1c] font-bold py-1 px-4 rounded-full" href="{% url 'createTag' %}">Crear tag</a>
+  <div class="flex w-full flex-wrap items-center gap-3 md:w-auto">
+    <a class="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-[#034694] hover:text-white"
+       href="{% url 'createUniversity' %}">
+      Crear universidad
+    </a>
+
+    <a class="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-[#D33B3E] hover:text-white"
+       href="{% url 'createTag' %}">
+      Crear categoría blog
+    </a>
+  </div>
 {% endblock %}
 
-{% block content %} 
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 h-50mt-6">
-        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
-            <div class="flex flex-row -mx-3">
-                <div class="flex-none w-2/3 max-w-full px-3">
-                    <div>
-                        <p class="mb-0 font-sans font-semibold text-[1.5rem] text-white leading-[1em]">Universidades</p>
-                        <h5 class="mb-0 font-bold text-[4rem] text-white">
-                        {{ universities |length }} 
-                        </h5>
-                    </div>
-                </div>
-                <div class="px-3 text-right basis-1/3">
-                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
-                        <i class="fa-solid fa-graduation-cap text-3xl text-white"></i>
-                    </div><br><br>
-                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'universities' %}">Ver todo</a>
-                </div>
-            </div>
-        </div>
-        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
-          <div class="flex flex-row -mx-3">
-                <div class="flex-none w-2/3 max-w-full px-3">
-                    <div>
-                        <p class="mb-0 font-sans font-semibold text-[1.5rem] text-white leading-[1em]">Empresas</p>
-                        <h5 class="mb-0 font-bold text-[4rem] text-white">
-                        {{ companies |length }}
-                        </h5>
-                    </div>
-                </div>
-                <div class="px-3 text-right basis-1/3">
-                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
-                        <i class="fa-solid fa-briefcase text-3xl text-white"></i>
-                    </div><br><br>
-                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'companies' %}">Ver todo</a>
-                </div>
-            </div>
-        </div>
-        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
-            <div class="flex flex-row -mx-3">
-                <div class="flex-none w-2/3 max-w-full px-3">
-                    <div>
-                        <p class="mb-0 font-sans font-semibold text-[1.5rem] text-white leading-[1em]">Tema / Habilidad</p>
-                        <h5 class="mb-0 font-bold text-[4rem] text-white">
-                        {{ topics|length }}
-                        </h5>
-                    </div>
-                </div>
-                <div class="px-3 text-right basis-1/3">
-                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
-                        <i class="fa-solid fa-layer-group text-3xl text-white"></i>
-                    </div><br><br>
-                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'topics' %}">Ver todo</a>
-                </div>
-            </div>
-        </div>
-        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
-            <div class="flex flex-row -mx-3">
-                <div class="flex-none w-2/3 max-w-full px-3">
-                    <div>
-                        <p class="mb-0 font-sans font-semibold text-[1.5rem] text-white leading-[1em]">Skills</p>
-                        <h5 class="mb-0 font-bold text-[4rem] text-white">
-                        {{ skills|length }}
-                        </h5>
-                    </div>
-                </div>
-                <div class="px-3 text-right basis-1/3">
-                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
-                        <i class="fa-solid fa-layer-group text-3xl text-white"></i>
-                    </div><br><br>
-                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'skills' %}">Ver todo</a>
-                </div>
-            </div>
-        </div>
-        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
-            <div class="flex flex-row -mx-3">
-                <div class="flex-none w-2/3 max-w-full px-3">
-                    <div>
-                        <p class="mb-0 font-sans font-semibold leading-normal text-[1.5rem] text-white">Categorias blog</p>
-                        <h5 class="mb-0 font-bold text-7xl text-white">
-                        {{ cat_blog|length }}
-                        </h5>
-                    </div>
-                </div>
-                <div class="px-3 text-right basis-1/3">
-                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
-                        <i class="fa-solid fa-signs-post text-3xl text-white"></i>
-                    </div><br><br>
-                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'tags' %}">Ver todo</a>
-                </div>
-            </div>
-        </div>
-        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
-            <div class="flex flex-row -mx-3">
-                <div class="flex-none w-2/3 max-w-full px-3">
-                    <div>
-                        <p class="mb-0 font-sans font-semibold leading-normal text-[1.5rem] text-white">Originals</p>
-                        <h5 class="mb-0 font-bold text-7xl text-white">
-                        {{ originals|length }}
-                        </h5>
-                    </div>
-                </div>
-                <div class="px-3 text-right basis-1/3">
-                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
-                        <i class="fa-solid fa-users text-2xl mt-1 text-white"></i>
-                    </div><br><br>
-                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'originals' %}">Ver todo</a>
-                </div>
-            </div>
-        </div>
-        <div class="bg-neutral-700 rounded-xl shadow-lg px-6 py-4 border border-neutral-500">
-            <div class="flex flex-row -mx-3">
-                <div class="flex-none w-2/3 max-w-full px-3">
-                    <div>
-                        <p class="mb-0 font-sans font-semibold leading-normal text-[1.5rem] text-white">Rankings</p>
-                        <h5 class="mb-0 font-bold text-7xl text-white">
-                        {{ rankings |length }}
-                        </h5>
-                    </div>
-                </div>
-                <div class="px-3 text-right basis-1/3">
-                    <div class="inline-block w-12 h-12 text-center p-2 rounded-lg bg-gradient-to-tl from-blue-700 to-green-500">
-                        <i class="fa-solid fa-ranking-star text-2xl mt-1 text-white"></i>
-                    </div><br><br>
-                    <a class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full ml-[-100px] mt-10" href="{% url 'rankings' %}">Ver todo</a>
-                </div>
-            </div>
-        </div>
+{% block content %}
+<div class="space-y-6">
+
+  <div class="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+    <div>
+      <p class="text-xs font-black uppercase tracking-[0.22em] text-[#034694]">
+        Gestión rápida
+      </p>
+
+      <h3 class="mt-1 text-xl font-black text-slate-950">
+        Categorías y recursos
+      </h3>
+
+      <p class="mt-2 text-sm text-slate-500">
+        Administra universidades, empresas, skills, categorías de blog, originals y rankings desde un solo lugar.
+      </p>
     </div>
+  </div>
+
+  <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+
+    <div class="group relative overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
+      <div class="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-[#034694]/10 blur-3xl"></div>
+
+      <div class="relative z-10 flex items-start justify-between gap-4">
+        <div>
+          <p class="text-sm font-black uppercase tracking-[0.16em] text-slate-400">
+            Universidades
+          </p>
+
+          <h5 class="mt-4 text-6xl font-black leading-none text-slate-950">
+            {{ universities|length }}
+          </h5>
+
+          <p class="mt-3 text-sm text-slate-500">
+            Instituciones educativas registradas.
+          </p>
+        </div>
+
+        <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#034694]/10 text-[#034694]">
+          <i class="fa-solid fa-graduation-cap text-2xl"></i>
+        </div>
+      </div>
+
+      <a class="relative z-10 mt-6 inline-flex rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-black"
+         href="{% url 'universities' %}">
+        Ver todo
+      </a>
+    </div>
+
+    <div class="group relative overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
+      <div class="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-[#5CC781]/15 blur-3xl"></div>
+
+      <div class="relative z-10 flex items-start justify-between gap-4">
+        <div>
+          <p class="text-sm font-black uppercase tracking-[0.16em] text-slate-400">
+            Empresas
+          </p>
+
+          <h5 class="mt-4 text-6xl font-black leading-none text-slate-950">
+            {{ companies|length }}
+          </h5>
+
+          <p class="mt-3 text-sm text-slate-500">
+            Aliados, empresas y marcas educativas.
+          </p>
+        </div>
+
+        <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#5CC781]/15 text-[#199653]">
+          <i class="fa-solid fa-briefcase text-2xl"></i>
+        </div>
+      </div>
+
+      <a class="relative z-10 mt-6 inline-flex rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-black"
+         href="{% url 'companies' %}">
+        Ver todo
+      </a>
+    </div>
+
+    <div class="group relative overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
+      <div class="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-[#034694]/10 blur-3xl"></div>
+
+      <div class="relative z-10 flex items-start justify-between gap-4">
+        <div>
+          <p class="text-sm font-black uppercase tracking-[0.16em] text-slate-400">
+            Skills
+          </p>
+
+          <h5 class="mt-4 text-6xl font-black leading-none text-slate-950">
+            {{ skills|length }}
+          </h5>
+
+          <p class="mt-3 text-sm text-slate-500">
+            Habilidades asociadas a certificaciones.
+          </p>
+        </div>
+
+        <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#034694]/10 text-[#034694]">
+          <i class="fa-solid fa-bolt text-2xl"></i>
+        </div>
+      </div>
+
+      <a class="relative z-10 mt-6 inline-flex rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-black"
+         href="{% url 'skills' %}">
+        Ver todo
+      </a>
+    </div>
+
+    <div class="group relative overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
+      <div class="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-[#D33B3E]/10 blur-3xl"></div>
+
+      <div class="relative z-10 flex items-start justify-between gap-4">
+        <div>
+          <p class="text-sm font-black uppercase tracking-[0.16em] text-slate-400">
+            Categorías blog
+          </p>
+
+          <h5 class="mt-4 text-6xl font-black leading-none text-slate-950">
+            {{ cat_blog|length }}
+          </h5>
+
+          <p class="mt-3 text-sm text-slate-500">
+            Clasificación editorial de recursos.
+          </p>
+        </div>
+
+        <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#D33B3E]/10 text-[#D33B3E]">
+          <i class="fa-solid fa-signs-post text-2xl"></i>
+        </div>
+      </div>
+
+      <a class="relative z-10 mt-6 inline-flex rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-black"
+         href="{% url 'tags' %}">
+        Ver todo
+      </a>
+    </div>
+
+    <div class="group relative overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
+      <div class="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-[#5CC781]/15 blur-3xl"></div>
+
+      <div class="relative z-10 flex items-start justify-between gap-4">
+        <div>
+          <p class="text-sm font-black uppercase tracking-[0.16em] text-slate-400">
+            Originals
+          </p>
+
+          <h5 class="mt-4 text-6xl font-black leading-none text-slate-950">
+            {{ originals|length }}
+          </h5>
+
+          <p class="mt-3 text-sm text-slate-500">
+            Contenido propio y colecciones destacadas.
+          </p>
+        </div>
+
+        <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#5CC781]/15 text-[#199653]">
+          <i class="fa-solid fa-users text-2xl"></i>
+        </div>
+      </div>
+
+      <a class="relative z-10 mt-6 inline-flex rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-black"
+         href="{% url 'originals' %}">
+        Ver todo
+      </a>
+    </div>
+
+    <div class="group relative overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
+      <div class="absolute -right-14 -top-14 h-40 w-40 rounded-full bg-[#034694]/10 blur-3xl"></div>
+      <div class="absolute -bottom-16 left-10 h-40 w-40 rounded-full bg-[#D33B3E]/10 blur-3xl"></div>
+
+      <div class="relative z-10 flex items-start justify-between gap-4">
+        <div>
+          <p class="text-sm font-black uppercase tracking-[0.16em] text-slate-400">
+            Rankings
+          </p>
+
+          <h5 class="mt-4 text-6xl font-black leading-none text-slate-950">
+            {{ rankings|length }}
+          </h5>
+
+          <p class="mt-3 text-sm text-slate-500">
+            Listados destacados y posiciones.
+          </p>
+        </div>
+
+        <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-950 text-white">
+          <i class="fa-solid fa-ranking-star text-2xl"></i>
+        </div>
+      </div>
+
+      <a class="relative z-10 mt-6 inline-flex rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-black"
+         href="{% url 'rankings' %}">
+        Ver todo
+      </a>
+    </div>
+
+  </div>
+</div>
 {% endblock %}

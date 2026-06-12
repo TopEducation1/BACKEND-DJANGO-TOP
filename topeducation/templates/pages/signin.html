@@ -4,44 +4,104 @@
 {% block header %} Iniciar sesión {% endblock %}
 
 {% block content %}
-  <div class="flex min-h-full flex-col justify-center px-6 py-12 lg:px-8 ">
-    <div class="sm:mx-auto sm:w-full sm:max-w-sm">
-      <img class="mx-auto h-30 w-auto" src="https://top.education/assets/logos/TOPEDUCATIONLOGONAV.png" alt="Top.Education">
-      <h2 class="mt-5 text-center text-2xl/9 font-bold tracking-tight text-gray-100">Inicia sesión en tu cuenta</h2>
-    </div>
-    
-    <div class="mt-10 sm:mx-auto sm:w-full sm:max-w-sm">
-      <form class="space-y-6 text-white" action="/signin/" method="POST">
-        {% csrf_token %}
-       {{error}}
-        <div>
-          <label for="email" class="block text-sm/6 font-medium text-gray-100">Nombre de usuario</label>
-          <div class="mt-2">
-            <input type="text" name="username" id="email"  required class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-blue-600 sm:text-sm/6">
-          </div>
+<section class="relative overflow-hidden bg-white">
+
+  <!-- Fondo decorativo -->
+  <div class="pointer-events-none absolute inset-0">
+    <div class="absolute -top-32 -left-32 h-80 w-80 rounded-full bg-[#D33B3E]/15 blur-3xl"></div>
+    <div class="absolute top-20 -right-24 h-96 w-96 rounded-full bg-[#034694]/15 blur-3xl"></div>
+    <div class="absolute bottom-0 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full bg-[#5CC781]/15 blur-3xl"></div>
+
+    <div class="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,rgba(3,70,148,0.10)_1px,transparent_0)] [background-size:28px_28px]"></div>
+  </div>
+
+  <div class="relative z-10 flex min-h-screen items-center justify-center px-6 py-12 lg:px-8">
+    <div class="w-full max-w-md">
+
+      <!-- Card -->
+      <div class="rounded-[2rem] border border-slate-200/80 bg-white/85 p-8 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl sm:p-10">
+
+        <div class="text-center">
+          <img
+            class="mx-auto h-16 w-auto invert"
+            src="https://top.education/assets/logos/TOPEDUCATIONLOGONAV.png"
+            alt="Top.Education"
+          >
+
+          <span class="mt-2 inline-flex rounded-full bg-[#034694]/10 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.22em] text-[#034694]">
+            Bienvenido
+          </span>
+
+          <h2 class="mt-5 text-3xl font-semibold  text-slate-950">
+            Inicia sesión
+          </h2>
         </div>
-  
-        <div>
-          <div class="flex items-center justify-between">
-            <label for="password" class="block text-sm/6 font-medium text-gray-100">Contraseña</label>
-            <div class="text-sm">
-              <a href="#" class="font-semibold text-blue-600 hover:text-blue-500">¿Has olvidado tu contraseña?</a>
+
+        <form class="mt-9 space-y-5" action="/signin/" method="POST">
+          {% csrf_token %}
+
+          {% if error %}
+          <div class="rounded-2xl border border-[#D33B3E]/20 bg-[#D33B3E]/10 px-4 py-3 text-sm font-medium text-[#D33B3E]">
+            {{ error }}
+          </div>
+          {% endif %}
+
+          <div>
+            <label for="email" class="block text-sm font-semibold text-slate-700">
+              Nombre de usuario
+            </label>
+
+            <div class="mt-2">
+              <input
+                type="text"
+                name="username"
+                id="email"
+                required
+                class="block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10"
+                placeholder="Ingresa tu usuario"
+              >
             </div>
           </div>
-          <div class="mt-2">
-            <input type="password" name="password" id="password" autocomplete="current-password" required class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-blue-600 sm:text-sm/6">
+
+          <div>
+            <div class="flex items-center justify-between gap-4">
+              <label for="password" class="block text-sm font-semibold text-slate-700">
+                Contraseña
+              </label>
+
+              <a href="#" class="text-sm font-semibold text-[#034694] transition hover:text-[#D33B3E]">
+                ¿La olvidaste?
+              </a>
+            </div>
+
+            <div class="mt-2">
+              <input
+                type="password"
+                name="password"
+                id="password"
+                autocomplete="current-password"
+                required
+                class="block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10"
+                placeholder="Ingresa tu contraseña"
+              >
+            </div>
           </div>
-        </div>
-  
-        <div>
-          <button type="submit" class="flex w-full justify-center rounded-md bg-blue-600 px-3 py-1.5 text-sm/6 font-semibold text-white shadow-xs hover:bg-blue-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">Iniciar sesión</button>
-        </div>
-      </form>
-  
-      <p class="mt-10 text-center text-sm/6 text-gray-500">
-        Todos los derechos resevados
-        <a href="#" class="font-semibold text-blue-600 hover:text-blue-500">2025 | Top.Education</a>
-      </p>
+
+          <button
+            type="submit"
+            class="group relative flex w-full items-center justify-center overflow-hidden rounded-full bg-slate-950 px-6 py-3.5 text-sm font-bold text-white shadow-[0_16px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-black"
+          >
+            <span class="relative z-10">Iniciar sesión</span>
+          </button>
+        </form>
+
+        <p class="mt-8 text-center text-xs text-slate-400">
+          Todos los derechos reservados
+          <span class="font-semibold text-slate-600">2025 | Top.Education</span>
+        </p>
+      </div>
+
     </div>
   </div>
+</section>
 {% endblock %}
