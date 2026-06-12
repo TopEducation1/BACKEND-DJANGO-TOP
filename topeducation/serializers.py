@@ -180,7 +180,6 @@ class UniversidadMiniSerializer(serializers.ModelSerializer):
             "univ_top",
         ]
 
-
 class EmpresaMiniSerializer(serializers.ModelSerializer):
     class Meta:
         model = Empresas
@@ -192,6 +191,71 @@ class EmpresaMiniSerializer(serializers.ModelSerializer):
             "empr_est",
             "empr_top",
             "descripcion_institucion",
+        ]
+
+class PlatformCardMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Plataformas
+        fields = ["id", "nombre", "plat_ico"]
+
+
+class UniversityCardMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Universidades
+        fields = ["id", "nombre", "univ_ico", "univ_img"]
+
+
+class CompanyCardMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Empresas
+        fields = ["id", "nombre", "empr_ico", "empr_img"]
+
+class SkillFilterMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Skills
+        fields = [
+            "id",
+            "nombre",
+            "translate",
+            "slug",
+            "skill_ico",
+            "skill_img",
+            "skill_col",
+            "skill_type",
+            "estado",
+            "parent_id",
+        ]
+
+
+class UniversityFilterMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Universidades
+        fields = [
+            "id",
+            "nombre",
+            "univ_img",
+            "region_universidad_id",
+        ]
+
+
+class CompanyFilterMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Empresas
+        fields = [
+            "id",
+            "nombre",
+            "empr_ico",
+            "empr_img",
+        ]
+
+
+class PlatformFilterMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Plataformas
+        fields = [
+            "id",
+            "nombre",
+            "plat_ico",
         ]
 
 class CertificationSpecializationCourseSerializer(serializers.ModelSerializer):
@@ -660,85 +724,215 @@ class CertificationSearchSerializer(CertificationSkillsMixin, serializers.ModelS
         if not getattr(instance, "empresa_certificacion", None):
             return None
         return EmpresaMiniSerializer(instance.empresa_certificacion, context=self.context).data
-    
+
+
+class SuggestedCertificationSerializer(serializers.ModelSerializer):
+    plataforma_certificacion = PlatformCardMiniSerializer(read_only=True)
+    universidad_certificacion = UniversityCardMiniSerializer(read_only=True)
+    empresa_certificacion = CompanyCardMiniSerializer(read_only=True)
+    primary_skill = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Certificaciones
+        fields = [
+            "id",
+            "slug",
+            "nombre",
+            "imagen_final",
+            "tipo_certificacion",
+            "nivel_certificacion",
+            "tiempo_certificacion",
+            "plataforma_certificacion",
+            "universidad_certificacion",
+            "empresa_certificacion",
+            "primary_skill",
+        ]
+
+    def get_primary_skill(self, obj):
+        links = getattr(obj, "skills_links_ordered", None)
+
+        if links is None:
+            links = obj.skills_rel.select_related("skill").order_by("orden", "id")
+
+        first_link = next(iter(links), None)
+
+        if not first_link or not first_link.skill:
+            return None
+
+        skill = first_link.skill
+
+        return {
+            "id": skill.id,
+            "nombre": skill.nombre,
+            "translate": skill.translate,
+            "slug": skill.slug,
+            "skill_col": skill.skill_col,
+            "skill_type": skill.skill_type,
+            "skill_ico": skill.skill_ico,
+            "skill_img": skill.skill_img,
+        }
+
+class OriginalCertificationDetailMiniSerializer(serializers.ModelSerializer):
+    plataforma_certificacion = serializers.SerializerMethodField()
+    tema_certificacion = serializers.SerializerMethodField()
+    skills = serializers.SerializerMethodField()
+    primary_skill = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Certificaciones
+        fields = [
+            "id",
+            "nombre",
+            "slug",
+            "imagen_final",
+            "plataforma_certificacion",
+            "tema_certificacion",
+            "skills",
+            "primary_skill",
+        ]
+
+    def get_plataforma_certificacion(self, obj):
+        plat = getattr(obj, "plataforma_certificacion", None)
+
+        if not plat:
+            return None
+
+        return {
+            "id": plat.id,
+            "nombre": plat.nombre,
+            "slug": self._platform_slug(plat.nombre),
+            "plat_img": self._url(plat.plat_img),
+            "plat_ico": self._url(plat.plat_ico),
+        }
+
+    def get_tema_certificacion(self, obj):
+        tema = getattr(obj, "tema_certificacion", None)
+
+        if not tema:
+            return None
+
+        return {
+            "id": tema.id,
+            "nombre": tema.nombre,
+            "translate": tema.translate,
+            "tem_col": tema.tem_col,
+        }
+
+    def get_skills(self, obj):
+        links = list(obj.skills_rel.all())
+
+        return [
+            {
+                "id": link.skill.id,
+                "nombre": link.skill.nombre,
+                "translate": link.skill.translate,
+                "slug": link.skill.slug,
+                "skill_col": link.skill.skill_col,
+                "skill_ico": self._url(link.skill.skill_ico),
+            }
+            for link in links
+            if link.skill
+        ]
+
+    def get_primary_skill(self, obj):
+        skills = self.get_skills(obj)
+        return skills[0] if skills else None
+
+    def _platform_slug(self, name):
+        name = (name or "").strip().lower()
+
+        mapping = {
+            "coursera": "coursera",
+            "edx": "edx",
+            "ed x": "edx",
+            "masterclass": "masterclass",
+            "master class": "masterclass",
+        }
+
+        return mapping.get(name, name.replace(" ", "-"))
+
+    def _url(self, value):
+        if not value:
+            return None
+
+        request = self.context.get("request")
+        url = value.url if hasattr(value, "url") else str(value)
+
+        if url.startswith("http://") or url.startswith("https://"):
+            return url
+
+        return request.build_absolute_uri(url) if request else url
+
+
 class OriginalCertificationSerializer(serializers.ModelSerializer):
-    certification_title     = serializers.CharField(source='certification.nombre', read_only=True)
-    certification_slug      = serializers.CharField(source='certification.slug', read_only=True)
-    source_type             = serializers.SerializerMethodField()
-    source_object           = serializers.SerializerMethodField()
+    certification_title = serializers.CharField(
+        source="certification.nombre",
+        read_only=True,
+    )
+    certification_slug = serializers.CharField(
+        source="certification.slug",
+        read_only=True,
+    )
     certification_image_url = serializers.SerializerMethodField()
-    certification_detail    = serializers.SerializerMethodField()  # ← Nuevo campo
+    certification_detail = serializers.SerializerMethodField()
+    platform_slug = serializers.SerializerMethodField()
 
     class Meta:
         model = OriginalCertification
         fields = [
-            'title',
-            'hist',
-            'fondo',
-            'certification_title',
-            'certification_slug',
-            'source_type',
-            'source_object',
-            'certification_image_url',
-            'certification_detail',  # ← lo agregamos a los campos
-            'posicion',
+            "title",
+            "hist",
+            "fondo",
+            "certification_title",
+            "certification_slug",
+            "platform_slug",
+            "certification_image_url",
+            "certification_detail",
+            "posicion",
         ]
 
-    def _build_url(self, value, request, use_media=False):
-        if not value:
+    def get_platform_slug(self, obj):
+        platform = getattr(obj.certification, "plataforma_certificacion", None)
+
+        if not platform:
             return None
-        if isinstance(value, str):
-            return value if not use_media else (
-                value if value.startswith('http')
-                else request.build_absolute_uri(settings.MEDIA_URL + value.lstrip('/'))
-            )
-        if hasattr(value, 'url'):
-            return value.url if not use_media else request.build_absolute_uri(value.url)
-        return None
 
-    def get_source_type(self, obj):
-        cert = obj.certification
-        if getattr(cert, 'universidad_certificacion', None):
-            return 'universidad'
-        if getattr(cert, 'empresa_certificacion', None):
-            return 'empresa'
-        return 'certificación'
+        name = (platform.nombre or "").strip().lower()
 
-    def get_source_object(self, obj):
-        cert = obj.certification
-        request = self.context.get('request')
+        mapping = {
+            "coursera": "coursera",
+            "edx": "edx",
+            "ed x": "edx",
+            "masterclass": "masterclass",
+            "master class": "masterclass",
+        }
 
-        uni = getattr(cert, 'universidad_certificacion', None)
-        if uni:
-            return UniverisitiesSerializer(uni, context={'request': request}).data
-
-        emp = getattr(cert, 'empresa_certificacion', None)
-        if emp:
-            return EmpresaSerializer(emp, context={'request': request}).data
-
-        return {}
+        return mapping.get(name, name.replace(" ", "-"))
 
     def get_certification_image_url(self, obj):
         cert = obj.certification
-        request = self.context.get('request')
+        request = self.context.get("request")
 
-        uni = getattr(cert, 'universidad_certificacion', None)
-        if uni:
-            return self._build_url(uni.univ_img, request)
+        return self._build_url(cert.imagen_final, request)
 
-        emp = getattr(cert, 'empresa_certificacion', None)
-        if emp:
-            return self._build_url(emp.empr_img, request)
-
-        if hasattr(cert, 'imagen_final'):
-            return self._build_url(cert.imagen_final, request, use_media=False)
-
-        return None
-    
     def get_certification_detail(self, obj):
-        request = self.context.get('request')
-        return CertificationSerializer(obj.certification, context={'request': request}).data
+        request = self.context.get("request")
 
+        return OriginalCertificationDetailMiniSerializer(
+            obj.certification,
+            context={"request": request},
+        ).data
+
+    def _build_url(self, value, request):
+        if not value:
+            return None
+
+        url = value.url if hasattr(value, "url") else str(value)
+
+        if url.startswith("http://") or url.startswith("https://"):
+            return url
+
+        return request.build_absolute_uri(url) if request else url
 
 
 class OriginalSerializer(serializers.ModelSerializer):
@@ -747,12 +941,28 @@ class OriginalSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Original
-        fields = ['id','name','slug','extr','esta','image','biog','certifications']
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "extr",
+            "esta",
+            "image",
+            "biog",
+            "certifications",
+        ]
 
     def get_certifications(self, obj):
-        rel = getattr(obj, 'certifications', None)  # related_name si existe
-        qs = (rel.all() if rel is not None else obj.originalcertification_set.all()).order_by('posicion')
-        return OriginalCertificationSerializer(qs, many=True, context=self.context).data
+        qs = getattr(obj, "prefetched_certifications", None)
+
+        if qs is None:
+            qs = obj.certifications.all().order_by("posicion")
+
+        return OriginalCertificationSerializer(
+            qs,
+            many=True,
+            context=self.context,
+        ).data
 
     def get_image(self, obj):
         return self._abs_url(obj.image)
@@ -760,41 +970,117 @@ class OriginalSerializer(serializers.ModelSerializer):
     def _abs_url(self, value):
         if not value:
             return None
-        request = self.context.get('request')
-        url = value.url if hasattr(value, 'url') else str(value)
 
-        # Si ya es absoluta, devuélvela tal cual
-        if url.startswith('http://') or url.startswith('https://'):
+        request = self.context.get("request")
+        url = value.url if hasattr(value, "url") else str(value)
+
+        if url.startswith("http://") or url.startswith("https://"):
             return url
 
-        # Si es relativa (/media/...), construye absoluta cuando haya request
+        return request.build_absolute_uri(url) if request else url
+    
+class OriginalSliderSerializer(serializers.ModelSerializer):
+    image = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Original
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "extr",
+            "esta",
+            "image",
+        ]
+
+    def get_image(self, obj):
+        return self._abs_url(obj.image)
+
+    def _abs_url(self, value):
+        if not value:
+            return None
+
+        request = self.context.get("request")
+        url = value.url if hasattr(value, "url") else str(value)
+
+        if url.startswith("http://") or url.startswith("https://"):
+            return url
+
         return request.build_absolute_uri(url) if request else url
 
+class PersonalizedRecommendationSerializer(serializers.ModelSerializer):
 
+    class Meta:
+        model = Certificaciones
+        fields = [
+            "id",
+            "slug",
+            "nombre",
+            "imagen_final",
+            "nivel_certificacion",
+            "tiempo_certificacion",
+        ]
 
 class RankingEntrySerializer(serializers.ModelSerializer):
-    universidad = UniverisitiesSerializer(read_only=True)
-    empresa = EmpresaSerializer(read_only=True)
-    total_certificaciones = serializers.SerializerMethodField()
+    universidad = UniversidadMiniSerializer(read_only=True)
+    empresa = EmpresaMiniSerializer(read_only=True)
+    total_certificaciones = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = RankingEntry
-        fields = ['id', 'ranking','posicion', 'universidad', 'empresa','total_certificaciones']
-    
-    def get_total_certificaciones(self, obj):
-        if obj.universidad:
-            return obj.universidad.certificaciones.count()
-        elif obj.empresa:
-            return obj.empresa.certificaciones.count()
-        return 0
+        fields = [
+            "id",
+            "ranking",
+            "posicion",
+            "universidad",
+            "empresa",
+            "total_certificaciones",
+        ]
 
 class RankingSerializer(serializers.ModelSerializer):
-    entradas = RankingEntrySerializer(many=True)
+    entradas = serializers.SerializerMethodField()
 
     class Meta:
         model = Ranking
-        fields = ['id', 'nombre', 'descripcion','image', 'fecha', 'tipo', 'estado', 'entradas']
+        fields = [
+            "id",
+            "nombre",
+            "descripcion",
+            "image",
+            "fecha",
+            "tipo",
+            "estado",
+            "entradas",
+        ]
 
+    def get_entradas(self, obj):
+        entradas = getattr(obj, "entradas_cache", None)
+
+        if entradas is None:
+            entradas = obj.entradas.select_related("universidad", "empresa").all()
+
+        return RankingEntrySerializer(
+            entradas,
+            many=True,
+            context=self.context
+        ).data
+
+class RankingPreviewEntrySerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    posicion = serializers.IntegerField()
+    nombre = serializers.CharField()
+    icono = serializers.CharField(allow_null=True)
+    entidad_id = serializers.IntegerField()
+    entidad_tipo = serializers.CharField()
+
+
+class RankingPreviewSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    nombre = serializers.CharField()
+    descripcion = serializers.CharField(allow_null=True)
+    image = serializers.ImageField(allow_null=True)
+    tipo = serializers.CharField()
+    entradas_preview = serializers.ListField()
 
 class MarcaPermisosSerializer(serializers.ModelSerializer):
     class Meta:
@@ -880,3 +1166,36 @@ class MarcaPublicSerializer(serializers.ModelSerializer):
             "banner",
             "permisos",
         )
+
+class LearningRouteLeadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LearningRouteLead
+        fields = [
+            "id",
+            "user",
+            "email",
+            "first_name",
+            "last_name",
+            "topics",
+            "goal",
+            "selected_plan",
+            "status",
+            "recommended_certifications",
+            "stripe_customer_id",
+            "stripe_subscription_id",
+            "trial_start",
+            "trial_end",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "user",
+            "status",
+            "stripe_customer_id",
+            "stripe_subscription_id",
+            "trial_start",
+            "trial_end",
+            "created_at",
+            "updated_at",
+        ]

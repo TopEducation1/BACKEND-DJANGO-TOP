@@ -27,11 +27,25 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 
 SECURE_SSL_REDIRECT = False
 
+MX_STRIPE_B2C_WEBHOOK_URL = os.getenv("MX_STRIPE_B2C_WEBHOOK_URL")
+STRIPE_B2C_WEBHOOK_SECRET = os.getenv("STRIPE_B2C_WEBHOOK_SECRET")
+MX_WEBHOOK_TIMEOUT = int(os.getenv("MX_WEBHOOK_TIMEOUT", "10"))
+
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "") 
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")    # whsec_...
 
 STRIPE_PRICE_YEARLY = os.getenv("STRIPE_PRICE_YEARLY", "")
 STRIPE_PRICE_MONTHLY = os.getenv("STRIPE_PRICE_MONTHLY", "")
+
+STRIPE_PRICE_BASIC_MONTHLY = os.getenv("STRIPE_PRICE_BASIC_MONTHLY", default=None)
+STRIPE_PRICE_BASIC_YEARLY = os.getenv("STRIPE_PRICE_BASIC_YEARLY", default=None)
+
+STRIPE_PRICE_X_MONTHLY = os.getenv("STRIPE_PRICE_X_MONTHLY", default=None)
+STRIPE_PRICE_X_YEARLY = os.getenv("STRIPE_PRICE_X_YEARLY", default=None)
+
+STRIPE_PRICE_PLUS_MONTHLY = os.getenv("STRIPE_PRICE_PLUS_MONTHLY", default=None)
+STRIPE_PRICE_PLUS_YEARLY = os.getenv("STRIPE_PRICE_PLUS_YEARLY", default=None)
+
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 STRIPE_SUCCESS_URL = os.getenv(
@@ -165,16 +179,32 @@ WSGI_APPLICATION = 'core.wsgi.application'
 
 # Database configuration
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': str(os.getenv('MYSQL_DATABASE')),
-        'USER': str(os.getenv('MYSQLUSER')),
-        'PASSWORD': str(os.getenv('MYSQLPASSWORD')),
-        'HOST': str(os.getenv('DATABASE_HOST')),
-        'PORT': str(os.getenv('MYSQLPORT'))
+    "default": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": os.getenv("MYSQL_DATABASE"),
+        "USER": os.getenv("MYSQLUSER"),
+        "PASSWORD": os.getenv("MYSQLPASSWORD"),
+        "HOST": os.getenv("DATABASE_HOST"),
+        "PORT": os.getenv("MYSQLPORT", "3306"),
+        "OPTIONS": {
+            "charset": "utf8mb4",
+        },
     }
 }
 
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "loggers": {
+        "django.db.backends": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+        },
+    },
+}
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators

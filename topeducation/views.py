@@ -1,112 +1,67 @@
 from __future__ import annotations
 
-from topeducation.inspectors.courses_inspector import fetch_and_parse_page
-from topeducation.models import ExternalSyncState
-
-from django.db.models import Q, Case, When, Value, IntegerField, OuterRef, Subquery, Prefetch
-from django.db.models import Q, Case, When, Value, IntegerField, Prefetch
-
-from django.db.models import OuterRef, Subquery, Case, When, Value, IntegerField, Prefetch
-
-from datetime import datetime, timedelta, timezone
-import pandas as pd
-import re
-import time
-import traceback
-import logging
-import random
-from django.core.cache import cache
-
-from django.contrib.admin.views.decorators import staff_member_required
-
-from django.shortcuts import render, redirect
-from django.contrib import messages
-from .forms import *
-from django.db import transaction
-from rest_framework import viewsets
-from .models import *
-from .models import Certificaciones
-from .serializers import *
-from rest_framework.views import APIView
-from rest_framework import generics
-from rest_framework.response import Response
-from rest_framework import status
-from django.views.decorators.csrf import csrf_exempt
-from rest_framework.decorators import api_view
-import json
-from django.views.decorators.http import require_http_methods
-from django.shortcuts import get_object_or_404
-from django.core.paginator import EmptyPage, PageNotAnInteger
-from django.core.paginator import Paginator
-from rest_framework.pagination import PageNumberPagination
-from django.views import View
-from django.http import HttpResponse
-from django.contrib.auth.forms import UserCreationForm, AuthenticationForm
-from django.contrib.auth import login, logout, authenticate
-from django.http import FileResponse, Http404
-from django.conf import settings
-from django.urls import reverse
-from django.forms import modelformset_factory
-import os
+import hashlib, hmac, json, logging, os, random, re, time, traceback, uuid
 from collections import defaultdict
-from django.db.models import Count
-import hashlib
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from django.http import JsonResponse, HttpResponseBadRequest, HttpResponseForbidden
+import pandas as pd
 import requests
-from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
+import stripe
 
-from rest_framework import generics, permissions as drf_permissions
-from .models import Marca
-from .serializers import MarcaSerializer
-
+from django.conf import settings
+from django.contrib import messages
+from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.auth import authenticate, get_backends, get_user_model, login, logout
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
+from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
+from django.core.cache import cache
+from django.core.exceptions import ValidationError
+from django.core.mail import send_mail
+from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
+from django.db import transaction
+from django.db.models import Case, Count, IntegerField, OuterRef, Prefetch, Q, Subquery, Value, When
+from django.forms import modelformset_factory
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
+from django.middleware.csrf import get_token
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.db import transaction
+from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils.text import slugify
+from django.views import View
+from django.views.decorators.cache import cache_page
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from .models import Marca, MarcaPermisos
-from .forms import MarcaForm, MarcaPermisosFormSet
-from .serializers import MarcaPublicSerializer
+from rest_framework import generics, status, viewsets
+from rest_framework import permissions as drf_permissions
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-
-from django.contrib.auth.decorators import login_required
-import stripe
-from django.contrib.auth import get_user_model
-from .models import UserBillingProfile, StripeSubscription, StripePurchase
-
-
-from django.views.decorators.http import require_POST, require_GET
-from django.views.decorators.csrf import ensure_csrf_cookie
-
-from django.contrib.auth.models import User
-from django.middleware.csrf import get_token
-
+from .forms import *
+from .models import *
+from .serializers import *
 from .utils.auth import api_login_required
 
-
-from django.contrib.auth.tokens import default_token_generator
-from django.core.mail import send_mail
-from django.utils.encoding import force_bytes, force_str
-from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
-
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
-
-import json, time, uuid, traceback
-
-from django.utils import timezone
-from datetime import timedelta
-
+from topeducation.inspectors.courses_inspector import fetch_and_parse_page
+from topeducation.models import ExternalSyncState
 from topeducation.services.import_courses import (
     ingest_course_payload,
     ingest_skills_structure_payload,
-    ingest_specializations_payload,
     ingest_specialization_detail_payload,
+    ingest_specializations_payload,
 )
-
-from django.core.paginator import Paginator
-from django.shortcuts import render
+from topeducation.services.mx_payload_builder import build_mx_payload_from_stripe_event
+from topeducation.services.mx_webhook_sender import send_stripe_event_to_mx
 
 
 @staff_member_required(login_url="/signin/")
@@ -676,6 +631,139 @@ def createCompany(request):
             return redirect('companies')
         except Exception as e:
             messages.warning(request,f"{str(e)}")
+
+from django.contrib import messages
+from django.core.paginator import Paginator
+from django.db.models import Q
+from django.shortcuts import get_object_or_404, redirect, render
+
+# Ajusta estos imports si tus nombres reales son diferentes
+# from .models import Plataformas
+# from .forms import PlatformsForm
+
+
+def platforms(request):
+    q = (request.GET.get("q") or "").strip()
+
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+
+    per_page = max(1, min(per_page, 200))
+
+    try:
+        page_number = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    qs = Plataformas.objects.all()
+
+
+    qs = (
+        qs.only(
+            "id",
+            "nombre",
+            "plat_img",
+            "plat_ico",
+        )
+        .order_by("id")
+    )
+
+    paginator = Paginator(qs, per_page)
+    page_obj = paginator.get_page(page_number)
+
+    current = page_obj.number
+    start_page = max(1, current - 3)
+    end_page = min(paginator.num_pages, current + 3)
+    page_numbers = range(start_page, end_page + 1)
+
+    context = {
+        "platforms": page_obj.object_list,
+        "page_obj": page_obj,
+        "paginator": paginator,
+        "per_page": per_page,
+        "page_numbers": page_numbers,
+        "show_inicio": start_page > 1,
+        "show_final": end_page < paginator.num_pages,
+        "per_page_options": [25, 50, 100, 200],
+        "q": q,
+    }
+
+    return render(request, "category/platforms/index.html", context)
+
+
+def updatePlatform(request, platform_id):
+    platform = get_object_or_404(Plataformas, pk=platform_id)
+
+    if request.method == "GET":
+        form = PlatformsForm(instance=platform)
+
+        return render(
+            request,
+            "category/platforms/update.html",
+            {
+                "platform": platform,
+                "form": form,
+            },
+        )
+
+    form = PlatformsForm(request.POST or None, request.FILES or None, instance=platform)
+
+    if form.is_valid():
+        form.save()
+        messages.success(request, "Plataforma actualizada correctamente!")
+        return redirect("platforms")
+
+    messages.warning(request, "No fue posible actualizar la plataforma.")
+
+    return render(
+        request,
+        "category/platforms/update.html",
+        {
+            "platform": platform,
+            "form": form,
+        },
+    )
+
+
+def createPlatform(request):
+    if request.method == "GET":
+        return render(
+            request,
+            "category/platforms/create.html",
+            {
+                "form": PlatformsForm(),
+            },
+        )
+
+    form = PlatformsForm(request.POST or None, request.FILES or None)
+
+    if form.is_valid():
+        form.save()
+        messages.success(request, "Plataforma guardada correctamente")
+        return redirect("platforms")
+
+    messages.warning(request, "No fue posible crear la plataforma.")
+
+    return render(
+        request,
+        "category/platforms/create.html",
+        {
+            "form": form,
+        },
+    )
+
+
+def deletePlatform(request, platform_id):
+    platform = get_object_or_404(Plataformas, pk=platform_id)
+
+    if request.method == "POST":
+        platform.delete()
+        messages.success(request, "Plataforma eliminada correctamente.")
+        return redirect("platforms")
+
+    return redirect("platforms")
 
 def topics(request):
     q = (request.GET.get("q") or "").strip()
@@ -1488,6 +1576,80 @@ class MasterclassCertificationsGrids(APIView):
         serializer = CertificationSerializer(masterclass_certifications_queryset, many = True)
         return Response (serializer.data, status=status.HTTP_200_OK)     
 
+class SuggestedCertificationsGrid(APIView):
+
+    def get(self, request):
+        amount = int(request.query_params.get("amount", 6))
+
+        qs = (
+            Certificaciones.objects
+            .filter(vigente_certificacion=True)
+            .select_related(
+                "plataforma_certificacion",
+                "universidad_certificacion",
+                "empresa_certificacion",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "skills_rel",
+                    queryset=(
+                        SkillsCertification.objects
+                        .select_related("skill")
+                        .only(
+                            "id",
+                            "certificacion_id",
+                            "skill_id",
+                            "orden",
+                            "skill__id",
+                            "skill__nombre",
+                            "skill__translate",
+                            "skill__slug",
+                            "skill__skill_col",
+                            "skill__skill_type",
+                            "skill__skill_ico",
+                            "skill__skill_img",
+                        )
+                        .order_by("orden", "id")
+                    ),
+                    to_attr="skills_links_ordered",
+                )
+            )
+            .only(
+                "id",
+                "slug",
+                "nombre",
+                "imagen_final",
+                "tipo_certificacion",
+                "nivel_certificacion",
+                "tiempo_certificacion",
+                "vigente_certificacion",
+
+                "plataforma_certificacion_id",
+                "plataforma_certificacion__id",
+                "plataforma_certificacion__nombre",
+                "plataforma_certificacion__plat_ico",
+
+                "universidad_certificacion_id",
+                "universidad_certificacion__id",
+                "universidad_certificacion__nombre",
+                "universidad_certificacion__univ_ico",
+
+                "empresa_certificacion_id",
+                "empresa_certificacion__id",
+                "empresa_certificacion__nombre",
+                "empresa_certificacion__empr_ico",
+            )
+            .order_by("-id")[:amount]
+        )
+
+        serializer = SuggestedCertificationSerializer(
+            qs,
+            many=True,
+            context={"request": request}
+        )
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 class CertificationsCafam(APIView):
     
     def get(self, request):
@@ -1499,7 +1661,196 @@ class CertificationsCafam(APIView):
         
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    
+
+class RelatedCertificationsGrid(APIView):
+
+    def get(self, request, slug):
+        amount = int(request.query_params.get("amount", 9))
+
+        try:
+            current_certification = (
+                Certificaciones.objects
+                .prefetch_related(
+                    Prefetch(
+                        "skills_rel",
+                        queryset=SkillsCertification.objects.select_related("skill").only(
+                            "id",
+                            "certificacion_id",
+                            "skill_id",
+                            "orden",
+                            "skill__id",
+                            "skill__slug",
+                        ).order_by("orden", "id"),
+                        to_attr="skills_links_ordered",
+                    )
+                )
+                .select_related(
+                    "plataforma_certificacion",
+                    "universidad_certificacion",
+                    "empresa_certificacion",
+                )
+                .only(
+                    "id",
+                    "slug",
+                    "universidad_certificacion_id",
+                    "empresa_certificacion_id",
+                    "plataforma_certificacion_id",
+                )
+                .get(slug=slug)
+            )
+        except Certificaciones.DoesNotExist:
+            return Response(
+                {"detail": "Certificación no encontrada"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        skill_ids = [
+            link.skill_id
+            for link in getattr(current_certification, "skills_links_ordered", [])
+            if link.skill_id
+        ]
+
+        related_filter = Q(vigente_certificacion=True) & ~Q(id=current_certification.id)
+
+        if skill_ids:
+            related_filter &= Q(skills_rel__skill_id__in=skill_ids)
+
+        qs = (
+            Certificaciones.objects
+            .filter(related_filter)
+            .select_related(
+                "plataforma_certificacion",
+                "universidad_certificacion",
+                "empresa_certificacion",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "skills_rel",
+                    queryset=(
+                        SkillsCertification.objects
+                        .select_related("skill")
+                        .only(
+                            "id",
+                            "certificacion_id",
+                            "skill_id",
+                            "orden",
+                            "skill__id",
+                            "skill__nombre",
+                            "skill__translate",
+                            "skill__slug",
+                            "skill__skill_col",
+                            "skill__skill_type",
+                            "skill__skill_ico",
+                            "skill__skill_img",
+                        )
+                        .order_by("orden", "id")
+                    ),
+                    to_attr="skills_links_ordered",
+                )
+            )
+            .only(
+                "id",
+                "slug",
+                "nombre",
+                "imagen_final",
+                "tipo_certificacion",
+                "nivel_certificacion",
+                "tiempo_certificacion",
+                "vigente_certificacion",
+
+                "plataforma_certificacion_id",
+                "plataforma_certificacion__id",
+                "plataforma_certificacion__nombre",
+                "plataforma_certificacion__plat_ico",
+
+                "universidad_certificacion_id",
+                "universidad_certificacion__id",
+                "universidad_certificacion__nombre",
+                "universidad_certificacion__univ_ico",
+
+                "empresa_certificacion_id",
+                "empresa_certificacion__id",
+                "empresa_certificacion__nombre",
+                "empresa_certificacion__empr_ico",
+            )
+            .annotate(
+                related_score=Count(
+                    "skills_rel",
+                    filter=Q(skills_rel__skill_id__in=skill_ids),
+                    distinct=True,
+                )
+            )
+            .order_by("-related_score", "-id")
+            .distinct()[:amount]
+        )
+
+        if not qs:
+            qs = (
+                Certificaciones.objects
+                .filter(vigente_certificacion=True)
+                .exclude(id=current_certification.id)
+                .select_related(
+                    "plataforma_certificacion",
+                    "universidad_certificacion",
+                    "empresa_certificacion",
+                )
+                .prefetch_related(
+                    Prefetch(
+                        "skills_rel",
+                        queryset=(
+                            SkillsCertification.objects
+                            .select_related("skill")
+                            .only(
+                                "id",
+                                "certificacion_id",
+                                "skill_id",
+                                "orden",
+                                "skill__id",
+                                "skill__nombre",
+                                "skill__translate",
+                                "skill__slug",
+                                "skill__skill_col",
+                                "skill__skill_type",
+                                "skill__skill_ico",
+                                "skill__skill_img",
+                            )
+                            .order_by("orden", "id")
+                        ),
+                        to_attr="skills_links_ordered",
+                    )
+                )
+                .only(
+                    "id",
+                    "slug",
+                    "nombre",
+                    "imagen_final",
+                    "tipo_certificacion",
+                    "nivel_certificacion",
+                    "tiempo_certificacion",
+                    "vigente_certificacion",
+                    "plataforma_certificacion_id",
+                    "plataforma_certificacion__id",
+                    "plataforma_certificacion__nombre",
+                    "plataforma_certificacion__plat_ico",
+                    "universidad_certificacion_id",
+                    "universidad_certificacion__id",
+                    "universidad_certificacion__nombre",
+                    "universidad_certificacion__univ_ico",
+                    "empresa_certificacion_id",
+                    "empresa_certificacion__id",
+                    "empresa_certificacion__nombre",
+                    "empresa_certificacion__empr_ico",
+                )
+                .order_by("-id")[:amount]
+            )
+
+        serializer = SuggestedCertificationSerializer(
+            qs,
+            many=True,
+            context={"request": request}
+        )
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 @csrf_exempt
 @api_view(['POST'])
@@ -1584,9 +1935,8 @@ class SkillsList(APIView):
             )
         )
 
-        # Renombrar parent_id -> parent para que el front lo consuma igual
         for item in data:
-            item["parent"] = item.pop("parent_id", None)
+            item["parent"] = item.get("parent_id")
 
         return Response(data, status=status.HTTP_200_OK)
 
@@ -1624,6 +1974,25 @@ class OriginalsList (APIView):
         
         return Response(originals_serializer.data) 
 
+class OriginalsSliderView(APIView):
+
+    def get(self, request):
+        originals = (
+            Original.objects
+            .all()
+            .only("id", "name", "slug", "extr", "esta", "image")
+            .order_by("id")
+        )
+
+        serializer = OriginalSliderSerializer(
+            originals,
+            many=True,
+            context={"request": request},
+        )
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+@method_decorator(cache_page(60 * 60), name="dispatch")
 class UniversitiesByRegion(APIView):
     def get(self, request):
         universities = Universidades.objects.select_related('region_universidad').filter(univ_est="enabled")
@@ -1731,6 +2100,155 @@ class CertificationDetailView(APIView):
                 {"error": "Error al cargar la certificación"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+@method_decorator(cache_page(60 * 60), name="dispatch")
+class SkillsFilterMiniView(APIView):
+    def get(self, request):
+        qs = (
+            Skills.objects
+            .filter(estado=True)
+            .only(
+                "id",
+                "nombre",
+                "translate",
+                "slug",
+                "skill_ico",
+                "skill_img",
+                "skill_col",
+                "skill_type",
+                "estado",
+                "parent_id",
+            )
+            .order_by("parent_id", "nombre")
+        )
+
+        serializer = SkillFilterMiniSerializer(qs, many=True)
+        return Response(serializer.data)
+
+@method_decorator(cache_page(60 * 60), name="dispatch")
+class CompaniesFilterMiniView(APIView):
+    def get(self, request):
+        qs = (
+            Empresas.objects
+            .filter(empr_est="enabled")
+            .only("id", "nombre", "empr_ico", "empr_img")
+            .order_by("nombre")
+        )
+
+        serializer = CompanyFilterMiniSerializer(qs, many=True)
+        return Response(serializer.data)
+
+@method_decorator(cache_page(60 * 60), name="dispatch")
+class PlatformsFilterMiniView(APIView):
+    def get(self, request):
+        qs = (
+            Plataformas.objects
+            .only("id", "nombre", "plat_ico")
+            .order_by("nombre")
+        )
+
+        serializer = PlatformFilterMiniSerializer(qs, many=True)
+        return Response(serializer.data)
+
+class UniversitiesByRegionMiniView(APIView):
+    def get(self, request):
+        universidades = (
+            Universidades.objects
+            .filter(univ_est="enabled")
+            .select_related("region_universidad")
+            .only(
+                "id",
+                "nombre",
+                "univ_ico",
+                "univ_img",
+                "region_universidad_id",
+                "region_universidad__id",
+                "region_universidad__nombre",
+            )
+            .order_by("region_universidad__nombre", "nombre")
+        )
+
+        grouped = {}
+
+        for uni in universidades:
+            region = (
+                uni.region_universidad.nombre
+                if uni.region_universidad
+                else "Del mundo"
+            )
+
+            grouped.setdefault(region, []).append({
+                "id": uni.id,
+                "nombre": uni.nombre,
+                "univ_ico": uni.univ_ico,
+                "univ_img": uni.univ_img,
+                "region_universidad_id": uni.region_universidad_id,
+            })
+
+        return Response(grouped)
+
+@method_decorator(csrf_exempt, name="dispatch")
+class PersonalizedRecommendations(APIView):
+
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        topics = request.data.get("topics", []) or []
+        goal = request.data.get("goal", "") or ""
+        amount = int(request.data.get("amount", 6))
+
+        search_terms = list(topics)
+
+        if goal:
+            search_terms.append(goal)
+
+        qs = Certificaciones.objects.filter(
+            vigente_certificacion=True
+        ).select_related(
+            "plataforma_certificacion",
+            "universidad_certificacion",
+            "empresa_certificacion",
+        ).prefetch_related(
+            "skills_rel__skill"
+        )
+
+        topic_q = Q()
+
+        for term in search_terms:
+            clean_term = str(term).strip()
+
+            if not clean_term:
+                continue
+
+            topic_q |= Q(skills_rel__skill__nombre__icontains=clean_term)
+            topic_q |= Q(skills_rel__skill__translate__icontains=clean_term)
+            topic_q |= Q(skills_rel__skill__slug__icontains=slugify(clean_term))
+
+        if topic_q:
+            qs = qs.filter(topic_q).distinct()
+
+        if not qs.exists():
+            qs = (
+                Certificaciones.objects
+                .filter(vigente_certificacion=True)
+                .select_related(
+                    "plataforma_certificacion",
+                    "universidad_certificacion",
+                    "empresa_certificacion",
+                )
+                .order_by("-id")
+            )
+
+        qs = qs[:amount]
+
+        serializer = PersonalizedRecommendationSerializer(
+            qs,
+            many=True,
+            context={"request": request}
+        )
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 LANGUAGE_NORMALIZATION = {
     "es": {
@@ -1951,6 +2469,7 @@ def get_language_values_by_codes(codes):
 
     return list(dict.fromkeys(values))
 
+@method_decorator(cache_page(60 * 15), name="dispatch")
 class filter_by_tags(APIView):
     pagination_class = FastCachedCountPagination
 
@@ -1963,47 +2482,71 @@ class filter_by_tags(APIView):
             plataforma_values = []
             empresa_values = []
             universidad_values = []
+            plataforma_ids = []
+            empresa_ids = []
+            universidad_ids = []
             idioma_codes = []
 
-            for key, value_list in params.lists():
-                if key in ["page", "page_size"]:
-                    continue
-
-                target = None
-
-                if key in ["Tema", "temas"]:
-                    target = tema_slugs
-                elif key in ["Habilidad", "habilidades"]:
-                    target = habilidad_slugs
-                elif key in ["Plataforma", "plataforma", "Aliados", "aliados"]:
-                    target = plataforma_values
-                elif key in ["Empresa", "empresas", "Empresas"]:
-                    target = empresa_values
-                elif key in ["Universidad", "universidades", "Universidades"]:
-                    target = universidad_values
-                elif key in ["Idioma", "idioma"]:
-                    target = idioma_codes
-
-                if target is None:
-                    continue
-
+            def append_clean_values(target, value_list, lower=False, only_int=False):
                 for value in value_list:
                     if not isinstance(value, str):
                         continue
 
                     for v in value.split(","):
                         cleaned = v.strip()
-                        if key in ["Idioma", "idioma"]:
+                        if not cleaned:
+                            continue
+
+                        if lower:
                             cleaned = cleaned.lower()
 
-                        if cleaned:
+                        if only_int:
+                            try:
+                                target.append(int(cleaned))
+                            except (TypeError, ValueError):
+                                continue
+                        else:
                             target.append(cleaned)
+
+            for key, value_list in params.lists():
+                if key in ["page", "page_size"]:
+                    continue
+
+                if key in ["Tema", "temas"]:
+                    append_clean_values(tema_slugs, value_list)
+
+                elif key in ["Habilidad", "habilidades"]:
+                    append_clean_values(habilidad_slugs, value_list)
+
+                elif key in ["Plataforma", "plataforma", "Aliados", "aliados"]:
+                    append_clean_values(plataforma_values, value_list)
+
+                elif key in ["Empresa", "empresas", "Empresas"]:
+                    append_clean_values(empresa_values, value_list)
+
+                elif key in ["Universidad", "universidades", "Universidades"]:
+                    append_clean_values(universidad_values, value_list)
+
+                elif key in ["plataforma_id", "Plataforma_id", "platform_id"]:
+                    append_clean_values(plataforma_ids, value_list, only_int=True)
+
+                elif key in ["empresa_id", "Empresa_id", "company_id"]:
+                    append_clean_values(empresa_ids, value_list, only_int=True)
+
+                elif key in ["universidad_id", "Universidad_id", "university_id"]:
+                    append_clean_values(universidad_ids, value_list, only_int=True)
+
+                elif key in ["Idioma", "idioma"]:
+                    append_clean_values(idioma_codes, value_list, lower=True)
 
             tema_slugs = list(dict.fromkeys(tema_slugs))
             habilidad_slugs = list(dict.fromkeys(habilidad_slugs))
             plataforma_values = list(dict.fromkeys(plataforma_values))
             empresa_values = list(dict.fromkeys(empresa_values))
             universidad_values = list(dict.fromkeys(universidad_values))
+            plataforma_ids = list(dict.fromkeys(plataforma_ids))
+            empresa_ids = list(dict.fromkeys(empresa_ids))
+            universidad_ids = list(dict.fromkeys(universidad_ids))
             idioma_codes = list(dict.fromkeys(idioma_codes))
 
             skill_slugs = tema_slugs + habilidad_slugs
@@ -2012,75 +2555,90 @@ class filter_by_tags(APIView):
                 Certificaciones.objects
                 .select_related(
                     "plataforma_certificacion",
-                    "empresa_certificacion",
                     "universidad_certificacion",
-                    "tema_certificacion",
+                    "empresa_certificacion",
                 )
                 .prefetch_related(
                     Prefetch(
                         "skills_rel",
-                        queryset=SkillsCertification.objects.select_related("skill").order_by("orden", "id"),
+                        queryset=(
+                            SkillsCertification.objects
+                            .select_related("skill")
+                            .only(
+                                "id",
+                                "certificacion_id",
+                                "skill_id",
+                                "orden",
+                                "skill__id",
+                                "skill__nombre",
+                                "skill__translate",
+                                "skill__slug",
+                                "skill__skill_col",
+                                "skill__skill_type",
+                                "skill__skill_ico",
+                                "skill__skill_img",
+                            )
+                            .order_by("orden", "id")
+                        ),
                         to_attr="skills_links_ordered",
                     )
-                ).only(
+                )
+                .only(
                     "id",
                     "slug",
                     "nombre",
-                    "metadescripcion_certificacion",
                     "imagen_final",
                     "tipo_certificacion",
-                    "fecha_creado_cert",
+                    "nivel_certificacion",
+                    "tiempo_certificacion",
                     "language_normalized",
-                    "plataforma_certificacion_id",
-                    "empresa_certificacion_id",
-                    "universidad_certificacion_id",
-                    "tema_certificacion_id",
+                    "fecha_creado_cert",
+                    "vigente_certificacion",
 
+                    "plataforma_certificacion_id",
                     "plataforma_certificacion__id",
                     "plataforma_certificacion__nombre",
-                    "plataforma_certificacion__plat_img",
                     "plataforma_certificacion__plat_ico",
 
-                    "empresa_certificacion__id",
-                    "empresa_certificacion__nombre",
-                    "empresa_certificacion__empr_img",
-                    "empresa_certificacion__empr_ico",
-                    "empresa_certificacion__empr_est",
-                    "empresa_certificacion__empr_top",
-                    "empresa_certificacion__descripcion_institucion",
-
+                    "universidad_certificacion_id",
                     "universidad_certificacion__id",
                     "universidad_certificacion__nombre",
-                    "universidad_certificacion__descripcion_institucion",
-                    "universidad_certificacion__univ_img",
                     "universidad_certificacion__univ_ico",
-                    "universidad_certificacion__univ_fla",
-                    "universidad_certificacion__univ_est",
-                    "universidad_certificacion__univ_top",
+                    "universidad_certificacion__univ_img",
 
-                    "tema_certificacion__id",
-                    "tema_certificacion__nombre",
-                    "tema_certificacion__translate",
-                    "tema_certificacion__tem_type",
-                    "tema_certificacion__tem_col",
-                    "tema_certificacion__tem_img",
-                    "tema_certificacion__tem_est",
+                    "empresa_certificacion_id",
+                    "empresa_certificacion__id",
+                    "empresa_certificacion__nombre",
+                    "empresa_certificacion__empr_ico",
+                    "empresa_certificacion__empr_img",
                 )
             )
 
-            if plataforma_values:
+            if plataforma_ids:
+                queryset = queryset.filter(
+                    plataforma_certificacion_id__in=plataforma_ids
+                )
+            elif plataforma_values:
                 q_plataforma = Q()
                 for value in plataforma_values:
                     q_plataforma |= Q(plataforma_certificacion__nombre__iexact=value)
                 queryset = queryset.filter(q_plataforma)
 
-            if empresa_values:
+            if empresa_ids:
+                queryset = queryset.filter(
+                    empresa_certificacion_id__in=empresa_ids
+                )
+            elif empresa_values:
                 q_empresa = Q()
                 for value in empresa_values:
                     q_empresa |= Q(empresa_certificacion__nombre__iexact=value)
                 queryset = queryset.filter(q_empresa)
 
-            if universidad_values:
+            if universidad_ids:
+                queryset = queryset.filter(
+                    universidad_certificacion_id__in=universidad_ids
+                )
+            elif universidad_values:
                 q_universidad = Q()
                 for value in universidad_values:
                     q_universidad |= Q(universidad_certificacion__nombre__iexact=value)
@@ -2089,12 +2647,15 @@ class filter_by_tags(APIView):
             if idioma_codes:
                 queryset = queryset.filter(language_normalized__in=idioma_codes)
             else:
-                queryset = queryset.filter(language_normalized__in=["es", "en"])
+                queryset = queryset.filter(language_normalized__in=["es"])
 
             if skill_slugs:
-                first_skill_slug_subquery = SkillsCertification.objects.filter(
-                    certificacion_id=OuterRef("pk")
-                ).order_by("orden", "id").values("skill__slug")[:1]
+                first_skill_slug_subquery = (
+                    SkillsCertification.objects
+                    .filter(certificacion_id=OuterRef("pk"))
+                    .order_by("orden", "id")
+                    .values("skill__slug")[:1]
+                )
 
                 queryset = queryset.annotate(
                     first_skill_slug=Subquery(first_skill_slug_subquery)
@@ -2124,7 +2685,7 @@ class filter_by_tags(APIView):
             paginator = self.pagination_class()
             paginated_queryset = paginator.paginate_queryset(queryset, request)
 
-            serializer = CertificationSearchSerializer(
+            serializer = SuggestedCertificationSerializer(
                 paginated_queryset,
                 many=True,
                 context={"request": request}
@@ -2322,81 +2883,389 @@ class LatestCertificationsView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-
-
 class OriginalDetailView(APIView):
     def get(self, request, slug):
         try:
-            original = Original.objects.filter(esta="enabled").prefetch_related(
-                Prefetch(
-                    'certifications',  # o 'certifications' si tienes related_name
-                    queryset=OriginalCertification.objects.all().order_by('posicion')
+            original = (
+                Original.objects
+                .filter(esta="enabled")
+                .only(
+                    "id",
+                    "name",
+                    "slug",
+                    "extr",
+                    "image",
+                    "biog",
+                    "esta",
                 )
-            ).get(slug=slug)
+                .prefetch_related(
+                    Prefetch(
+                        "certifications",
+                        queryset=(
+                            OriginalCertification.objects
+                            .select_related(
+                                "certification",
+                                "certification__plataforma_certificacion",
+                                "certification__tema_certificacion",
+                            )
+                            .only(
+                                "id",
+                                "original_id",
+                                "certification_id",
+                                "title",
+                                "posicion",
+                                "hist",
+                                "fondo",
+
+                                "certification__id",
+                                "certification__nombre",
+                                "certification__slug",
+                                "certification__imagen_final",
+                                "certification__tema_certificacion_id",
+                                "certification__plataforma_certificacion_id",
+
+                                "certification__tema_certificacion__id",
+                                "certification__tema_certificacion__nombre",
+                                "certification__tema_certificacion__translate",
+                                "certification__tema_certificacion__tem_col",
+
+                                "certification__plataforma_certificacion__id",
+                                "certification__plataforma_certificacion__nombre",
+                                "certification__plataforma_certificacion__plat_img",
+                                "certification__plataforma_certificacion__plat_ico",
+                            )
+                            .prefetch_related(
+                                Prefetch(
+                                    "certification__skills_rel",
+                                    queryset=(
+                                        SkillsCertification.objects
+                                        .select_related("skill")
+                                        .only(
+                                            "id",
+                                            "certificacion_id",
+                                            "skill_id",
+                                            "orden",
+                                            "skill__id",
+                                            "skill__nombre",
+                                            "skill__translate",
+                                            "skill__slug",
+                                            "skill__skill_col",
+                                            "skill__skill_ico",
+                                        )
+                                        .order_by("orden", "id")
+                                    ),
+                                )
+                            )
+                            .order_by("posicion")
+                        ),
+                        to_attr="prefetched_certifications",
+                    )
+                )
+                .get(slug=slug)
+            )
 
         except Original.DoesNotExist:
-            return Response({"detail": "No encontrado"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "No encontrado"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         serializer = OriginalSerializer(
             original,
-            context={'request': request}   # <–– aquí el context
+            context={"request": request},
         )
-        return Response(serializer.data)
 
-class RankingsList (APIView):
+        return Response(serializer.data)
     
+class RankingsList(APIView):
+
     def get(self, request):
-        
-        #Queryset of the Platforms
-        rankings =  Ranking.objects.all().filter(estado="enabled")
-        rankings_serializer = RankingSerializer(rankings, many = True, context={'request': request})
-        
-        return Response(rankings_serializer.data) 
+        rankings = Ranking.objects.filter(estado="enabled").order_by("-id")
+
+        data = []
+
+        for ranking in rankings:
+            entradas = (
+                ranking.entradas
+                .select_related("universidad", "empresa")
+                .order_by("posicion")[:5]
+            )
+
+            entradas_preview = []
+
+            for entrada in entradas:
+                if entrada.universidad:
+                    entradas_preview.append({
+                        "id": entrada.id,
+                        "posicion": entrada.posicion,
+                        "nombre": entrada.universidad.nombre,
+                        "icono": entrada.universidad.univ_ico,
+                        "entidad_id": entrada.universidad.id,
+                        "entidad_tipo": "universidad",
+                    })
+
+                elif entrada.empresa:
+                    entradas_preview.append({
+                        "id": entrada.id,
+                        "posicion": entrada.posicion,
+                        "nombre": entrada.empresa.nombre,
+                        "icono": entrada.empresa.empr_ico,
+                        "entidad_id": entrada.empresa.id,
+                        "entidad_tipo": "empresa",
+                    })
+
+            data.append({
+                "id": ranking.id,
+                "nombre": ranking.nombre,
+                "descripcion": ranking.descripcion,
+                "image": request.build_absolute_uri(ranking.image.url) if ranking.image else None,
+                "tipo": ranking.tipo,
+                "estado": ranking.estado,
+                "entradas_preview": entradas_preview,
+            })
+
+        return Response(data, status=status.HTTP_200_OK)
 
 class RankingDetailView(APIView):
+
     def get(self, request, slug):
         try:
-            ranking = Ranking.objects.get(nombre__iexact=slug.replace('-', ' '))
+            ranking = (
+                Ranking.objects
+                .prefetch_related("entradas__universidad", "entradas__empresa")
+                .get(nombre__iexact=slug.replace("-", " "))
+            )
         except Ranking.DoesNotExist:
-            return Response({"detail": "No encontrado"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "No encontrado"},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-        # Obtenemos las entradas del ranking
-        entradas = ranking.entradas.select_related('universidad', 'empresa').all()
+        entradas = list(
+            ranking.entradas
+            .select_related("universidad", "empresa")
+            .annotate(
+                total_certificaciones=Case(
+                    When(
+                        universidad__isnull=False,
+                        then=Count("universidad__certificaciones", distinct=True),
+                    ),
+                    When(
+                        empresa__isnull=False,
+                        then=Count("empresa__certificaciones", distinct=True),
+                    ),
+                    default=Value(0),
+                    output_field=IntegerField(),
+                )
+            )
+            .order_by("posicion")
+        )
 
-        # Agregamos las certificaciones por tema para cada entrada
+        universidad_ids = [
+            entrada.universidad_id
+            for entrada in entradas
+            if entrada.universidad_id
+        ]
+
+        empresa_ids = [
+            entrada.empresa_id
+            for entrada in entradas
+            if entrada.empresa_id
+        ]
+
+        skills_by_universidad = defaultdict(list)
+        skills_by_empresa = defaultdict(list)
+
+        if universidad_ids:
+            university_skills = (
+                SkillsCertification.objects
+                .filter(
+                    certificacion__universidad_certificacion_id__in=universidad_ids,
+                    certificacion__vigente_certificacion=True,
+                    skill__estado=True,
+                )
+                .values(
+                    "certificacion__universidad_certificacion_id",
+                    "skill_id",
+                    "skill__nombre",
+                    "skill__translate",
+                    "skill__slug",
+                    "skill__skill_type",
+                    "skill__skill_ico",
+                    "skill__skill_img",
+                    "skill__skill_col",
+                )
+                .annotate(total_certificaciones=Count("certificacion_id", distinct=True))
+                .order_by(
+                    "certificacion__universidad_certificacion_id",
+                    "-total_certificaciones",
+                    "skill__nombre",
+                )
+            )
+
+            for item in university_skills:
+                universidad_id = item["certificacion__universidad_certificacion_id"]
+
+                if len(skills_by_universidad[universidad_id]) >= 10:
+                    continue
+
+                skills_by_universidad[universidad_id].append({
+                    "skill_id": item["skill_id"],
+                    "skill_nombre": item["skill__nombre"],
+                    "skill_translate": item["skill__translate"],
+                    "skill_slug": item["skill__slug"],
+                    "skill_type": item["skill__skill_type"],
+                    "skill_ico": item["skill__skill_ico"],
+                    "skill_img": item["skill__skill_img"],
+                    "skill_col": item["skill__skill_col"],
+                    "total_certificaciones": item["total_certificaciones"],
+                })
+
+        if empresa_ids:
+            company_skills = (
+                SkillsCertification.objects
+                .filter(
+                    certificacion__empresa_certificacion_id__in=empresa_ids,
+                    certificacion__vigente_certificacion=True,
+                    skill__estado=True,
+                )
+                .values(
+                    "certificacion__empresa_certificacion_id",
+                    "skill_id",
+                    "skill__nombre",
+                    "skill__translate",
+                    "skill__slug",
+                    "skill__skill_type",
+                    "skill__skill_ico",
+                    "skill__skill_img",
+                    "skill__skill_col",
+                )
+                .annotate(total_certificaciones=Count("certificacion_id", distinct=True))
+                .order_by(
+                    "certificacion__empresa_certificacion_id",
+                    "-total_certificaciones",
+                    "skill__nombre",
+                )
+            )
+
+            for item in company_skills:
+                empresa_id = item["certificacion__empresa_certificacion_id"]
+
+                if len(skills_by_empresa[empresa_id]) >= 10:
+                    continue
+
+                skills_by_empresa[empresa_id].append({
+                    "skill_id": item["skill_id"],
+                    "skill_nombre": item["skill__nombre"],
+                    "skill_translate": item["skill__translate"],
+                    "skill_slug": item["skill__slug"],
+                    "skill_type": item["skill__skill_type"],
+                    "skill_ico": item["skill__skill_ico"],
+                    "skill_img": item["skill__skill_img"],
+                    "skill_col": item["skill__skill_col"],
+                    "total_certificaciones": item["total_certificaciones"],
+                })
+
         for entrada in entradas:
-            if entrada.universidad:
-                temas = entrada.universidad.certificaciones.values(
-                    'tema_certificacion__id',
-                    'tema_certificacion__nombre',
-                    'tema_certificacion__tem_type',
-                    'tema_certificacion__tem_img'
-                ).annotate(total_certificaciones=Count('id'))
-                entrada.temas_certificaciones = list(temas)
-            elif entrada.empresa:
-                temas = entrada.empresa.certificaciones.values(
-                    'tema_certificacion__id',
-                    'tema_certificacion__nombre',
-                    'tema_certificacion__tem_type',
-                    'tema_certificacion__tem_img'
-                ).annotate(total_certificaciones=Count('id'))
-                entrada.temas_certificaciones = list(temas)
+            if entrada.universidad_id:
+                entrada.temas_certificaciones = skills_by_universidad.get(
+                    entrada.universidad_id,
+                    []
+                )
+            elif entrada.empresa_id:
+                entrada.temas_certificaciones = skills_by_empresa.get(
+                    entrada.empresa_id,
+                    []
+                )
             else:
                 entrada.temas_certificaciones = []
 
+        ranking.entradas_cache = entradas
+
         serializer = RankingSerializer(
             ranking,
-            context={'request': request}
+            context={"request": request}
         )
-        # Adjuntamos manualmente los datos de temas_certificaciones
+
         data = serializer.data
+
         for idx, entrada in enumerate(entradas):
-            data['entradas'][idx]['temas_certificaciones'] = entrada.temas_certificaciones
+            if idx < len(data.get("entradas", [])):
+                data["entradas"][idx]["temas_certificaciones"] = entrada.temas_certificaciones
 
         return Response(data)
 
+class RankingPreviewView(APIView):
 
+    def get(self, request, slug):
+        try:
+            ranking = Ranking.objects.only(
+                "id",
+                "nombre",
+                "descripcion",
+                "image",
+                "tipo",
+                "estado",
+            ).get(nombre__iexact=slug.replace("-", " "))
+        except Ranking.DoesNotExist:
+            return Response(
+                {"detail": "No encontrado"},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
+        entradas = (
+            ranking.entradas
+            .select_related("universidad", "empresa")
+            .only(
+                "id",
+                "posicion",
+                "universidad_id",
+                "empresa_id",
+                "universidad__id",
+                "universidad__nombre",
+                "universidad__univ_ico",
+                "empresa__id",
+                "empresa__nombre",
+                "empresa__empr_ico",
+            )
+            .order_by("posicion")[:5]
+        )
+
+        entradas_preview = []
+
+        for entrada in entradas:
+            if entrada.universidad_id and entrada.universidad:
+                entradas_preview.append({
+                    "id": entrada.id,
+                    "posicion": entrada.posicion,
+                    "nombre": entrada.universidad.nombre,
+                    "icono": entrada.universidad.univ_ico,
+                    "entidad_id": entrada.universidad.id,
+                    "entidad_tipo": "universidad",
+                })
+
+            elif entrada.empresa_id and entrada.empresa:
+                entradas_preview.append({
+                    "id": entrada.id,
+                    "posicion": entrada.posicion,
+                    "nombre": entrada.empresa.nombre,
+                    "icono": entrada.empresa.empr_ico,
+                    "entidad_id": entrada.empresa.id,
+                    "entidad_tipo": "empresa",
+                })
+
+        data = {
+            "id": ranking.id,
+            "nombre": ranking.nombre,
+            "descripcion": ranking.descripcion,
+            "image": request.build_absolute_uri(ranking.image.url) if ranking.image else None,
+            "tipo": ranking.tipo,
+            "estado": ranking.estado,
+            "entradas_preview": entradas_preview,
+        }
+
+        return Response(data, status=status.HTTP_200_OK)
+    
 def staff_required(view_func):
     return login_required(user_passes_test(lambda u: u.is_staff)(view_func))
 
@@ -2619,42 +3488,99 @@ def _ensure_billing_profile(user, customer_id=None):
     return profile
 
 
+def _find_route_from_stripe_object(obj, user=None):
+    metadata = obj.get("metadata") or {}
+    route_id = metadata.get("route_id")
+
+    if route_id:
+        route = LearningRouteLead.objects.filter(id=route_id).first()
+        if route:
+            return route
+
+    email = None
+
+    customer_details = obj.get("customer_details") or {}
+    if customer_details:
+        email = customer_details.get("email")
+
+    email = email or obj.get("customer_email")
+
+    if not email and user:
+        email = user.email
+
+    if email:
+        return (
+            LearningRouteLead.objects
+            .filter(email=email)
+            .order_by("-created_at")
+            .first()
+        )
+
+    return None
+
+def _send_current_stripe_event_to_mx(event, event_type, obj, user=None):
+    route = _find_route_from_stripe_object(obj, user=user)
+
+    payload = build_mx_payload_from_stripe_event(
+        event=event,
+        event_type=event_type,
+        stripe_object=obj,
+        user=user,
+        route=route,
+    )
+
+    result = send_stripe_event_to_mx(
+        event_id=payload["eventId"],
+        event_type=payload["eventType"],
+        payload=payload,
+        stripe_event_id=event.get("id"),
+        stripe_object_id=obj.get("id"),
+    )
+
+    print("MX delivery result:", result)
+    return result
+
 @require_POST
 @csrf_exempt
 def stripe_webhook(request):
     print("✅ WEBHOOK HIT")
-    print("SIG HEADER:", request.META.get("HTTP_STRIPE_SIGNATURE", "")[:30], "...")
-    print("PAYLOAD FIRST 200:", (request.body or b"")[:200])
     payload = request.body
     sig_header = request.META.get("HTTP_STRIPE_SIGNATURE", "")
 
-    # 1) Validar firma
     try:
         event = stripe.Webhook.construct_event(
             payload=payload,
             sig_header=sig_header,
             secret=settings.STRIPE_WEBHOOK_SECRET,
         )
-    except Exception:
+    except Exception as e:
+        print("❌ Stripe signature error:", str(e))
         return HttpResponse(status=400)
 
     event_type = event.get("type")
     obj = (event.get("data") or {}).get("object") or {}
 
+    def send_to_mx_safe(current_obj, user=None):
+        try:
+            _send_current_stripe_event_to_mx(
+                event=event,
+                event_type=event_type,
+                obj=current_obj,
+                user=user,
+            )
+        except Exception as e:
+            print("⚠️ Error enviando evento a MX:", str(e))
+
     # --------------------------------------------
     # A) checkout.session.completed
     # --------------------------------------------
     if event_type == "checkout.session.completed":
-        
-
         session = obj
-        # Idempotencia (Stripe reintenta webhooks)
         session_id = session.get("id")
-        if session_id and StripePurchase.objects.filter(stripe_checkout_session_id=session_id).exists():
-            return HttpResponse(status=200)
 
         user = _find_user_from_session(session)
-        print("session.id:", session.get("id"))
+
+        print("session.id:", session_id)
         print("client_reference_id:", session.get("client_reference_id"))
         print("metadata:", session.get("metadata"))
         print("customer_details:", session.get("customer_details"))
@@ -2662,7 +3588,6 @@ def stripe_webhook(request):
         print("found user:", user.id if user else None)
 
         if not user:
-            # no bloquees el webhook: solo no guardes
             return HttpResponse(status=200)
 
         customer_id = session.get("customer")
@@ -2670,26 +3595,33 @@ def stripe_webhook(request):
 
         _ensure_billing_profile(user, customer_id=customer_id)
 
-        # Guardar compra base (checkout)
-        StripePurchase.objects.create(
-            user=user,
-            stripe_checkout_session_id=session_id,
-            stripe_payment_intent_id=session.get("payment_intent"),
-            amount_total=session.get("amount_total") or 0,
-            currency=session.get("currency") or "usd",
-            status=session.get("payment_status") or "unknown",
-            description="Checkout completed",
+        already_exists = (
+            session_id and
+            StripePurchase.objects.filter(
+                stripe_checkout_session_id=session_id
+            ).exists()
         )
 
-        # Guardar/actualizar suscripción
+        if not already_exists:
+            StripePurchase.objects.create(
+                user=user,
+                stripe_checkout_session_id=session_id,
+                stripe_payment_intent_id=session.get("payment_intent"),
+                amount_total=session.get("amount_total") or 0,
+                currency=session.get("currency") or "usd",
+                status=session.get("payment_status") or "unknown",
+                description="Checkout completed",
+            )
+
         if subscription_id:
             _upsert_subscription(user, subscription_id)
+
+        send_to_mx_safe(session, user=user)
 
         return HttpResponse(status=200)
 
     # --------------------------------------------
     # B) invoice paid / payment succeeded
-    # (esto es el "historial real" de cobros)
     # --------------------------------------------
     if event_type in ("invoice.paid", "invoice.payment_succeeded"):
         invoice = obj
@@ -2697,48 +3629,79 @@ def stripe_webhook(request):
         customer_id = invoice.get("customer")
         subscription_id = invoice.get("subscription")
 
-        # buscar user por customer
         profile = (
             UserBillingProfile.objects
             .filter(stripe_customer_id=customer_id)
             .select_related("user")
             .first()
         )
+
         if not profile:
             return HttpResponse(status=200)
 
         user = profile.user
 
-        # idempotencia por invoice_id
-        if invoice_id and StripePurchase.objects.filter(stripe_invoice_id=invoice_id).exists():
-            # aun así actualizamos subs por si cambió
-            if subscription_id:
-                _upsert_subscription(user, subscription_id)
-            return HttpResponse(status=200)
-
-        StripePurchase.objects.update_or_create(
-            user=user,
-            stripe_invoice_id=invoice_id,
-            defaults={
-                "stripe_payment_intent_id": invoice.get("payment_intent"),
-                "amount_total": invoice.get("amount_paid") or invoice.get("total") or 0,
-                "currency": invoice.get("currency") or "usd",
-                "status": invoice.get("status") or "unknown",
-                "description": (invoice.get("description") or "Invoice paid")[:500],
-                "hosted_invoice_url": invoice.get("hosted_invoice_url"),
-                "invoice_pdf": invoice.get("invoice_pdf"),
-            },
+        already_exists = (
+            invoice_id and
+            StripePurchase.objects.filter(stripe_invoice_id=invoice_id).exists()
         )
+
+        if not already_exists:
+            StripePurchase.objects.update_or_create(
+                user=user,
+                stripe_invoice_id=invoice_id,
+                defaults={
+                    "stripe_payment_intent_id": invoice.get("payment_intent"),
+                    "amount_total": invoice.get("amount_paid") or invoice.get("total") or 0,
+                    "currency": invoice.get("currency") or "usd",
+                    "status": invoice.get("status") or "unknown",
+                    "description": (invoice.get("description") or "Invoice paid")[:500],
+                    "hosted_invoice_url": invoice.get("hosted_invoice_url"),
+                    "invoice_pdf": invoice.get("invoice_pdf"),
+                },
+            )
 
         if subscription_id:
             _upsert_subscription(user, subscription_id)
 
+        send_to_mx_safe(invoice, user=user)
+
         return HttpResponse(status=200)
 
     # --------------------------------------------
-    # C) subscription updated/deleted
+    # C) invoice.payment_failed
     # --------------------------------------------
-    if event_type in ("customer.subscription.updated", "customer.subscription.deleted"):
+    if event_type == "invoice.payment_failed":
+        invoice = obj
+        customer_id = invoice.get("customer")
+        subscription_id = invoice.get("subscription")
+
+        profile = (
+            UserBillingProfile.objects
+            .filter(stripe_customer_id=customer_id)
+            .select_related("user")
+            .first()
+        )
+
+        if not profile:
+            return HttpResponse(status=200)
+
+        user = profile.user
+
+        if subscription_id:
+            _upsert_subscription(user, subscription_id)
+
+        send_to_mx_safe(invoice, user=user)
+
+        return HttpResponse(status=200)
+
+    # --------------------------------------------
+    # D) subscription updated/deleted
+    # --------------------------------------------
+    if event_type in (
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    ):
         sub_obj = obj
         subscription_id = sub_obj.get("id")
         customer_id = sub_obj.get("customer")
@@ -2749,15 +3712,20 @@ def stripe_webhook(request):
             .select_related("user")
             .first()
         )
+
         if not profile:
             return HttpResponse(status=200)
 
-        _upsert_subscription(profile.user, subscription_id)
+        user = profile.user
+
+        if subscription_id:
+            _upsert_subscription(user, subscription_id)
+
+        if event_type == "customer.subscription.deleted":
+            send_to_mx_safe(sub_obj, user=user)
+
         return HttpResponse(status=200)
 
-    # --------------------------------------------
-    # D) ignorar otros eventos (si quieres log)
-    # --------------------------------------------
     return HttpResponse(status=200)
 
 PRICE_MAP = {
@@ -3900,27 +4868,23 @@ def normalize_skill_type_for_filter(skill_type):
 
     return "Skills"
 
-
 def build_cert_link(cert):
-    slug = str(getattr(cert, "slug", "") or "").strip()
-    if not slug:
-        return None
+    platform = getattr(cert, "plataforma_certificacion", None)
+    platform_name = (getattr(platform, "nombre", "") or "").strip().lower()
 
-    plataforma = getattr(cert, "plataforma_certificacion", None)
-    plataforma_nombre = str(getattr(plataforma, "nombre", "") or "").strip().lower()
-
-    platform_map = {
-        "edx": "edx",
+    platform_slug_map = {
         "coursera": "coursera",
+        "edx": "edx",
+        "edx.org": "edx",
         "masterclass": "masterclass",
     }
 
-    plataforma_slug = platform_map.get(plataforma_nombre, "")
+    platform_slug = platform_slug_map.get(platform_name)
 
-    if plataforma_slug:
-        return f"/certificacion/{plataforma_slug}/{slug}"
+    if platform_slug:
+        return f"/certificacion/{platform_slug}/{cert.slug}"
 
-    return f"/certificacion/{slug}"
+    return f"/certificacion/{cert.slug}"
 
 
 def normalize_instructor_name(item):
@@ -4031,6 +4995,9 @@ def pick_first_instructor_image(cert, request):
 
     return ""
 
+def get_initial(value):
+    value = (value or "").strip()
+    return value[:1].upper() if value else "T"
 
 class HomeSkillsGridAPIView(APIView):
     permission_classes = []
@@ -4041,7 +5008,8 @@ class HomeSkillsGridAPIView(APIView):
             return Response(cached)
 
         skills = list(
-            Skills.objects.filter(
+            Skills.objects
+            .filter(
                 parent__isnull=True,
                 estado=True,
             )
@@ -4055,101 +5023,137 @@ class HomeSkillsGridAPIView(APIView):
                 "skill_img",
                 "skill_ico",
                 "skill_col",
+                "slug",
             )
             .order_by("id")[:MAX_SKILLS_ON_HOME]
         )
 
+        skill_ids = [skill.id for skill in skills]
+
+        links = list(
+            SkillsCertification.objects
+            .filter(skill_id__in=skill_ids)
+            .select_related(
+                "skill",
+                "certificacion",
+                "certificacion__universidad_certificacion",
+                "certificacion__empresa_certificacion",
+                "certificacion__plataforma_certificacion",
+            )
+            .only(
+                "id",
+                "skill_id",
+                "certificacion_id",
+
+                "certificacion__id",
+                "certificacion__nombre",
+                "certificacion__slug",
+                "certificacion__instructores_certificacion",
+                "certificacion__universidad_certificacion_id",
+                "certificacion__empresa_certificacion_id",
+                "certificacion__plataforma_certificacion_id",
+
+                "certificacion__universidad_certificacion__id",
+                "certificacion__universidad_certificacion__nombre",
+                "certificacion__universidad_certificacion__univ_ico",
+                "certificacion__universidad_certificacion__univ_img",
+
+                "certificacion__empresa_certificacion__id",
+                "certificacion__empresa_certificacion__nombre",
+                "certificacion__empresa_certificacion__empr_ico",
+                "certificacion__empresa_certificacion__empr_img",
+
+                "certificacion__plataforma_certificacion__id",
+                "certificacion__plataforma_certificacion__nombre",
+                "certificacion__plataforma_certificacion__plat_ico",
+                "certificacion__plataforma_certificacion__plat_img",
+            )
+            .order_by("skill_id", "-certificacion_id")
+        )
+
+        grouped_links = {}
+
+        for link in links:
+            grouped_links.setdefault(link.skill_id, [])
+
+            if len(grouped_links[link.skill_id]) < MAX_CERTS_PER_SKILL_SCAN:
+                grouped_links[link.skill_id].append(link)
+
         response_data = []
 
         for skill in skills:
-            cert_ids = list(
-                SkillsCertification.objects
-                .filter(skill_id=skill.id)
-                .order_by("-certificacion_id")
-                .values_list("certificacion_id", flat=True)[:MAX_CERTS_PER_SKILL_SCAN]
-            )
-
-            if not cert_ids:
-                certs = []
-            else:
-                certs_qs = (
-                    Certificaciones.objects
-                    .filter(id__in=cert_ids)
-                    .select_related(
-                        "universidad_certificacion",
-                        "empresa_certificacion",
-                        "plataforma_certificacion",
-                    )
-                    .only(
-                        "id",
-                        "nombre",
-                        "slug",
-                        "instructores_certificacion",
-                        "universidad_certificacion__id",
-                        "universidad_certificacion__nombre",
-                        "universidad_certificacion__univ_ico",
-                        "empresa_certificacion__id",
-                        "empresa_certificacion__nombre",
-                        "empresa_certificacion__empr_ico",
-                        "plataforma_certificacion__id",
-                        "plataforma_certificacion__nombre",
-                    )
-                )
-
-                cert_map = {cert.id: cert for cert in certs_qs}
-                certs = [cert_map[cid] for cid in cert_ids if cid in cert_map]
-
             related_items = []
             seen_universities = set()
             seen_companies = set()
             seen_certs = set()
 
-            for cert in certs:
+            skill_links = grouped_links.get(skill.id, [])
+
+            for link in skill_links:
+                cert = link.certificacion
+                if not cert:
+                    continue
+
                 uni = getattr(cert, "universidad_certificacion", None)
 
-                if uni:
-                    uni_name = getattr(uni, "nombre", "") or ""
-                    uni_icon = getattr(uni, "univ_ico", "") or ""
-                    uni_id = getattr(uni, "id", uni_name)
+                if uni and uni.id not in seen_universities:
+                    seen_universities.add(uni.id)
 
-                    if uni_name and uni_icon and uni_id not in seen_universities:
-                        seen_universities.add(uni_id)
-                        related_items.append({
-                            "name": uni_name,
-                            "type": "Universidades",
-                            "img": normalize_media_url(request, uni_icon),
-                        })
+                    uni_img = (
+                        normalize_media_url(request, getattr(uni, "univ_ico", None))
+                        or normalize_media_url(request, getattr(uni, "univ_img", None))
+                    )
+
+                    related_items.append({
+                        "id": uni.id,
+                        "name": uni.nombre,
+                        "type": "university",
+                        "img": uni_img,
+                        "initial": get_initial(uni.nombre),
+                        "filter": {
+                            "tema_id": skill.id,
+                            "universidad_id": uni.id,
+                        },
+                    })
 
                 emp = getattr(cert, "empresa_certificacion", None)
 
-                if emp:
-                    emp_name = getattr(emp, "nombre", "") or ""
-                    emp_icon = getattr(emp, "empr_ico", "") or ""
-                    emp_id = getattr(emp, "id", emp_name)
+                if emp and emp.id not in seen_companies:
+                    seen_companies.add(emp.id)
 
-                    if emp_name and emp_icon and emp_id not in seen_companies:
-                        seen_companies.add(emp_id)
-                        related_items.append({
-                            "name": emp_name,
-                            "type": "Empresas",
-                            "img": normalize_media_url(request, emp_icon),
-                        })
+                    emp_img = (
+                        normalize_media_url(request, getattr(emp, "empr_ico", None))
+                        or normalize_media_url(request, getattr(emp, "empr_img", None))
+                    )
 
-            if str(skill.skill_type or "").strip().lower() == "habilidad":
-                for cert in certs:
-                    cert_name = getattr(cert, "nombre", "") or ""
-                    cert_link = build_cert_link(cert)
+                    related_items.append({
+                        "id": emp.id,
+                        "name": emp.nombre,
+                        "type": "company",
+                        "img": emp_img,
+                        "initial": get_initial(emp.nombre),
+                        "filter": {
+                            "tema_id": skill.id,
+                            "empresa_id": emp.id,
+                        },
+                    })
+
+                plataforma = getattr(cert, "plataforma_certificacion", None)
+                platform_name = (getattr(plataforma, "nombre", "") or "").strip().lower()
+
+                if "masterclass" in platform_name and cert.id not in seen_certs:
+                    seen_certs.add(cert.id)
+
                     instructor_img = pick_first_instructor_image(cert, request)
-                    cert_id = getattr(cert, "id", cert_name)
 
-                    if cert_name and cert_link and instructor_img and cert_id not in seen_certs:
-                        seen_certs.add(cert_id)
-                        related_items.append({
-                            "name": cert_name,
-                            "type": "Certificacion",
-                            "img": instructor_img,
-                            "link": cert_link,
-                        })
+                    related_items.append({
+                        "id": cert.id,
+                        "name": cert.nombre,
+                        "type": "certification",
+                        "img": instructor_img,
+                        "initial": get_initial(cert.nombre),
+                        "link": build_cert_link(cert),
+                    })
 
             random.shuffle(related_items)
             related_items = related_items[:MAX_ITEMS_PER_SKILL]
@@ -4158,10 +5162,19 @@ class HomeSkillsGridAPIView(APIView):
                 "id": skill.id,
                 "name": (skill.translate or skill.nombre or "").strip(),
                 "slug": skill.slug,
-                "type": normalize_skill_type_for_filter(skill.skill_type),
-                "img": normalize_media_url(request, skill.skill_img),
+                "type": "skill",
+                "filter": {
+                    "tema_id": skill.id,
+                },
+                "img": (
+                    normalize_media_url(request, skill.skill_ico)
+                    or normalize_media_url(request, skill.skill_img)
+                ),
                 "color": COLOR_MAP.get(skill.skill_col, "#034694"),
                 "description": (skill.descripcion or "").strip(),
+                "items": related_items,
+
+                # compatibilidad con tu frontend actual
                 "universities": related_items,
             })
 
@@ -4169,3 +5182,1206 @@ class HomeSkillsGridAPIView(APIView):
 
         cache.set(CACHE_KEY, response_data, CACHE_TIMEOUT)
         return Response(response_data)
+    
+def get_stripe_price_for_plan(plan):
+    plan_normalized = str(plan or "monthly_x").strip().lower()
+
+    mapping = {
+        "monthly_basic": {
+            "price_id": getattr(settings, "STRIPE_PRICE_BASIC_MONTHLY", None),
+            "selected_plan": "basic",
+            "interval": "monthly",
+        },
+        "yearly_basic": {
+            "price_id": getattr(settings, "STRIPE_PRICE_BASIC_YEARLY", None),
+            "selected_plan": "basic",
+            "interval": "yearly",
+        },
+        "monthly_x": {
+            "price_id": getattr(settings, "STRIPE_PRICE_X_MONTHLY", None),
+            "selected_plan": "x",
+            "interval": "monthly",
+        },
+        "yearly_x": {
+            "price_id": getattr(settings, "STRIPE_PRICE_X_YEARLY", None),
+            "selected_plan": "x",
+            "interval": "yearly",
+        },
+        "monthly_plus": {
+            "price_id": getattr(settings, "STRIPE_PRICE_PLUS_MONTHLY", None),
+            "selected_plan": "plus",
+            "interval": "monthly",
+        },
+        "yearly_plus": {
+            "price_id": getattr(settings, "STRIPE_PRICE_PLUS_YEARLY", None),
+            "selected_plan": "plus",
+            "interval": "yearly",
+        },
+    }
+
+    config = mapping.get(plan_normalized)
+
+    if not config:
+        return None, None, None, f"invalid_plan_{plan_normalized}"
+
+    if not config["price_id"]:
+        return None, None, None, f"missing_price_id_for_{plan_normalized}"
+
+    return (
+        config["price_id"],
+        config["selected_plan"],
+        config["interval"],
+        None,
+    )
+
+def _get_or_create_user_from_onboarding(request):
+    body = _json_body(request)
+
+    route_id = body.get("route_id")
+    email = (body.get("email") or "").strip().lower()
+    name = (body.get("name") or "").strip()
+
+    route = None
+
+    if route_id:
+        route = LearningRouteLead.objects.filter(id=route_id).first()
+        if route:
+            email = route.email
+
+    if not email:
+        return None, route, "missing_email"
+
+    user = User.objects.filter(email=email).first()
+
+    if not user:
+        username_base = slugify(email.split("@")[0]) or "user"
+        username = username_base
+        counter = 1
+
+        while User.objects.filter(username=username).exists():
+            counter += 1
+            username = f"{username_base}-{counter}"
+
+        first_name = ""
+        last_name = ""
+
+        if route:
+            first_name = route.first_name or ""
+            last_name = route.last_name or ""
+        elif name:
+            parts = name.split(" ", 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else ""
+
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            password=None,
+            is_active=True,
+        )
+
+    if route and route.user_id != user.id:
+        route.user = user
+        route.save(update_fields=["user"])
+
+    return user, route, None
+
+class LearningRouteCreateView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        first_name = (request.data.get("first_name") or "").strip()
+        last_name = (request.data.get("last_name") or "").strip()
+
+        age = request.data.get("age")
+        gender = (request.data.get("gender") or "").strip()
+        country = (request.data.get("country") or "").strip()
+
+        topics = request.data.get("topics") or []
+        goal = (request.data.get("goal") or "").strip()
+        recommended = request.data.get("recommended_certifications") or []
+
+        if not email:
+            return Response(
+                {"error": "email es obligatorio"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not first_name:
+            return Response(
+                {"error": "first_name es obligatorio"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not goal:
+            return Response(
+                {"error": "goal es obligatorio"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = User.objects.filter(email=email).first()
+
+        route = LearningRouteLead.objects.create(
+            user=user,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+
+            # nuevos campos
+            age=age,
+            gender=gender,
+            country=country,
+
+            topics=topics,
+            goal=goal,
+            recommended_certifications=recommended,
+
+            status="route_created",
+
+            # para MX posteriormente
+            mx_status="pending",
+            mx_response=None,
+        )
+
+        return Response(
+            {
+                "id": route.id,
+                "email": route.email,
+                "first_name": route.first_name,
+                "last_name": route.last_name,
+                "status": route.status,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+class LearningRouteFreeSignupView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    @transaction.atomic
+    def post(self, request):
+        route_id = request.data.get("route_id")
+        email = (request.data.get("email") or "").strip().lower()
+        password = request.data.get("password") or ""
+
+        if not route_id or not email or not password:
+            return Response(
+                {"error": "route_id, email y password son obligatorios"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            route = LearningRouteLead.objects.select_for_update().get(
+                id=route_id,
+                email=email,
+            )
+        except LearningRouteLead.DoesNotExist:
+            return Response(
+                {"error": "Ruta no encontrada"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "username": email,
+                "first_name": route.first_name,
+                "last_name": route.last_name or "",
+            },
+        )
+
+        if created:
+            user.set_password(password)
+            user.save()
+        else:
+            return Response(
+                {"error": "Ya existe una cuenta con este correo. Inicia sesión."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        route.user = user
+        route.selected_plan = "free"
+        route.status = "free_active"
+        route.save(update_fields=["user", "selected_plan", "status", "updated_at"])
+
+        login(request, user)
+
+        return Response({
+            "ok": True,
+            "user_id": user.id,
+            "route_id": route.id,
+            "redirect": "/account",
+        })
+
+
+class LearningRouteCompleteSignupView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    @transaction.atomic
+    def post(self, request):
+        route_id = request.data.get("route_id")
+        password = request.data.get("password")
+        selected_plan = request.data.get("selected_plan") or "free"
+
+        if not route_id:
+            return Response(
+                {"ok": False, "error": "route_id requerido"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not password:
+            return Response(
+                {"ok": False, "error": "password requerido"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        route = (
+            LearningRouteLead.objects
+            .select_for_update()
+            .select_related("user")
+            .filter(id=route_id)
+            .first()
+        )
+
+        if not route:
+            return Response(
+                {"ok": False, "error": "ruta no encontrada"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        user = route.user
+
+        if not user:
+            user, _, error = _get_or_create_user_from_onboarding(request)
+
+            if error:
+                return Response(
+                    {"ok": False, "error": error},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            route.user = user
+
+        try:
+            validate_password(password, user)
+        except ValidationError as e:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "password_invalido",
+                    "messages": e.messages,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(password)
+        user.is_active = True
+        user.save(update_fields=["password", "is_active"])
+
+        # Login directo sin depender de username/email authenticate
+        backend = get_backends()[0]
+        user.backend = f"{backend.__module__}.{backend.__class__.__name__}"
+        login(request, user)
+
+        subscription = (
+            StripeSubscription.objects
+            .filter(user=user)
+            .order_by("-id")
+            .first()
+        )
+
+        route.selected_plan = selected_plan
+        route.status = "account_pending_mx"
+
+        if subscription:
+            route.stripe_subscription_id = subscription.stripe_subscription_id
+            route.trial_end = route.trial_end or subscription.current_period_end
+
+        route.save(
+            update_fields=[
+                "user",
+                "selected_plan",
+                "status",
+                "stripe_subscription_id",
+                "trial_end",
+                "updated_at",
+            ]
+        )
+
+        event_type = "checkout.session.completed"
+        event_id = f"colombia-b2c:{event_type}:{route.id}:{user.id}"
+
+        payload = build_learning_route_mx_payload(
+            event_id=event_id,
+            event_type=event_type,
+            user=user,
+            route=route,
+            subscription=subscription,
+        )
+
+        mx_result = send_stripe_event_to_mx(
+            event_id=event_id,
+            event_type=event_type,
+            payload=payload,
+            stripe_event_id=None,
+            stripe_object_id=route.stripe_subscription_id or str(route.id),
+        )
+
+        route.mx_status = mx_result.get("status") or "unknown"
+        route.mx_response = mx_result
+        route.status = "account_created" if mx_result.get("ok") else "mx_error"
+
+        route.save(
+            update_fields=[
+                "mx_status",
+                "mx_response",
+                "status",
+                "updated_at",
+            ]
+        )
+
+        redirect_url = (
+            "/account?tab=cv"
+            if selected_plan == "free"
+            else "/account?tab=license"
+        )
+
+        if not mx_result.get("ok"):
+            return Response(
+                {
+                    "ok": True,
+                    "warning": "mx_user_creation_failed",
+                    "mx_sent": False,
+                    "mx_status": route.mx_status,
+                    "mx_response": mx_result,
+                    "redirect": redirect_url,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(
+            {
+                "ok": True,
+                "user_id": user.id,
+                "route_id": route.id,
+                "mx_sent": True,
+                "mx_status": route.mx_status,
+                "mx_response": mx_result,
+                "redirect": redirect_url,
+            },
+            status=status.HTTP_200_OK,
+        )
+    
+def _json_body(request):
+    try:
+        return json.loads(request.body.decode("utf-8") or "{}")
+    except Exception:
+        return {}
+
+
+def _ensure_billing_profile(user, customer_id=None):
+    profile, _ = UserBillingProfile.objects.get_or_create(user=user)
+
+    if customer_id and profile.stripe_customer_id != customer_id:
+        profile.stripe_customer_id = customer_id
+        profile.save(update_fields=["stripe_customer_id"])
+
+    return profile
+
+
+def _get_or_create_stripe_customer(user, email=None, name=None):
+    profile = _ensure_billing_profile(user)
+
+    if profile.stripe_customer_id:
+        return profile.stripe_customer_id
+
+    customer = stripe.Customer.create(
+        email=email or user.email,
+        name=name or user.get_full_name() or user.username,
+        metadata={
+            "user_id": str(user.id),
+            "source": "top-education-colombia",
+        },
+    )
+
+    profile.stripe_customer_id = customer.id
+    profile.save(update_fields=["stripe_customer_id"])
+
+    return customer.id
+
+@require_POST
+@csrf_exempt
+@login_required
+def billing_subscription_change_plan(request):
+    body = _json_body(request)
+    plan = (body.get("plan") or "").strip().lower()
+
+    if not plan:
+        return JsonResponse({"ok": False, "error": "missing_plan"}, status=400)
+
+    if plan == "free":
+        return JsonResponse({
+            "ok": False,
+            "error": "free_downgrade_requires_cancel_flow",
+        }, status=400)
+
+    price_id, selected_plan, interval, price_error = get_stripe_price_for_plan(plan)
+
+    if price_error:
+        return JsonResponse(
+            {"ok": False, "error": price_error},
+            status=400 if price_error.startswith("invalid") else 500,
+        )
+
+    subscription = (
+        StripeSubscription.objects
+        .filter(user=request.user)
+        .exclude(status__in=["canceled", "cancelled"])
+        .order_by("-id")
+        .first()
+    )
+
+    if not subscription:
+        return JsonResponse(
+            {"ok": False, "error": "subscription_not_found"},
+            status=404,
+        )
+
+    try:
+        stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
+        item_id = stripe_sub["items"]["data"][0]["id"]
+
+        updated = stripe.Subscription.modify(
+            subscription.stripe_subscription_id,
+            items=[{
+                "id": item_id,
+                "price": price_id,
+            }],
+            proration_behavior="create_prorations",
+            metadata={
+                "plan": selected_plan,
+                "interval": interval,
+                "source": "top-education-colombia",
+            },
+        )
+
+        current_period_end = (
+            timezone.datetime.fromtimestamp(
+                updated.get("current_period_end"),
+                tz=timezone.get_current_timezone(),
+            )
+            if updated.get("current_period_end")
+            else subscription.current_period_end
+        )
+
+        subscription.price_id = price_id
+        subscription.interval = interval
+        subscription.status = updated.get("status") or subscription.status
+        subscription.current_period_end = current_period_end
+        subscription.cancel_at_period_end = bool(updated.get("cancel_at_period_end", False))
+        subscription.save(update_fields=[
+            "price_id",
+            "interval",
+            "status",
+            "current_period_end",
+            "cancel_at_period_end",
+        ])
+
+        LearningRouteLead.objects.filter(user=request.user).update(
+            selected_plan=selected_plan,
+            status=f"{selected_plan}_{updated.get('status') or 'active'}",
+        )
+
+        return JsonResponse({
+            "ok": True,
+            "data": {
+                "selected_plan": selected_plan,
+                "interval": interval,
+                "price_id": price_id,
+                "status": subscription.status,
+                "current_period_end": current_period_end.isoformat() if current_period_end else None,
+            },
+        })
+
+    except Exception as e:
+        return JsonResponse(
+            {"ok": False, "error": str(e)},
+            status=400,
+        )
+
+@require_POST
+@csrf_exempt
+def billing_setup_intent(request):
+    user, route, error = _get_or_create_user_from_onboarding(request)
+
+    if error:
+        return JsonResponse({"ok": False, "error": error}, status=400)
+
+    customer_id = _get_or_create_stripe_customer(user)
+
+    setup_intent = stripe.SetupIntent.create(
+        customer=customer_id,
+        usage="off_session",
+        payment_method_types=["card"],
+        metadata={
+            "user_id": str(user.id),
+            "route_id": str(route.id) if route else "",
+            "source": "top-education-colombia",
+        },
+    )
+
+    return JsonResponse({
+        "ok": True,
+        "client_secret": setup_intent.client_secret,
+        "customer_id": customer_id,
+    })
+
+@require_GET
+@login_required
+def billing_payment_methods_list(request):
+    qs = StripePaymentMethod.objects.filter(user=request.user).order_by(
+        "-is_default",
+        "-created_at",
+    )
+
+    return JsonResponse({
+        "ok": True,
+        "data": [
+            {
+                "id": item.id,
+                "stripe_payment_method_id": item.stripe_payment_method_id,
+                "brand": item.brand,
+                "last4": item.last4,
+                "exp_month": item.exp_month,
+                "exp_year": item.exp_year,
+                "is_default": item.is_default,
+            }
+            for item in qs
+        ],
+    })
+
+
+@require_POST
+@csrf_exempt
+def billing_payment_methods_create(request):
+    body = _json_body(request)
+    payment_method_id = body.get("payment_method_id")
+
+    if not payment_method_id:
+        return JsonResponse(
+            {"ok": False, "error": "missing_payment_method_id"},
+            status=400,
+        )
+
+    user, route, error = _get_or_create_user_from_onboarding(request)
+
+    if error:
+        return JsonResponse({"ok": False, "error": error}, status=400)
+
+    customer_id = _get_or_create_stripe_customer(user)
+
+    payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
+
+    if payment_method.customer and payment_method.customer != customer_id:
+        return JsonResponse(
+            {"ok": False, "error": "payment_method_belongs_to_other_customer"},
+            status=400,
+        )
+
+    if not payment_method.customer:
+        stripe.PaymentMethod.attach(
+            payment_method_id,
+            customer=customer_id,
+        )
+
+    card = payment_method.card
+
+    has_default = StripePaymentMethod.objects.filter(
+        user=user,
+        is_default=True,
+    ).exists()
+
+    local_pm, _ = StripePaymentMethod.objects.update_or_create(
+        stripe_payment_method_id=payment_method_id,
+        defaults={
+            "user": user,
+            "stripe_customer_id": customer_id,
+            "brand": card.brand,
+            "last4": card.last4,
+            "exp_month": card.exp_month,
+            "exp_year": card.exp_year,
+            "is_default": not has_default,
+        },
+    )
+
+    if local_pm.is_default:
+        stripe.Customer.modify(
+            customer_id,
+            invoice_settings={
+                "default_payment_method": payment_method_id,
+            },
+        )
+
+    return JsonResponse({
+        "ok": True,
+        "data": {
+            "id": local_pm.id,
+            "brand": local_pm.brand,
+            "last4": local_pm.last4,
+            "exp_month": local_pm.exp_month,
+            "exp_year": local_pm.exp_year,
+            "is_default": local_pm.is_default,
+        },
+    })
+
+@require_POST
+@csrf_exempt
+@login_required
+def billing_payment_method_set_default(request, method_id):
+    try:
+        local_pm = StripePaymentMethod.objects.get(
+            id=method_id,
+            user=request.user,
+        )
+    except StripePaymentMethod.DoesNotExist:
+        return JsonResponse(
+            {"ok": False, "error": "payment_method_not_found"},
+            status=404,
+        )
+
+    stripe.Customer.modify(
+        local_pm.stripe_customer_id,
+        invoice_settings={
+            "default_payment_method": local_pm.stripe_payment_method_id,
+        },
+    )
+
+    StripePaymentMethod.objects.filter(user=request.user).update(is_default=False)
+    local_pm.is_default = True
+    local_pm.save(update_fields=["is_default"])
+
+    return JsonResponse({"ok": True})
+
+@require_POST
+@csrf_exempt
+@login_required
+def billing_payment_method_delete(request, method_id):
+
+    try:
+        local_pm = StripePaymentMethod.objects.get(
+            id=method_id,
+            user=request.user
+        )
+    except StripePaymentMethod.DoesNotExist:
+        return JsonResponse(
+            {"ok": False},
+            status=404
+        )
+
+    stripe.PaymentMethod.detach(
+        local_pm.stripe_payment_method_id
+    )
+
+    local_pm.delete()
+
+    return JsonResponse({
+        "ok": True
+    })
+
+@require_POST
+@csrf_exempt
+def billing_subscription_create(request):
+    body = _json_body(request)
+
+    route_id = body.get("route_id")
+    payment_method_id = body.get("payment_method_id")
+    plan = body.get("plan", "monthly_x")
+
+    user, route, error = _get_or_create_user_from_onboarding(request)
+
+    if error:
+        return JsonResponse({"ok": False, "error": error}, status=400)
+
+    plan_normalized = str(plan or "monthly_x").strip().lower()
+
+    price_id, selected_plan, interval, price_error = get_stripe_price_for_plan(
+        plan_normalized
+    )
+
+    if price_error:
+        return JsonResponse(
+            {"ok": False, "error": price_error},
+            status=400 if price_error.startswith("invalid") else 500,
+        )
+
+    if not payment_method_id:
+        return JsonResponse(
+            {"ok": False, "error": "missing_payment_method_id"},
+            status=400,
+        )
+
+    if not price_id:
+        return JsonResponse(
+            {"ok": False, "error": missing_price_error},
+            status=500,
+        )
+
+    customer_id = _get_or_create_stripe_customer(user)
+
+    local_pm = StripePaymentMethod.objects.filter(
+        user=user,
+        stripe_payment_method_id=payment_method_id,
+    ).first()
+
+    if not local_pm:
+        return JsonResponse(
+            {"ok": False, "error": "payment_method_not_registered"},
+            status=400,
+        )
+
+    stripe.Customer.modify(
+        customer_id,
+        invoice_settings={
+            "default_payment_method": payment_method_id,
+        },
+    )
+
+    subscription = stripe.Subscription.create(
+        customer=customer_id,
+        items=[{"price": price_id}],
+        default_payment_method=payment_method_id,
+        trial_period_days=7,
+        metadata={
+            "user_id": str(user.id),
+            "route_id": str(route_id or ""),
+            "source": "top-education-colombia",
+            "plan": selected_plan,
+            "billing_variant": plan_normalized,
+            "interval": interval,
+        },
+        expand=["latest_invoice.payment_intent"],
+    )
+
+    subscription_id = subscription.get("id")
+    subscription_status = subscription.get("status") or "unknown"
+
+    trial_start = timezone.now()
+    trial_end = trial_start + timedelta(days=7)
+
+    current_period_end_ts = (
+        subscription.get("current_period_end")
+        or subscription.get("trial_end")
+    )
+
+    current_period_end = (
+        timezone.datetime.fromtimestamp(
+            current_period_end_ts,
+            tz=timezone.get_current_timezone(),
+        )
+        if current_period_end_ts
+        else None
+    )
+
+    StripeSubscription.objects.update_or_create(
+        stripe_subscription_id=subscription_id,
+        defaults={
+            "user": user,
+            "status": subscription_status,
+            "price_id": price_id,
+            "interval": interval,
+            "current_period_end": current_period_end,
+            "cancel_at_period_end": bool(subscription.get("cancel_at_period_end", False)),
+        },
+    )
+
+    if route_id:
+        LearningRouteLead.objects.filter(
+            id=route_id,
+            email=user.email,
+        ).update(
+            user=user,
+            selected_plan=selected_plan,
+            status="pro_trialing",
+            stripe_customer_id=customer_id,
+            stripe_subscription_id=subscription_id,
+            trial_start=trial_start,
+            trial_end=trial_end,
+        )
+
+    return JsonResponse({
+        "ok": True,
+        "data": {
+            "stripe_customer_id": customer_id,
+            "stripe_subscription_id": subscription_id,
+            "status": subscription_status,
+            "selected_plan": selected_plan,
+            "billing_variant": plan_normalized,
+            "interval": interval,
+            "trial_start": trial_start.isoformat(),
+            "trial_end": trial_end.isoformat(),
+            "redirect": "/account?tab=license",
+        },
+    })
+
+#ENVIO INFORMACIÓN STRIPE MEXICO
+
+def _json_dumps(payload):
+    return json.dumps(
+        payload,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+@require_POST
+@csrf_exempt
+@login_required
+def billing_subscription_cancel(request):
+    body = _json_body(request)
+    reason = (body.get("reason") or "").strip()
+
+    if not reason:
+        return JsonResponse(
+            {"ok": False, "error": "missing_cancel_reason"},
+            status=400,
+        )
+
+    subscription = (
+        StripeSubscription.objects
+        .filter(user=request.user)
+        .exclude(status__in=["canceled", "cancelled"])
+        .order_by("-id")
+        .first()
+    )
+
+    if not subscription:
+        return JsonResponse(
+            {"ok": False, "error": "subscription_not_found"},
+            status=404,
+        )
+
+    if not subscription.stripe_subscription_id:
+        return JsonResponse(
+            {"ok": False, "error": "missing_stripe_subscription_id"},
+            status=400,
+        )
+
+    try:
+        stripe_subscription = stripe.Subscription.modify(
+            subscription.stripe_subscription_id,
+            cancel_at_period_end=True,
+            metadata={
+                "cancel_reason": reason,
+                "cancel_requested_by": str(request.user.id),
+                "cancel_requested_from": "top-education-colombia",
+            },
+        )
+
+        subscription.cancel_at_period_end = True
+        subscription.status = stripe_subscription.get("status") or subscription.status
+        subscription.current_period_end = timezone.datetime.fromtimestamp(
+            stripe_subscription.get("current_period_end"),
+            tz=timezone.get_current_timezone(),
+        ) if stripe_subscription.get("current_period_end") else subscription.current_period_end
+
+        subscription.save(
+            update_fields=[
+                "cancel_at_period_end",
+                "status",
+                "current_period_end",
+            ]
+        )
+
+        return JsonResponse({
+            "ok": True,
+            "message": "subscription_will_cancel",
+            "cancel_at_period_end": True,
+            "current_period_end": subscription.current_period_end.isoformat() if subscription.current_period_end else None,
+        })
+
+    except Exception as e:
+        print("CANCEL ERROR:", str(e))
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": str(e),
+            },
+            status=400,
+        )
+
+def _build_mx_headers(raw_body, event_id):
+    timestamp = str(int(time.time()))
+    secret = settings.STRIPE_B2C_WEBHOOK_SECRET
+
+    signed_payload = f"{timestamp}.{raw_body}"
+
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        signed_payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    return {
+        "Content-Type": "application/json",
+        "x-top-timestamp": timestamp,
+        "x-top-signature": signature,
+        "x-event-id": event_id,
+    }
+
+
+def send_stripe_event_to_mx(
+    *,
+    event_id,
+    event_type,
+    payload,
+    stripe_event_id=None,
+    stripe_object_id=None,
+):
+    """
+    Envía evento normalizado Colombia -> MX.
+    Idempotente por event_id.
+    """
+
+    if not getattr(settings, "MX_STRIPE_B2C_WEBHOOK_URL", None):
+        return {
+            "ok": False,
+            "skipped": True,
+            "error": "missing_MX_STRIPE_B2C_WEBHOOK_URL",
+        }
+
+    log, created = MxWebhookDeliveryLog.objects.get_or_create(
+        event_id=event_id,
+        defaults={
+            "event_type": event_type,
+            "stripe_event_id": stripe_event_id,
+            "stripe_object_id": stripe_object_id,
+            "status": "pending",
+            "request_payload": payload,
+        },
+    )
+
+    if not created and log.status in ["applied", "duplicate", "permanent_error"]:
+        return {
+            "ok": True,
+            "skipped": True,
+            "status": log.status,
+            "event_id": event_id,
+        }
+
+    raw_body = _json_dumps(payload)
+    headers = _build_mx_headers(raw_body, event_id)
+
+    log.attempts = (log.attempts or 0) + 1
+    log.last_attempt_at = timezone.now()
+    log.status = "sending"
+    log.request_payload = payload
+    log.save(
+        update_fields=[
+            "attempts",
+            "last_attempt_at",
+            "status",
+            "request_payload",
+            "updated_at",
+        ]
+    )
+
+    try:
+        response = requests.post(
+            settings.MX_STRIPE_B2C_WEBHOOK_URL,
+            data=raw_body.encode("utf-8"),
+            headers=headers,
+            timeout=getattr(settings, "MX_WEBHOOK_TIMEOUT", 10),
+        )
+
+        try:
+            response_json = response.json()
+        except Exception:
+            response_json = {"raw": response.text[:2000]}
+
+        data_block = response_json.get("data") if isinstance(response_json, dict) else None
+
+        if not isinstance(data_block, dict):
+            data_block = {}
+
+        mx_status = data_block.get("status")
+
+        mx_error = response_json.get("error") if isinstance(response_json, dict) else None
+
+        if response.status_code >= 500:
+            final_status = "retryable_error"
+        elif response.status_code in [400, 401]:
+            final_status = "permanent_error"
+        elif mx_status == "APPLIED":
+            final_status = "applied"
+        elif mx_status == "DUPLICATE":
+            final_status = "duplicate"
+        elif mx_status == "RETRYABLE_ERROR":
+            final_status = "retryable_error"
+        elif mx_status == "PERMANENT_ERROR":
+            final_status = "permanent_error"
+        elif response.ok:
+            final_status = "applied"
+        else:
+            final_status = "retryable_error"
+
+        log.status = final_status
+        log.http_status = response.status_code
+        log.mx_status = mx_status
+        log.response_body = response_json
+        log.error_message = json.dumps(mx_error, ensure_ascii=False) if mx_error else None
+        log.save(
+            update_fields=[
+                "status",
+                "http_status",
+                "mx_status",
+                "response_body",
+                "error_message",
+                "updated_at",
+            ]
+        )
+
+        return {
+            "ok": final_status in ["applied", "duplicate"],
+            "status": final_status,
+            "http_status": response.status_code,
+            "mx_status": mx_status,
+            "response": response_json,
+        }
+
+    except requests.Timeout as e:
+        log.status = "retryable_error"
+        log.error_message = f"timeout: {str(e)}"
+        log.save(update_fields=["status", "error_message", "updated_at"])
+
+        return {
+            "ok": False,
+            "status": "retryable_error",
+            "error": "timeout",
+        }
+
+    except Exception as e:
+        log.status = "retryable_error"
+        log.error_message = str(e)
+        log.save(update_fields=["status", "error_message", "updated_at"])
+
+        return {
+            "ok": False,
+            "status": "retryable_error",
+            "error": str(e),
+        }
+
+
+def build_mx_event_id(stripe_event_id, event_type):
+    base = stripe_event_id or str(uuid.uuid4())
+    return f"colombia-b2c:{event_type}:{base}"
+
+def _get_plan_amount_cents(price_id=None, selected_plan=None, interval=None):
+    price_id = str(price_id or "")
+    selected_plan = str(selected_plan or "").lower()
+    interval = str(interval or "monthly").lower()
+
+    price_map = {
+        getattr(settings, "STRIPE_PRICE_BASIC_MONTHLY", None): 1900,
+        getattr(settings, "STRIPE_PRICE_BASIC_YEARLY", None): 19000,
+        getattr(settings, "STRIPE_PRICE_X_MONTHLY", None): 2900,
+        getattr(settings, "STRIPE_PRICE_X_YEARLY", None): 29900,
+        getattr(settings, "STRIPE_PRICE_PLUS_MONTHLY", None): 4900,
+        getattr(settings, "STRIPE_PRICE_PLUS_YEARLY", None): 49900,
+    }
+
+    if price_id in price_map:
+        return price_map[price_id]
+
+    fallback = {
+        ("basic", "monthly"): 1900,
+        ("basic", "yearly"): 19000,
+        ("x", "monthly"): 2900,
+        ("x", "yearly"): 29900,
+        ("plus", "monthly"): 4900,
+        ("plus", "yearly"): 49900,
+    }
+
+    return fallback.get((selected_plan, interval), 0)
+
+
+def build_learning_route_mx_payload(*, event_id, event_type, user, route, subscription=None):
+    selected_plan = route.selected_plan or "free"
+
+    stripe_subscription_id = (
+        route.stripe_subscription_id
+        or (subscription.stripe_subscription_id if subscription else None)
+    )
+
+    stripe_customer_id = (
+        route.stripe_customer_id
+        or getattr(subscription, "stripe_customer_id", None)
+    )
+
+    stripe_price_id = subscription.price_id if subscription else None
+    interval = subscription.interval if subscription else None
+
+    period_start = route.trial_start
+    period_end = (
+        route.trial_end
+        or (subscription.current_period_end if subscription else None)
+    )
+
+    is_trial = bool(route.trial_start and route.trial_end)
+
+    amount_cents = _get_plan_amount_cents(
+        price_id=stripe_price_id,
+        selected_plan=selected_plan,
+        interval=interval,
+    )
+
+    return {
+        "eventId": event_id,
+        "eventType": event_type,
+        "occurredAt": timezone.now().isoformat(),
+        "source": "colombia-b2c",
+        "traceId": f"route-{route.id}-user-{user.id}",
+
+        "customer": {
+            "email": user.email,
+            "name": user.first_name or route.first_name or "",
+            "lastName": user.last_name or route.last_name or "",
+            "fullName": (
+                user.get_full_name()
+                or f"{route.first_name or ''} {route.last_name or ''}".strip()
+            ),
+            "stripeCustomerId": stripe_customer_id,
+        },
+
+        "subscription": {
+            "stripeSubscriptionId": stripe_subscription_id,
+            "stripePriceId": stripe_price_id,
+            "stripeCustomerId": stripe_customer_id,
+            "currency": "USD",
+            "amountCents": amount_cents,
+            "periodStart": period_start.isoformat() if period_start else None,
+            "periodEnd": period_end.isoformat() if period_end else None,
+        },
+
+        "metadata": {
+            "routeId": route.id,
+            "userId": user.id,
+            "selectedPlan": selected_plan,
+            "status": route.status,
+            "country": route.country,
+            "age": route.age,
+            "gender": route.gender,
+            "topics": route.topics,
+            "goal": route.goal,
+            "recommendedCertifications": route.recommended_certifications,
+
+            "isTrial": is_trial,
+            "trialDays": 7 if is_trial else 0,
+            "billingInterval": interval,
+        },
+    }

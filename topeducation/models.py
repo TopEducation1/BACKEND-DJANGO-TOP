@@ -560,6 +560,60 @@ class StripePurchase(models.Model):
         ordering = ["-created_at"]
 
 
+class StripePaymentMethod(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="payment_methods"
+    )
+
+    stripe_customer_id = models.CharField(max_length=255)
+    stripe_payment_method_id = models.CharField(
+        max_length=255,
+        unique=True
+    )
+
+    brand = models.CharField(max_length=50, null=True, blank=True)
+    last4 = models.CharField(max_length=10, null=True, blank=True)
+
+    exp_month = models.IntegerField(null=True, blank=True)
+    exp_year = models.IntegerField(null=True, blank=True)
+
+    is_default = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "StripePaymentMethod"
+
+    def __str__(self):
+        return f"{self.user.email} - {self.brand} ****{self.last4}"
+
+class MxWebhookDeliveryLog(models.Model):
+    event_id = models.CharField(max_length=255, unique=True)
+    event_type = models.CharField(max_length=100)
+    stripe_event_id = models.CharField(max_length=255, null=True, blank=True)
+    stripe_object_id = models.CharField(max_length=255, null=True, blank=True)
+
+    status = models.CharField(max_length=50, default="pending")
+    http_status = models.IntegerField(null=True, blank=True)
+    mx_status = models.CharField(max_length=50, null=True, blank=True)
+
+    request_payload = models.JSONField(null=True, blank=True)
+    response_body = models.JSONField(null=True, blank=True)
+    error_message = models.TextField(null=True, blank=True)
+
+    attempts = models.IntegerField(default=0)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "MxWebhookDeliveryLog"
+
+    def __str__(self):
+        return f"{self.event_id} - {self.status}"
 
 class ExternalSyncState(models.Model):
     key = models.CharField(max_length=100, unique=True)
@@ -600,3 +654,54 @@ class ExternalSyncLog(models.Model):
 
     def __str__(self):
         return f"[{self.key}] page={self.page} ok={self.ok} at={self.created_at}"
+
+class LearningRouteLead(models.Model):
+    user = models.ForeignKey( settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="learning_routes")
+    email = models.EmailField(db_index=True)
+    first_name = models.CharField(max_length=120)
+    last_name = models.CharField(max_length=120, blank=True, null=True)
+
+    topics = models.JSONField(default=list)
+    goal = models.CharField(max_length=150)
+    age = models.IntegerField( null=True, blank=True,)
+    gender = models.CharField( max_length=50, blank=True, default="",)
+    country = models.CharField( max_length=120, blank=True, default="",)
+    mx_status = models.CharField( max_length=50, default="pending",)
+    mx_response = models.JSONField( null=True, blank=True,)
+    selected_plan = models.CharField(
+        max_length=20,
+        choices=[
+            ("free", "Free"),
+            ("pro", "Pro"),
+        ],
+        blank=True,
+        null=True,
+    )
+
+    status = models.CharField(
+        max_length=30,
+        default="route_created",
+        choices=[
+            ("route_created", "Ruta creada"),
+            ("free_pending_password", "Gratis pendiente contraseña"),
+            ("free_active", "Gratis activo"),
+            ("pro_checkout_started", "Pro checkout iniciado"),
+            ("pro_trialing", "Pro trial activo"),
+            ("pro_active", "Pro activo"),
+            ("pro_payment_failed", "Pago fallido"),
+        ],
+    )
+
+    recommended_certifications = models.JSONField(default=list)
+
+    stripe_customer_id = models.CharField(max_length=255, blank=True, null=True)
+    stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True)
+
+    trial_start = models.DateTimeField(blank=True, null=True)
+    trial_end = models.DateTimeField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = "LearningRouteLead"
