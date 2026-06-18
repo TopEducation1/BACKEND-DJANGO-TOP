@@ -92,7 +92,9 @@ urlpatterns = [
     path("api/filters/platforms/", PlatformsFilterMiniView.as_view()),
     path("api/filters/universities-by-region/", UniversitiesByRegionMiniView.as_view()),
     path("api/recommendations/", PersonalizedRecommendations.as_view(), name="personalized-recommendations"),
-    
+    path("api/learning-route/recommendations/", LearningRouteRecommendationsAPIView.as_view(), name="learning_route_recommendations",),
+    path("api/account/cv/analyze/", AccountCVAnalysisAPIView.as_view(), name="account_cv_analyze",),
+    path("api/account/cv/last-analysis/", AccountCVLastAnalysisAPIView.as_view(), name="account_cv_last_analysis",),
     path("originals/slider/", OriginalsSliderView.as_view(), name="originals-slider"),
     
     path('originals/<slug:slug>/', OriginalDetailView.as_view(), name='original-detail'),

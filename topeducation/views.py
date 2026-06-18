@@ -11,6 +11,7 @@ import stripe
 
 from django.conf import settings
 from django.contrib import messages
+
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth import authenticate, get_backends, get_user_model, login, logout
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -2714,107 +2715,75 @@ class filter_by_search(APIView):
         limit = max(1, min(limit, 24))
 
         if not query_string or len(query_string) < 3:
-            return Response(
-                {
-                    "results": [],
-                    "count": 0,
-                },
-                status=status.HTTP_200_OK
-            )
+            return Response({"results": [], "count": 0}, status=status.HTTP_200_OK)
 
-        idioma_values = filters.get("idioma", [])
-        plataforma_values = filters.get("Plataforma", [])
-        empresa_values = filters.get("Empresa", [])
-        universidad_values = filters.get("Universidad", [])
-        tema_values = filters.get("Tema", [])
-        habilidad_values = filters.get("Habilidad", [])
+        idioma_values = filters.get("idioma", []) or []
+        plataforma_values = filters.get("Plataforma", []) or []
+        empresa_values = filters.get("Empresa", []) or []
+        universidad_values = filters.get("Universidad", []) or []
+        tema_values = filters.get("Tema", []) or []
+        habilidad_values = filters.get("Habilidad", []) or []
 
         skill_slugs = tema_values + habilidad_values
 
         try:
-            queryset = (
-                Certificaciones.objects
-                .select_related(
-                    "tema_certificacion",
-                    "plataforma_certificacion",
-                    "universidad_certificacion",
-                    "empresa_certificacion",
-                )
-                .prefetch_related(
-                    Prefetch(
-                        "skills_rel",
-                        queryset=SkillsCertification.objects.select_related("skill").order_by("orden", "id"),
-                        to_attr="skills_links_ordered",
-                    )
-                )
-                .filter(
-                    Q(nombre__icontains=query_string) |
-                    Q(metadescripcion_certificacion__icontains=query_string) |
-                    Q(slug__icontains=query_string) |
-                    Q(tema_certificacion__nombre__icontains=query_string) |
-                    Q(tema_certificacion__translate__icontains=query_string) |
-                    Q(universidad_certificacion__nombre__icontains=query_string) |
-                    Q(empresa_certificacion__nombre__icontains=query_string) |
-                    Q(plataforma_certificacion__nombre__icontains=query_string) |
-                    Q(skills_rel__skill__nombre__icontains=query_string) |
-                    Q(skills_rel__skill__translate__icontains=query_string) |
-                    Q(habilidades_certificacion__icontains=query_string)
-                )
+            search_filter = (
+                Q(nombre__icontains=query_string) |
+                Q(metadescripcion_certificacion__icontains=query_string) |
+                Q(slug__icontains=query_string) |
+                Q(tema_certificacion__nombre__icontains=query_string) |
+                Q(tema_certificacion__translate__icontains=query_string) |
+                Q(universidad_certificacion__nombre__icontains=query_string) |
+                Q(empresa_certificacion__nombre__icontains=query_string) |
+                Q(plataforma_certificacion__nombre__icontains=query_string) |
+                Q(skills_rel__skill__nombre__icontains=query_string) |
+                Q(skills_rel__skill__translate__icontains=query_string) |
+                Q(habilidades_certificacion__icontains=query_string)
             )
 
-            # Plataforma
+            ids_queryset = Certificaciones.objects.filter(search_filter)
+
             if plataforma_values:
                 q_plataforma = Q()
                 for value in plataforma_values:
                     q_plataforma |= Q(plataforma_certificacion__nombre__iexact=value)
-                queryset = queryset.filter(q_plataforma)
+                ids_queryset = ids_queryset.filter(q_plataforma)
 
-            # Empresa
             if empresa_values:
                 q_empresa = Q()
                 for value in empresa_values:
                     q_empresa |= Q(empresa_certificacion__nombre__iexact=value)
-                queryset = queryset.filter(q_empresa)
+                ids_queryset = ids_queryset.filter(q_empresa)
 
-            # Universidad
             if universidad_values:
                 q_universidad = Q()
                 for value in universidad_values:
                     q_universidad |= Q(universidad_certificacion__nombre__iexact=value)
-                queryset = queryset.filter(q_universidad)
+                ids_queryset = ids_queryset.filter(q_universidad)
 
-            # Idioma
             if idioma_values:
-                q_idioma = Q()
+                normalized_langs = []
 
                 for value in idioma_values:
                     lang = (value or "").strip().lower()
 
-                    if lang == "es":
-                        q_idioma |= Q(lenguaje_certificacion__iexact="es")
-                        q_idioma |= Q(lenguaje_certificacion__iexact="spanish")
-                        q_idioma |= Q(lenguaje_certificacion__iexact="español")
-                        q_idioma |= Q(lenguaje_certificacion__icontains="español")
-                        q_idioma |= Q(lenguaje_certificacion__icontains="spanish")
-                        q_idioma |= Q(lenguaje_certificacion__icontains="enseñado en español")
+                    if lang in ["es", "spanish", "español"]:
+                        normalized_langs.append("es")
+                    elif lang in ["en", "english", "inglés", "ingles"]:
+                        normalized_langs.append("en")
+                    elif lang:
+                        normalized_langs.append(lang)
 
-                    elif lang == "en":
-                        q_idioma |= Q(lenguaje_certificacion__iexact="en")
-                        q_idioma |= Q(lenguaje_certificacion__iexact="english")
-                        q_idioma |= Q(lenguaje_certificacion__iexact="inglés")
-                        q_idioma |= Q(lenguaje_certificacion__icontains="english")
-                        q_idioma |= Q(lenguaje_certificacion__icontains="inglés")
-                        q_idioma |= Q(lenguaje_certificacion__icontains="enseñado en inglés")
+                if normalized_langs:
+                    ids_queryset = ids_queryset.filter(
+                        language_normalized__in=list(dict.fromkeys(normalized_langs))
+                    )
+            else:
+                ids_queryset = ids_queryset.filter(language_normalized__in=["es"])
 
-                    else:
-                        q_idioma |= Q(lenguaje_certificacion__iexact=value)
-                        q_idioma |= Q(lenguaje_certificacion__icontains=value)
-
-                queryset = queryset.filter(q_idioma)
-
-            # Skills / temas activos
             if skill_slugs:
                 q_skills = Q()
+
                 for value in skill_slugs:
                     q_skills |= Q(skills_rel__skill__slug__iexact=value)
                     q_skills |= Q(skills_rel__skill__nombre__iexact=value)
@@ -2822,10 +2791,10 @@ class filter_by_search(APIView):
                     q_skills |= Q(tema_certificacion__nombre__iexact=value)
                     q_skills |= Q(tema_certificacion__translate__iexact=value)
 
-                queryset = queryset.filter(q_skills)
+                ids_queryset = ids_queryset.filter(q_skills)
 
-            queryset = (
-                queryset
+            ids_queryset = (
+                ids_queryset
                 .annotate(
                     search_priority=Case(
                         When(nombre__istartswith=query_string, then=Value(1)),
@@ -2839,8 +2808,92 @@ class filter_by_search(APIView):
                         output_field=IntegerField(),
                     )
                 )
-                .distinct()
-                .order_by("search_priority", "nombre")[:limit]
+                .values("id", "search_priority", "nombre")
+                .order_by("search_priority", "nombre")
+                .distinct()[:limit]
+            )
+
+            rows = list(ids_queryset)
+            ids = [row["id"] for row in rows]
+
+            if not ids:
+                return Response({"results": [], "count": 0}, status=status.HTTP_200_OK)
+
+            preserved_order = Case(
+                *[When(id=pk, then=pos) for pos, pk in enumerate(ids)],
+                output_field=IntegerField(),
+            )
+
+            queryset = (
+                Certificaciones.objects
+                .filter(id__in=ids)
+                .select_related(
+                    "tema_certificacion",
+                    "plataforma_certificacion",
+                    "universidad_certificacion",
+                    "empresa_certificacion",
+                )
+                .prefetch_related(
+                    Prefetch(
+                        "skills_rel",
+                        queryset=(
+                            SkillsCertification.objects
+                            .select_related("skill")
+                            .only(
+                                "id",
+                                "certificacion_id",
+                                "skill_id",
+                                "orden",
+                                "skill__id",
+                                "skill__nombre",
+                                "skill__translate",
+                                "skill__slug",
+                                "skill__skill_col",
+                                "skill__skill_type",
+                                "skill__skill_ico",
+                                "skill__skill_img",
+                            )
+                            .order_by("orden", "id")
+                        ),
+                        to_attr="skills_links_ordered",
+                    )
+                )
+                .only(
+                    "id",
+                    "slug",
+                    "nombre",
+                    "imagen_final",
+                    "tipo_certificacion",
+                    "nivel_certificacion",
+                    "tiempo_certificacion",
+                    "language_normalized",
+                    "fecha_creado_cert",
+                    "vigente_certificacion",
+
+                    "plataforma_certificacion_id",
+                    "plataforma_certificacion__id",
+                    "plataforma_certificacion__nombre",
+                    "plataforma_certificacion__plat_ico",
+
+                    "universidad_certificacion_id",
+                    "universidad_certificacion__id",
+                    "universidad_certificacion__nombre",
+                    "universidad_certificacion__univ_ico",
+                    "universidad_certificacion__univ_img",
+
+                    "empresa_certificacion_id",
+                    "empresa_certificacion__id",
+                    "empresa_certificacion__nombre",
+                    "empresa_certificacion__empr_ico",
+                    "empresa_certificacion__empr_img",
+
+                    "tema_certificacion_id",
+                    "tema_certificacion__id",
+                    "tema_certificacion__nombre",
+                    "tema_certificacion__translate",
+                    "tema_certificacion__tem_img",
+                )
+                .order_by(preserved_order)
             )
 
             results = list(queryset)
@@ -2853,13 +2906,13 @@ class filter_by_search(APIView):
                     "results": [],
                     "count": 0,
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         serializer = CertificationSearchSerializer(
             results,
             many=True,
-            context={"request": request}
+            context={"request": request},
         )
 
         return Response(
@@ -2867,9 +2920,9 @@ class filter_by_search(APIView):
                 "results": serializer.data,
                 "count": len(results),
             },
-            status=status.HTTP_200_OK
+            status=status.HTTP_200_OK,
         )
-    
+        
 class LatestCertificationsView(APIView):
     def get(self, request):
         try:
@@ -3544,6 +3597,7 @@ def _send_current_stripe_event_to_mx(event, event_type, obj, user=None):
 @csrf_exempt
 def stripe_webhook(request):
     print("✅ WEBHOOK HIT")
+
     payload = request.body
     sig_header = request.META.get("HTTP_STRIPE_SIGNATURE", "")
 
@@ -3557,19 +3611,70 @@ def stripe_webhook(request):
         print("❌ Stripe signature error:", str(e))
         return HttpResponse(status=400)
 
+    event_id = event.get("id")
     event_type = event.get("type")
     obj = (event.get("data") or {}).get("object") or {}
 
     def send_to_mx_safe(current_obj, user=None):
+        stripe_event_id = event.get("id")
+
+        if stripe_event_id and MxAccessEventLog.objects.filter(
+            stripe_event_id=stripe_event_id
+        ).exists():
+            print("⚠️ Evento Stripe ya procesado:", stripe_event_id)
+            return
+
+        is_subscription_event = str(event_type or "").startswith("customer.subscription")
+        is_invoice_event = str(event_type or "").startswith("invoice.")
+
+        subscription_id = (
+            current_obj.get("id")
+            if is_subscription_event
+            else current_obj.get("subscription")
+        )
+
+        customer_id = current_obj.get("customer")
+        invoice_id = current_obj.get("id") if is_invoice_event else None
+
         try:
-            _send_current_stripe_event_to_mx(
+            response = _send_current_stripe_event_to_mx(
                 event=event,
                 event_type=event_type,
                 obj=current_obj,
                 user=user,
             )
+
+            MxAccessEventLog.objects.create(
+                user=user,
+                stripe_event_id=stripe_event_id,
+                stripe_customer_id=customer_id,
+                stripe_subscription_id=subscription_id,
+                stripe_invoice_id=invoice_id,
+                event_type=event_type,
+                event_source="stripe",
+                payload_json=event,
+                response_json=response if isinstance(response, dict) else {"response": str(response)},
+                send_status="sent",
+                sent_at=timezone.now(),
+            )
+
         except Exception as e:
             print("⚠️ Error enviando evento a MX:", str(e))
+
+            MxAccessEventLog.objects.create(
+                user=user,
+                stripe_event_id=stripe_event_id,
+                stripe_customer_id=customer_id,
+                stripe_subscription_id=subscription_id,
+                stripe_invoice_id=invoice_id,
+                event_type=event_type,
+                event_source="stripe",
+                payload_json=event,
+                response_json={"error": str(e)},
+                send_status="failed",
+                retry_count=0,
+                last_error=str(e),
+            )
 
     # --------------------------------------------
     # A) checkout.session.completed
@@ -3643,7 +3748,9 @@ def stripe_webhook(request):
 
         already_exists = (
             invoice_id and
-            StripePurchase.objects.filter(stripe_invoice_id=invoice_id).exists()
+            StripePurchase.objects.filter(
+                stripe_invoice_id=invoice_id
+            ).exists()
         )
 
         if not already_exists:
@@ -3696,7 +3803,7 @@ def stripe_webhook(request):
         return HttpResponse(status=200)
 
     # --------------------------------------------
-    # D) subscription updated/deleted
+    # D) subscription updated / deleted
     # --------------------------------------------
     if event_type in (
         "customer.subscription.updated",
@@ -3721,8 +3828,7 @@ def stripe_webhook(request):
         if subscription_id:
             _upsert_subscription(user, subscription_id)
 
-        if event_type == "customer.subscription.deleted":
-            send_to_mx_safe(sub_obj, user=user)
+        send_to_mx_safe(sub_obj, user=user)
 
         return HttpResponse(status=200)
 
@@ -5288,6 +5394,7 @@ def _get_or_create_user_from_onboarding(request):
 
     return user, route, None
 
+@method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteCreateView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -5417,7 +5524,7 @@ class LearningRouteFreeSignupView(APIView):
             "redirect": "/account",
         })
 
-
+@method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteCompleteSignupView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -6385,3 +6492,440 @@ def build_learning_route_mx_payload(*, event_id, event_type, user, route, subscr
             "billingInterval": interval,
         },
     }
+
+
+MAX_PER_LEVEL = 3
+
+LEVEL_RULES = {
+    "level_1": {
+        "label": "Nivel 1",
+        "subtitle": "Fundamentos",
+        "badge": "DISPONIBLE",
+        "platform_ids": [2],  # Coursera
+        "nivel": "BEGINNER",
+    },
+    "level_2": {
+        "label": "Nivel 2",
+        "subtitle": "Especialización",
+        "badge": "PLAN X / PLUS",
+        "platform_ids": [1, 3],  # EdX + MasterClass
+        "nivel": "INTERMEDIATE",
+    },
+    "level_3": {
+        "label": "Nivel 3",
+        "subtitle": "Certificación",
+        "badge": "PLAN PLUS",
+        "platform_ids": [1, 2, 3],  # EdX + Coursera + MasterClass
+        "nivel": "ADVANCED",
+    },
+}
+
+
+def normalize_text(value):
+    return (value or "").strip().lower()
+
+
+def normalize_media_url(request, value):
+    if not value:
+        return ""
+
+    value = str(value).strip()
+
+    if not value or value.lower() in ["null", "none", "undefined"]:
+        return ""
+
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+
+    if value.startswith("/"):
+        return request.build_absolute_uri(value)
+
+    return request.build_absolute_uri(f"/media/{value}")
+
+
+def get_cert_image(request, cert):
+    image = cert.imagen_final or ""
+
+    if not image:
+        return ""
+
+    if image.startswith("http://") or image.startswith("https://"):
+        return image
+
+    return request.build_absolute_uri(image)
+
+def get_cert_institution(cert):
+    if cert.universidad_certificacion:
+        return cert.universidad_certificacion.nombre
+
+    if cert.empresa_certificacion:
+        return cert.empresa_certificacion.nombre
+
+    return "Top Education"
+
+def get_cert_provider(cert):
+    if cert.plataforma_certificacion:
+        return cert.plataforma_certificacion.nombre
+
+    return ""
+
+def get_cert_platform_logo(cert):
+    platform = getattr(cert, "plataforma_certificacion", None)
+
+    if not platform:
+        return ""
+
+    return (
+        getattr(platform, "plat_ico", None)
+        or getattr(platform, "icon", None)
+        or ""
+    )
+
+
+def get_cert_main_skill(cert):
+    skill = cert.skills.first()
+
+    if not skill:
+        return {
+            "name": "",
+            "icon": "",
+        }
+
+    return {
+        "name": skill.translate or skill.nombre or "",
+        "icon": skill.skill_ico or skill.skill_img or "",
+    }
+
+def serialize_recommended_cert(request, cert):
+    main_skill = get_cert_main_skill(cert)
+
+    return {
+        "id": cert.id,
+        "idInterno": cert.id_interno or "",
+        "colombiaCertificationId": cert.id,
+        "title": cert.nombre,
+        "level": cert.nivel_certificacion,
+        "hours": cert.tiempo_certificacion,
+        "institution": get_cert_institution(cert),
+        "provider": get_cert_provider(cert),
+        "platform_logo": get_cert_platform_logo(cert),
+        "main_skill": main_skill["name"],
+        "main_skill_icon": main_skill["icon"],
+        "image": get_cert_image(request, cert),
+        "slug": cert.slug,
+    }
+
+
+def get_topic_skill_ids(topics):
+    if not topics:
+        return []
+
+    clean_topics = [normalize_text(topic) for topic in topics if normalize_text(topic)]
+
+    if not clean_topics:
+        return []
+
+    query = Q()
+
+    for topic in clean_topics:
+        query |= Q(nombre__icontains=topic)
+        query |= Q(translate__icontains=topic)
+        query |= Q(slug__icontains=topic.replace(" ", "-"))
+
+    return list(
+        Skills.objects.filter(query, estado=True)
+        .values_list("id", flat=True)
+        .distinct()
+    )
+
+
+def get_cert_ids_by_skills(skill_ids):
+    if not skill_ids:
+        return []
+
+    return list(
+        SkillsCertification.objects.filter(skill_id__in=skill_ids)
+        .values_list("certificacion_id", flat=True)
+        .distinct()
+    )
+
+
+def build_level_recommendations(request, cert_ids, rule):
+    base_qs = (
+        Certificaciones.objects
+        .filter(
+            plataforma_certificacion_id__in=rule["platform_ids"],
+            nivel_certificacion=rule["nivel"],
+        )
+        .select_related(
+            "plataforma_certificacion",
+            "universidad_certificacion",
+            "empresa_certificacion",
+        )
+        .order_by("?")
+    )
+
+    if cert_ids:
+        matched_qs = base_qs.filter(id__in=cert_ids)
+    else:
+        matched_qs = base_qs
+
+    selected = []
+    selected_ids = set()
+
+    # 1. Intentar traer mínimo 1 por proveedor
+    for platform_id in rule["platform_ids"]:
+        cert = matched_qs.filter(plataforma_certificacion_id=platform_id).first()
+
+        if cert and cert.id not in selected_ids:
+            selected.append(cert)
+            selected_ids.add(cert.id)
+
+        if len(selected) >= MAX_PER_LEVEL:
+            break
+
+    # 2. Completar hasta máximo 3
+    if len(selected) < MAX_PER_LEVEL:
+        extra_qs = matched_qs.exclude(id__in=selected_ids)[: MAX_PER_LEVEL - len(selected)]
+
+        for cert in extra_qs:
+          if cert.id not in selected_ids:
+              selected.append(cert)
+              selected_ids.add(cert.id)
+
+    # 3. Fallback si no hubo suficientes por temas seleccionados
+    if len(selected) < MAX_PER_LEVEL and cert_ids:
+        fallback_qs = base_qs.exclude(id__in=selected_ids)[: MAX_PER_LEVEL - len(selected)]
+
+        for cert in fallback_qs:
+            if cert.id not in selected_ids:
+                selected.append(cert)
+                selected_ids.add(cert.id)
+
+    return [serialize_recommended_cert(request, cert) for cert in selected[:MAX_PER_LEVEL]]
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class LearningRouteRecommendationsAPIView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request, *args, **kwargs):
+        topics = request.data.get("topics") or []
+        goal = request.data.get("goal") or ""
+
+        if not isinstance(topics, list):
+            return Response(
+                {
+                    "ok": False,
+                    "error": "topics debe ser una lista.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        skill_ids = get_topic_skill_ids(topics)
+        cert_ids = get_cert_ids_by_skills(skill_ids)
+
+        data = {}
+
+        for level_key, rule in LEVEL_RULES.items():
+            data[level_key] = {
+                "label": rule["label"],
+                "subtitle": rule["subtitle"],
+                "badge": rule["badge"],
+                "platform_ids": rule["platform_ids"],
+                "nivel": rule["nivel"],
+                "items": build_level_recommendations(request, cert_ids, rule),
+            }
+
+        return Response(
+            {
+                "ok": True,
+                "data": data,
+                "meta": {
+                    "topics": topics,
+                    "goal": goal,
+                    "skill_ids": skill_ids,
+                    "matched_certification_ids_count": len(cert_ids),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+#ANALISIS DE CV
+from django.utils.dateparse import parse_datetime   
+from topeducation.models import CVAnalysis
+from topeducation.services.cv_analysis_client import analyze_cv_with_provider
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class AccountCVAnalysisAPIView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        file_obj = request.FILES.get("file") or request.FILES.get("cvFile")
+
+        if not file_obj:
+            return Response(
+                {
+                    "ok": False,
+                    "data": None,
+                    "message": "Debes enviar un archivo de CV.",
+                    "errorCode": "cv_file_required",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        max_size = 5 * 1024 * 1024
+
+        if file_obj.size > max_size:
+            return Response(
+                {
+                    "ok": False,
+                    "data": None,
+                    "message": "El archivo no puede superar los 5MB.",
+                    "errorCode": "cv_file_too_large",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        allowed_types = [
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+        ]
+
+        mime_type = getattr(file_obj, "content_type", "")
+
+        if mime_type not in allowed_types:
+            return Response(
+                {
+                    "ok": False,
+                    "data": None,
+                    "message": "Solo se permiten archivos PDF o Word.",
+                    "errorCode": "cv_file_invalid_type",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        language = (
+            request.data.get("language")
+            or request.data.get("locale")
+            or request.data.get("outputLanguage")
+            or "es-CO"
+        )
+
+        email = request.data.get("email") or ""
+        route_id = request.data.get("route_id") or None
+
+        try:
+            provider_status, provider_data = analyze_cv_with_provider(
+                file_obj,
+                language=language,
+            )
+
+            if provider_status >= 400 or provider_data.get("ok") is False:
+                return Response(
+                    provider_data,
+                    status=provider_status if provider_status < 500 else status.HTTP_502_BAD_GATEWAY,
+                )
+
+            data = provider_data.get("data") or {}
+            score = data.get("score") or {}
+
+            CVAnalysis.objects.create(
+                user_email=email,
+                route_id=route_id,
+                filename=data.get("filename") or file_obj.name,
+                mime_type=mime_type,
+                language=data.get("language") or language,
+                status=data.get("status") or "completed",
+                score_value=score.get("value"),
+                score_percentage=score.get("percentage"),
+                score_label=score.get("label") or "",
+                summary=data.get("summary") or "",
+                recommendations=data.get("recommendations") or [],
+                report=data.get("report") or {},
+                raw_response=provider_data,
+                analyzed_at=parse_datetime(data.get("analyzedAt")) if data.get("analyzedAt") else None,
+            )
+
+            return Response(provider_data, status=status.HTTP_200_OK)
+
+        except requests.Timeout:
+            return Response(
+                {
+                    "ok": False,
+                    "data": None,
+                    "message": "El análisis tardó demasiado. Intenta nuevamente.",
+                    "errorCode": "openai_timeout",
+                },
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+
+        except Exception as e:
+            return Response(
+                {
+                    "ok": False,
+                    "data": None,
+                    "message": "No se pudo analizar el CV.",
+                    "errorCode": "cv_analysis_failed",
+                    "details": {
+                        "error": str(e),
+                    },
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        
+
+class AccountCVLastAnalysisAPIView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        email = request.GET.get("email") or ""
+
+        if not email:
+            return Response(
+                {
+                    "ok": False,
+                    "data": None,
+                    "message": "Email requerido.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        analysis = CVAnalysis.objects.filter(user_email=email).first()
+
+        if not analysis:
+            return Response(
+                {
+                    "ok": True,
+                    "data": None,
+                    "message": "No hay análisis previos.",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(
+            {
+                "ok": True,
+                "data": {
+                    "status": analysis.status,
+                    "filename": analysis.filename,
+                    "analyzedAt": analysis.analyzed_at,
+                    "language": analysis.language,
+                    "score": {
+                        "value": float(analysis.score_value or 0),
+                        "max": 10,
+                        "percentage": analysis.score_percentage,
+                        "label": analysis.score_label,
+                    },
+                    "summary": analysis.summary,
+                    "recommendations": analysis.recommendations,
+                    "report": analysis.report,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )

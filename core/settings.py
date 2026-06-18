@@ -114,6 +114,18 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+CV_ANALYSIS_URL = os.getenv(
+    "CV_ANALYSIS_URL",
+    "https://api-colombia-dev.universidad.top/v2/cv/analysis"
+)
+
+CV_ANALYSIS_TIMEOUT = int(os.getenv("CV_ANALYSIS_TIMEOUT", "120"))
+
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://localhost:3001',

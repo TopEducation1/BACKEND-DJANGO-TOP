@@ -3,6 +3,7 @@ from django.utils.text import slugify
 from django.utils import timezone
 from ckeditor_uploader.fields import RichTextUploadingField
 from django.conf import settings
+import uuid
 
 class Habilidades (models.Model):
     nombre = models.CharField(max_length=250)
@@ -203,7 +204,20 @@ class Certificaciones(models.Model):
     plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.CASCADE, null=True, blank=True)
 
     # NUEVOS
-    source_provider = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    source_provider = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        db_index=True
+    )
+
+    id_interno = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Identificador interno utilizado por la plataforma Mexico"
+    )
 
     specialization = models.ForeignKey(
         Specialization,
@@ -705,3 +719,113 @@ class LearningRouteLead(models.Model):
     
     class Meta:
         db_table = "LearningRouteLead"
+
+class CVAnalysis(models.Model):
+    user_email = models.EmailField(db_index=True)
+    route_id = models.IntegerField(null=True, blank=True)
+
+    filename = models.CharField(max_length=255, blank=True, default="")
+    mime_type = models.CharField(max_length=120, blank=True, default="")
+    language = models.CharField(max_length=50, default="es-CO")
+
+    status = models.CharField(max_length=50, default="completed")
+    score_value = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    score_percentage = models.IntegerField(null=True, blank=True)
+    score_label = models.CharField(max_length=80, blank=True, default="")
+
+    summary = models.TextField(blank=True, default="")
+    recommendations = models.JSONField(default=list, blank=True)
+    report = models.JSONField(default=dict, blank=True)
+    raw_response = models.JSONField(default=dict, blank=True)
+
+    analyzed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "CVAnalysis"
+        ordering = ["-created_at"]
+
+
+class MxAccessEventLog(models.Model):
+    event_uuid = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False,
+    )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
+    learning_route = models.ForeignKey(
+        LearningRouteLead,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
+    stripe_customer_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+    )
+
+    stripe_subscription_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+    )
+
+    stripe_invoice_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+    )
+
+    stripe_event_id = models.CharField(
+        max_length=255,
+        unique=True,
+        blank=True,
+        null=True,
+    )
+
+    event_type = models.CharField(max_length=100)
+
+    event_source = models.CharField(
+        max_length=50,
+        default="stripe",
+    )
+
+    payload_json = models.JSONField()
+
+    response_json = models.JSONField(
+        null=True,
+        blank=True,
+    )
+
+    send_status = models.CharField(
+        max_length=20,
+        default="pending",
+    )
+
+    attempts = models.PositiveIntegerField(default=0)
+
+    last_error = models.TextField(
+        blank=True,
+        null=True,
+    )
+
+    sent_at = models.DateTimeField(
+        blank=True,
+        null=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "mx_access_event_log"
