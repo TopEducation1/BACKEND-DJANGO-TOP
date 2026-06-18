@@ -4,6 +4,7 @@ import hashlib, hmac, json, logging, os, random, re, time, traceback, uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from django.db import IntegrityError
 
 import pandas as pd
 import requests
@@ -3618,12 +3619,6 @@ def stripe_webhook(request):
     def send_to_mx_safe(current_obj, user=None):
         stripe_event_id = event.get("id")
 
-        if stripe_event_id and MxAccessEventLog.objects.filter(
-            stripe_event_id=stripe_event_id
-        ).exists():
-            print("⚠️ Evento Stripe ya procesado:", stripe_event_id)
-            return
-
         is_subscription_event = str(event_type or "").startswith("customer.subscription")
         is_invoice_event = str(event_type or "").startswith("invoice.")
 
@@ -3644,38 +3639,44 @@ def stripe_webhook(request):
                 user=user,
             )
 
-            MxAccessEventLog.objects.create(
-                user=user,
-                stripe_event_id=stripe_event_id,
-                stripe_customer_id=customer_id,
-                stripe_subscription_id=subscription_id,
-                stripe_invoice_id=invoice_id,
-                event_type=event_type,
-                event_source="stripe",
-                payload_json=event,
-                response_json=response if isinstance(response, dict) else {"response": str(response)},
-                send_status="sent",
-                sent_at=timezone.now(),
-            )
+            try:
+                MxAccessEventLog.objects.create(
+                    user=user,
+                    stripe_event_id=stripe_event_id,
+                    stripe_customer_id=customer_id,
+                    stripe_subscription_id=subscription_id,
+                    stripe_invoice_id=invoice_id,
+                    event_type=event_type,
+                    event_source="stripe",
+                    payload_json=dict(event),
+                    response_json=response if isinstance(response, dict) else {"response": str(response)},
+                    send_status="sent",
+                    attempts=1,
+                    sent_at=timezone.now(),
+                )
+            except IntegrityError:
+                print("⚠️ Evento Stripe ya registrado:", stripe_event_id)
 
         except Exception as e:
             print("⚠️ Error enviando evento a MX:", str(e))
 
-            MxAccessEventLog.objects.create(
-                user=user,
-                stripe_event_id=stripe_event_id,
-                stripe_customer_id=customer_id,
-                stripe_subscription_id=subscription_id,
-                stripe_invoice_id=invoice_id,
-                event_type=event_type,
-                event_source="stripe",
-                payload_json=event,
-                response_json={"error": str(e)},
-                send_status="failed",
-                retry_count=0,
-                last_error=str(e),
-            )
-
+            try:
+                MxAccessEventLog.objects.create(
+                    user=user,
+                    stripe_event_id=stripe_event_id,
+                    stripe_customer_id=customer_id,
+                    stripe_subscription_id=subscription_id,
+                    stripe_invoice_id=invoice_id,
+                    event_type=event_type,
+                    event_source="stripe",
+                    payload_json=dict(event),
+                    response_json={"error": str(e)},
+                    send_status="failed",
+                    attempts=1,
+                    last_error=str(e),
+                )
+            except IntegrityError:
+                print("⚠️ Evento Stripe ya registrado con error:", stripe_event_id)
     # --------------------------------------------
     # A) checkout.session.completed
     # --------------------------------------------
