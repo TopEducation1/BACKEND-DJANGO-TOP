@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlparse
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
@@ -70,33 +71,44 @@ STRIPE_CANCEL_URL = os.getenv(
     f"{FRONTEND_URL}/cancel"
 )
 
-PROXY_WHITELIST = {
-    "https://api-colombia-dev.universidad.top",
-}
 APPEND_SLASH = True
 
-COURSES_EXTERNAL_ENDPOINT = os.getenv("COURSES_EXTERNAL_ENDPOINT")
-COURSES_EXTERNAL_API_KEY = os.getenv("COURSES_EXTERNAL_API_KEY", default=None)
+COURSES_EXTERNAL_ENDPOINT = os.getenv(
+    "COURSES_EXTERNAL_ENDPOINT",
+    "https://api-colombia-dev.universidad.top"
+).rstrip("/")
+
+# API Key
+COURSES_EXTERNAL_API_KEY = os.getenv(
+    "COURSES_EXTERNAL_API_KEY",
+    os.getenv("AWS_COURSES_API_KEY", "")
+)
+
 COURSES_EXTERNAL_AUTH_HEADER = "x-api-key"
 
+# Host derivado automáticamente desde la URL
+COURSES_EXTERNAL_HOST = urlparse(
+    COURSES_EXTERNAL_ENDPOINT
+).netloc
+
+# Hosts permitidos para el proxy
 COURSES_EXTERNAL_ALLOWED_HOSTS = [
-    "https://api-colombia-dev.universidad.top",
+    COURSES_EXTERNAL_HOST,
 ]
 
-
-AWS_COURSES_API_KEY = os.environ.get("AWS_COURSES_API_KEY", "")
+# Compatibilidad con el proxy actual
+PROXY_WHITELIST = {
+    COURSES_EXTERNAL_HOST,
+}
 
 PROXY_HEADERS = {
-    "https://api-colombia-dev.universidad.top": {
-        "x-api-key": AWS_COURSES_API_KEY,
+    COURSES_EXTERNAL_HOST: {
+        COURSES_EXTERNAL_AUTH_HEADER: COURSES_EXTERNAL_API_KEY,
+        "Accept": "application/json",
     }
 }
 
-PROXY_TIMEOUT = 30
-
-# (opcional) timeout
-PROXY_TIMEOUT = 15
-
+PROXY_TIMEOUT = int(os.getenv("PROXY_TIMEOUT", "180"))
 
 INSTALLED_APPS = [
     'django.contrib.admin',

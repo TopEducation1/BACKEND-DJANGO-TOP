@@ -1287,7 +1287,10 @@ def proxy_json(request):
     if host not in allowed_hosts:
         return HttpResponseBadRequest("URL not allowed")
 
-    headers = {"Accept": "application/json"}
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "TopEducation-Django-Proxy/1.0",
+    }
     extra = (getattr(settings, "PROXY_HEADERS", {}) or {}).get(host, {}) or {}
     headers.update(extra)
 
@@ -1295,7 +1298,7 @@ def proxy_json(request):
         return JsonResponse(
             {
                 "error": "missing_api_key_env",
-                "detail": "AWS_COURSES_API_KEY is empty in this environment",
+                "detail": "COURSES_EXTERNAL_API_KEY  is empty in this environment",
             },
             status=500,
         )
@@ -1319,13 +1322,19 @@ def proxy_json(request):
                     "status": r.status_code,
                     "url": url,
                     "content_type": content_type,
+                    "headers_sent": list(headers.keys()),
+                    "has_api_key": bool(headers.get("x-api-key")),
                     "raw": text_preview,
                 },
                 status=502 if r.status_code >= 400 else 200,
             )
 
         data = r.json()
-        return JsonResponse(data, status=r.status_code, safe=isinstance(data, dict))
+        return JsonResponse(
+            data,
+            status=r.status_code,
+            safe=not isinstance(data, list),
+        )
 
     except requests.exceptions.Timeout:
         return JsonResponse(
@@ -4285,16 +4294,18 @@ def auth_password_reset_confirm(request):
 
 logger = logging.getLogger(__name__)
 
-#ACTUALIZACIÓN DE ENDPOINT 20 DE ABRIL
+#ACTUALIZACIÓN DE ENDPOINT
 
-BASE_EXTERNAL_URL = "https://api-colombia-dev.universidad.top/course-information"
+def _get_base_external_url():
+    return f"{settings.COURSES_EXTERNAL_ENDPOINT.rstrip('/')}/course-information"
+
 LOCK_TTL_SECONDS = 14 * 60
 
 
 def _get_external_api_key():
     return (
-        getattr(settings, "AWS_COURSES_API_KEY", None)
-        or getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
+        getattr(settings, "COURSES_EXTERNAL_API_KEY", None)
+        or getattr(settings, "AWS_COURSES_API_KEY", None)
     )
 
 
@@ -4318,16 +4329,19 @@ def _validate_specialization_id(specialization_id: str | None) -> bool:
 
 
 def _get_resource_endpoint(resource: str, specialization_id: str | None = None) -> str:
+    base_url = _get_base_external_url()
+
     if resource == "courses":
-        return f"{BASE_EXTERNAL_URL}/courses"
+        return f"{base_url}/courses"
     if resource == "certifications":
-        return f"{BASE_EXTERNAL_URL}/certifications"
+        return f"{base_url}/certifications"
     if resource == "skills-structure":
-        return f"{BASE_EXTERNAL_URL}/skills-structure"
+        return f"{base_url}/skills-structure"
     if resource == "specializations":
-        return f"{BASE_EXTERNAL_URL}/specializations"
+        return f"{base_url}/specializations"
     if resource == "specialization-detail":
-        return f"{BASE_EXTERNAL_URL}/specializations/{specialization_id}"
+        return f"{base_url}/specializations/{specialization_id}"
+
     raise ValueError(f"Unsupported resource: {resource}")
 
 
