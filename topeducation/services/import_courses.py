@@ -96,22 +96,14 @@ def _extract_id_interno(cert: dict | None = None) -> str | None:
     if not isinstance(cert, dict):
         return None
 
-    raw_payload = cert.get("raw_payload") if isinstance(cert.get("raw_payload"), dict) else {}
-
     value = (
         cert.get("id_interno")
         or cert.get("internal_course_id")
         or cert.get("internalCourseId")
-        or cert.get("internal_courseId")
         or cert.get("internal_id")
         or cert.get("internalId")
         or cert.get("course_id")
         or cert.get("courseId")
-        or raw_payload.get("id_interno")
-        or raw_payload.get("internal_course_id")
-        or raw_payload.get("internalCourseId")
-        or raw_payload.get("course_id")
-        or raw_payload.get("courseId")
     )
 
     value = _norm(value)
