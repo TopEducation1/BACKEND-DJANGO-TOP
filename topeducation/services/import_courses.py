@@ -92,6 +92,28 @@ def normalize_language_value(raw_value):
 def _norm(s) -> str:
     return (s or "").strip() if isinstance(s, str) else ("" if s is None else str(s).strip())
 
+def _extract_internal_course_id(cert: dict | None = None) -> str | None:
+    if not isinstance(cert, dict):
+        return None
+
+    raw_payload = cert.get("raw_payload") if isinstance(cert.get("raw_payload"), dict) else {}
+
+    value = (
+        cert.get("internal_course_id")
+        or cert.get("internalCourseId")
+        or cert.get("internal_courseId")
+        or cert.get("internal_id")
+        or cert.get("internalId")
+        or cert.get("course_id")
+        or cert.get("courseId")
+        or raw_payload.get("internal_course_id")
+        or raw_payload.get("internalCourseId")
+        or raw_payload.get("course_id")
+        or raw_payload.get("courseId")
+    )
+
+    value = _norm(value)
+    return value or None
 
 def _to_bool(value, default=True):
     if value is None:
@@ -804,13 +826,16 @@ def upsert_specialization(cert: dict | None = None) -> tuple[Specialization | No
     return obj, created
 
 def _find_existing_certificacion(cert: dict, plat_fk=None, univ_fk=None, empresa_fk=None):
+    internal_course_id = _extract_internal_course_id(cert)
     url_original = _norm(cert.get("url_certificacion_original"))
     nombre = _norm(cert.get("nombre"))
 
-    # IMPORTANTE:
-    # No usar .only() aquí porque luego _apply_updates()
-    # accede muchos campos y Django hace refresh_from_db por cada campo diferido.
     qs_base = Certificaciones.objects.all()
+
+    if internal_course_id and _has_field(Certificaciones, "internal_course_id"):
+        obj = qs_base.filter(internal_course_id=internal_course_id).first()
+        if obj:
+            return obj
 
     if url_original and url_original.lower() != "null":
         obj = qs_base.filter(
@@ -852,7 +877,7 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict, reconciliat
     plat_name = _normalize_provider_for_platform(cert).lower()
     empresa_name = _norm(cert.get("empresa_certificacion"))
     descripcion_inst = _norm(cert.get("descripcion_institucion_certificacion"))
-
+    internal_course_id = _extract_internal_course_id(cert)
     univ_fk = univ_map.get(univ_name) if univ_name else None
     plat_fk = plat_map.get(plat_name) if plat_name else None
     empresa_fk, _, _ = (
@@ -893,6 +918,7 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict, reconciliat
 
     defaults = {
         "nombre": nombre,
+        "internal_course_id": internal_course_id,
         "slug": slug_value,
         "palabra_clave_certificacion": cert.get("palabra_clave_certificacion") or "NONE",
         "metadescripcion_certificacion": cert.get("metadescripcion_certificacion") or "NONE",
@@ -915,6 +941,8 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict, reconciliat
         "video_certificacion": cert.get("video_certificacion") or "Null",
         "imagen_final": cert.get("imagen_final") or "",
     }
+    if _has_field(Certificaciones, "internal_course_id"):
+        defaults["internal_course_id"] = internal_course_id
 
     if _has_field(Certificaciones, "tema_certificacion"):
         tema_val = cert.get("tema_certificacion")
