@@ -912,7 +912,7 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict, reconciliat
 
     defaults = {
         "nombre": nombre,
-        "internal_course_id": internal_course_id,
+        "id_interno": id_interno,
         "slug": slug_value,
         "palabra_clave_certificacion": cert.get("palabra_clave_certificacion") or "NONE",
         "metadescripcion_certificacion": cert.get("metadescripcion_certificacion") or "NONE",
