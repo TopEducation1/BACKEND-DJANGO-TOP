@@ -27,6 +27,18 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 
 SECURE_SSL_REDIRECT = False
 
+MX_B2C_ACCESS_EVENT_URL = os.getenv("MX_B2C_ACCESS_EVENT_URL", "")
+MX_B2C_ACCESS_EVENT_HMAC_SECRET = os.getenv("MX_B2C_ACCESS_EVENT_HMAC_SECRET", "")
+MX_B2C_SUBSCRIPTION_MANAGEMENT_URL = os.getenv(
+    "MX_B2C_SUBSCRIPTION_MANAGEMENT_URL",
+    "https://top.education/account?tab=license",
+)
+MX_B2C_COLOMBIA_ACCOUNT_URL = os.getenv(
+    "MX_B2C_COLOMBIA_ACCOUNT_URL",
+    "https://top.education/account",
+)
+MX_B2C_TIMEOUT = int(os.getenv("MX_B2C_TIMEOUT", "15"))
+
 MX_STRIPE_B2C_WEBHOOK_URL = os.getenv("MX_STRIPE_B2C_WEBHOOK_URL")
 STRIPE_B2C_WEBHOOK_SECRET = os.getenv("STRIPE_B2C_WEBHOOK_SECRET")
 MX_WEBHOOK_TIMEOUT = int(os.getenv("MX_WEBHOOK_TIMEOUT", "10"))
@@ -59,7 +71,7 @@ STRIPE_CANCEL_URL = os.getenv(
 )
 
 PROXY_WHITELIST = {
-    "99f51wnzz7.execute-api.us-east-1.amazonaws.com",
+    "https://api-colombia-dev.universidad.top",
 }
 APPEND_SLASH = True
 
@@ -68,14 +80,14 @@ COURSES_EXTERNAL_API_KEY = os.getenv("COURSES_EXTERNAL_API_KEY", default=None)
 COURSES_EXTERNAL_AUTH_HEADER = "x-api-key"
 
 COURSES_EXTERNAL_ALLOWED_HOSTS = [
-    "99f51wnzz7.execute-api.us-east-1.amazonaws.com",
+    "https://api-colombia-dev.universidad.top",
 ]
 
 
 AWS_COURSES_API_KEY = os.environ.get("AWS_COURSES_API_KEY", "")
 
 PROXY_HEADERS = {
-    "99f51wnzz7.execute-api.us-east-1.amazonaws.com": {
+    "https://api-colombia-dev.universidad.top": {
         "x-api-key": AWS_COURSES_API_KEY,
     }
 }

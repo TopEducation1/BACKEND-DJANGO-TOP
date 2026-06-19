@@ -23,7 +23,7 @@ from topeducation.services.import_courses import (
 logger = logging.getLogger(__name__)
 
 LOCK_TTL_SECONDS = 14 * 60  # ~14 min para cron de 15 min
-BASE_EXTERNAL_URL = "https://99f51wnzz7.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information"
+BASE_EXTERNAL_URL = "https://api-colombia-dev.universidad.top/course-information"
 
 
 def _is_sync_paused() -> bool:

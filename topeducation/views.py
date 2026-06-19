@@ -1252,7 +1252,7 @@ def updateRanking(request, ranking_id):
 
 
 def catalog_inspector(request):
-    base_url = "https://99f51wnzz7.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information"
+    base_url = "https://api-colombia-dev.universidad.top/course-information"
 
     return render(
         request,
@@ -4287,7 +4287,7 @@ logger = logging.getLogger(__name__)
 
 #ACTUALIZACIÓN DE ENDPOINT 20 DE ABRIL
 
-BASE_EXTERNAL_URL = "https://99f51wnzz7.execute-api.us-east-1.amazonaws.com/colombia-endpoint/course-information"
+BASE_EXTERNAL_URL = "https://api-colombia-dev.universidad.top/course-information"
 LOCK_TTL_SECONDS = 14 * 60
 
 
@@ -5621,7 +5621,25 @@ class LearningRouteCompleteSignupView(APIView):
             ]
         )
 
-        event_type = "checkout.session.completed"
+        event_type = "USER_ACCESS_PROVISION"
+        plan_value = selected_plan if selected_plan == "free" else request.data.get("selected_paid_plan") or selected_plan
+
+        event_id = f"evt_col_provision_route_{route.id}_user_{user.id}_{uuid.uuid4()}"
+
+        payload = build_learning_route_mx_payload(
+            event_id=event_id,
+            event_type=event_type,
+            user=user,
+            route=route,
+            subscription=subscription,
+            plan_value=plan_value,
+        )
+
+        mx_result = send_b2c_access_event_to_mx(
+            payload=payload,
+            user=user,
+            route=route,
+        )
         event_id = f"colombia-b2c:{event_type}:{route.id}:{user.id}"
 
         payload = build_learning_route_mx_payload(
@@ -5642,6 +5660,10 @@ class LearningRouteCompleteSignupView(APIView):
 
         route.mx_status = mx_result.get("status") or "unknown"
         route.mx_response = mx_result
+
+        if mx_result.get("magicLink"):
+            route.mx_magic_link = mx_result.get("magicLink")
+
         route.status = "account_created" if mx_result.get("ok") else "mx_error"
 
         route.save(
@@ -6035,7 +6057,7 @@ def billing_subscription_create(request):
 
     if not price_id:
         return JsonResponse(
-            {"ok": False, "error": missing_price_error},
+            {"ok": False, "error": f"missing_price_id_for_{plan_normalized}"},
             status=500,
         )
 
@@ -6069,6 +6091,7 @@ def billing_subscription_create(request):
             "route_id": str(route_id or ""),
             "source": "top-education-colombia",
             "plan": selected_plan,
+            "selected_paid_plan": plan_normalized,
             "billing_variant": plan_normalized,
             "interval": interval,
         },
@@ -6079,7 +6102,16 @@ def billing_subscription_create(request):
     subscription_status = subscription.get("status") or "unknown"
 
     trial_start = timezone.now()
-    trial_end = trial_start + timedelta(days=7)
+    trial_end_ts = subscription.get("trial_end")
+
+    trial_end = (
+        timezone.datetime.fromtimestamp(
+            trial_end_ts,
+            tz=timezone.get_current_timezone(),
+        )
+        if trial_end_ts
+        else trial_start + timedelta(days=7)
+    )
 
     current_period_end_ts = (
         subscription.get("current_period_end")
@@ -6103,23 +6135,31 @@ def billing_subscription_create(request):
             "price_id": price_id,
             "interval": interval,
             "current_period_end": current_period_end,
-            "cancel_at_period_end": bool(subscription.get("cancel_at_period_end", False)),
+            "cancel_at_period_end": bool(
+                subscription.get("cancel_at_period_end", False)
+            ),
         },
     )
 
     if route_id:
+        update_fields = {
+            "user": user,
+            "selected_plan": selected_plan,
+            "status": "pro_trialing",
+            "stripe_customer_id": customer_id,
+            "stripe_subscription_id": subscription_id,
+            "trial_start": trial_start,
+            "trial_end": trial_end,
+        }
+
+        # Solo si ya agregaste este campo al modelo LearningRouteLead
+        if hasattr(LearningRouteLead, "selected_paid_plan"):
+            update_fields["selected_paid_plan"] = plan_normalized
+
         LearningRouteLead.objects.filter(
             id=route_id,
             email=user.email,
-        ).update(
-            user=user,
-            selected_plan=selected_plan,
-            status="pro_trialing",
-            stripe_customer_id=customer_id,
-            stripe_subscription_id=subscription_id,
-            trial_start=trial_start,
-            trial_end=trial_end,
-        )
+        ).update(**update_fields)
 
     return JsonResponse({
         "ok": True,
@@ -6128,6 +6168,7 @@ def billing_subscription_create(request):
             "stripe_subscription_id": subscription_id,
             "status": subscription_status,
             "selected_plan": selected_plan,
+            "selected_paid_plan": plan_normalized,
             "billing_variant": plan_normalized,
             "interval": interval,
             "trial_start": trial_start.isoformat(),
@@ -6223,25 +6264,42 @@ def billing_subscription_cancel(request):
             status=400,
         )
 
-def _build_mx_headers(raw_body, event_id):
-    timestamp = str(int(time.time()))
-    secret = settings.STRIPE_B2C_WEBHOOK_SECRET
+def _mx_iso_now():
+    return timezone.now().astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
-    signed_payload = f"{timestamp}.{raw_body}"
+
+def _json_dumps(payload):
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+
+def _build_mx_headers(raw_body, event_id, occurred_at):
+    secret = settings.MX_B2C_ACCESS_EVENT_HMAC_SECRET
 
     signature = hmac.new(
         secret.encode("utf-8"),
-        signed_payload.encode("utf-8"),
+        raw_body.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
 
     return {
         "Content-Type": "application/json",
-        "x-top-timestamp": timestamp,
-        "x-top-signature": signature,
-        "x-event-id": event_id,
+        "X-Top-Signature": f"hmac-sha256={signature}",
+        "X-Top-Timestamp": occurred_at,
+        "X-Event-Id": event_id,
     }
 
+def get_mx_package_code(plan_value):
+    plan_value = str(plan_value or "free").strip().lower()
+
+    mapping = {
+        "free": "TOP_EDUCATION_FREE",
+        "monthly_x": "TOP_EDUCATION_X_MONTHLY",
+        "yearly_x": "TOP_EDUCATION_X_ANNUAL",
+        "monthly_plus": "TOP_EDUCATION_PLUS_MONTHLY",
+        "yearly_plus": "TOP_EDUCATION_PLUS_ANNUAL",
+    }
+
+    return mapping.get(plan_value)
 
 def send_stripe_event_to_mx(
     *,
@@ -6418,82 +6476,278 @@ def _get_plan_amount_cents(price_id=None, selected_plan=None, interval=None):
     return fallback.get((selected_plan, interval), 0)
 
 
-def build_learning_route_mx_payload(*, event_id, event_type, user, route, subscription=None):
-    selected_plan = route.selected_plan or "free"
+def build_learning_route_mx_payload(
+    *,
+    event_id,
+    event_type,
+    user,
+    route,
+    subscription=None,
+    plan_value="free",
+):
+    occurred_at = _mx_iso_now()
+
+    plan_value = str(plan_value or "free").strip().lower()
+    package_code = get_mx_package_code(plan_value)
+
+    if not package_code:
+        raise ValueError(f"unsupported_mx_package_code_for_{plan_value}")
+
+    selected_plan = str(route.selected_plan or "free").lower()
+
+    if plan_value == "free":
+        tier = "FREE"
+        billing_period = "MONTHLY"
+        lifecycle_status = "FREE"
+        access_status = "ALLOWED"
+        pending_action = "NONE"
+        is_trial = False
+    else:
+        tier = "PLUS" if "plus" in plan_value else "X"
+        billing_period = "ANNUAL" if "yearly" in plan_value else "MONTHLY"
+        status_raw = str(subscription.status if subscription else "").lower()
+
+        if status_raw == "trialing":
+            lifecycle_status = "TRIALING"
+            is_trial = True
+        elif status_raw in ["active", "paid"]:
+            lifecycle_status = "ACTIVE"
+            is_trial = False
+        elif status_raw in ["past_due", "unpaid"]:
+            lifecycle_status = "PAST_DUE"
+            is_trial = False
+        elif status_raw in ["canceled", "cancelled"]:
+            lifecycle_status = "CANCELLED"
+            is_trial = False
+        else:
+            lifecycle_status = "TRIALING" if route.trial_start and route.trial_end else "ACTIVE"
+            is_trial = lifecycle_status == "TRIALING"
+
+        access_status = "ALLOWED"
+        pending_action = (
+            "CANCEL_AT_PERIOD_END"
+            if subscription and subscription.cancel_at_period_end
+            else "NONE"
+        )
+
+    trial_start = route.trial_start
+    trial_end = route.trial_end or (
+        subscription.current_period_end if subscription else None
+    )
+
+    recommended_courses = []
+
+    for index, course in enumerate(route.recommended_certifications or [], start=1):
+        recommended_courses.append({
+            "idInterno": (
+                course.get("idInterno")
+                or course.get("id_interno")
+                or course.get("idInternoMx")
+                or course.get("id_interno_mx")
+                or course.get("external_id")
+                or str(course.get("id") or "")
+            ),
+            "colombiaCertificationId": (
+                course.get("colombiaCertificationId")
+                or course.get("id")
+                or course.get("certification_id")
+            ),
+            "title": (
+                course.get("title")
+                or course.get("nombre")
+                or course.get("name")
+                or ""
+            ),
+            "level": (
+                course.get("level")
+                or course.get("nivel_certificacion")
+                or course.get("nivel")
+                or ""
+            ),
+            "provider": (
+                course.get("provider")
+                or course.get("plataforma")
+                or course.get("platform")
+                or ""
+            ),
+            "order": course.get("order") or index,
+            "routeLevel": (
+                course.get("routeLevel")
+                or course.get("route_level")
+                or course.get("level_route")
+                or 1
+            ),
+        })
 
     stripe_subscription_id = (
-        route.stripe_subscription_id
-        or (subscription.stripe_subscription_id if subscription else None)
+        subscription.stripe_subscription_id
+        if subscription
+        else route.stripe_subscription_id
     )
 
-    stripe_customer_id = (
-        route.stripe_customer_id
-        or getattr(subscription, "stripe_customer_id", None)
-    )
+    stripe_customer_id = route.stripe_customer_id
 
     stripe_price_id = subscription.price_id if subscription else None
-    interval = subscription.interval if subscription else None
 
-    period_start = route.trial_start
-    period_end = (
-        route.trial_end
-        or (subscription.current_period_end if subscription else None)
-    )
-
-    is_trial = bool(route.trial_start and route.trial_end)
-
-    amount_cents = _get_plan_amount_cents(
-        price_id=stripe_price_id,
-        selected_plan=selected_plan,
-        interval=interval,
+    current_period_end = (
+        subscription.current_period_end
+        if subscription and subscription.current_period_end
+        else None
     )
 
     return {
+        "schemaVersion": "1.0",
         "eventId": event_id,
         "eventType": event_type,
-        "occurredAt": timezone.now().isoformat(),
-        "source": "colombia-b2c",
-        "traceId": f"route-{route.id}-user-{user.id}",
+        "traceId": f"col-startnow-route-{route.id}-user-{user.id}",
+        "occurredAt": occurred_at,
 
         "customer": {
             "email": user.email,
+            "emailNormalized": user.email.lower(),
             "name": user.first_name or route.first_name or "",
             "lastName": user.last_name or route.last_name or "",
-            "fullName": (
-                user.get_full_name()
-                or f"{route.first_name or ''} {route.last_name or ''}".strip()
-            ),
-            "stripeCustomerId": stripe_customer_id,
+            "age": route.age,
+            "gender": route.gender,
+            "country": route.country or "Colombia",
         },
 
-        "subscription": {
-            "stripeSubscriptionId": stripe_subscription_id,
-            "stripePriceId": stripe_price_id,
+        "learningProfile": {
+            "topics": route.topics or [],
+            "goal": route.goal or "",
+        },
+
+        "recommendedCourses": recommended_courses,
+
+        "plan": {
+            "packageCode": package_code,
+            "tier": tier,
+            "billingPeriod": billing_period,
+            "accessStatus": access_status,
+            "lifecycleStatus": lifecycle_status,
+            "pendingAction": pending_action,
+            "trial": {
+                "isTrial": is_trial,
+                "trialStart": trial_start.isoformat() if trial_start else None,
+                "trialEnd": trial_end.isoformat() if trial_end else None,
+                "trialDays": 7 if is_trial else 0,
+            },
+        },
+
+        "billing": {
+            "source": "COLOMBIA",
             "stripeCustomerId": stripe_customer_id,
-            "currency": "USD",
-            "amountCents": amount_cents,
-            "periodStart": period_start.isoformat() if period_start else None,
-            "periodEnd": period_end.isoformat() if period_end else None,
+            "stripeSubscriptionId": stripe_subscription_id,
+            "stripePaymentMethodId": None,
+            "status": subscription.status if subscription else None,
+            "currentPeriodEnd": current_period_end.isoformat() if current_period_end else None,
+        },
+
+        "redirects": {
+            "subscriptionManagementUrl": settings.MX_B2C_SUBSCRIPTION_MANAGEMENT_URL,
+            "colombiaAccountUrl": settings.MX_B2C_COLOMBIA_ACCOUNT_URL,
         },
 
         "metadata": {
             "routeId": route.id,
-            "userId": user.id,
+            "selectedPaidPlan": plan_value,
             "selectedPlan": selected_plan,
-            "status": route.status,
-            "country": route.country,
-            "age": route.age,
-            "gender": route.gender,
-            "topics": route.topics,
-            "goal": route.goal,
-            "recommendedCertifications": route.recommended_certifications,
-
-            "isTrial": is_trial,
-            "trialDays": 7 if is_trial else 0,
-            "billingInterval": interval,
+            "createdFrom": "startNow",
+            "stripePriceId": stripe_price_id,
+            "colombiaUserId": user.id,
         },
     }
 
+def send_b2c_access_event_to_mx(*, payload, user=None, route=None):
+    event_id = payload["eventId"]
+    event_type = payload["eventType"]
+    occurred_at = payload["occurredAt"]
+
+    raw_body = _json_dumps(payload)
+    headers = _build_mx_headers(raw_body, event_id, occurred_at)
+
+    log, created = MxAccessEventLog.objects.get_or_create(
+        stripe_event_id=event_id,
+        defaults={
+            "user": user,
+            "learning_route_id": route.id if route else None,
+            "event_type": event_type,
+            "event_source": "colombia_b2c",
+            "payload_json": payload,
+            "send_status": "pending",
+            "attempts": 0,
+        },
+    )
+
+    if not created and log.send_status == "sent":
+        return {
+            "ok": True,
+            "status": log.mx_status or "DUPLICATE",
+            "mxUserId": log.mx_user_id,
+            "magicLink": log.magic_link,
+            "skipped": True,
+        }
+
+    log.send_status = "processing"
+    log.attempts = (log.attempts or 0) + 1
+    log.save(update_fields=["send_status", "attempts", "updated_at"])
+
+    try:
+        response = requests.post(
+            settings.MX_B2C_ACCESS_EVENT_URL,
+            data=raw_body.encode("utf-8"),
+            headers=headers,
+            timeout=getattr(settings, "MX_B2C_TIMEOUT", 15),
+        )
+
+        try:
+            response_json = response.json()
+        except Exception:
+            response_json = {"raw": response.text[:3000]}
+
+        mx_status = response_json.get("status")
+        mx_user_id = response_json.get("mxUserId")
+        magic_link = response_json.get("magicLink")
+
+        ok = response.ok and mx_status in ["APPLIED", "DUPLICATE"]
+
+        log.response_json = response_json
+        log.mx_status = mx_status
+        log.mx_user_id = mx_user_id
+        log.magic_link = magic_link
+        log.send_status = "sent" if ok else "failed"
+        log.sent_at = timezone.now() if ok else None
+        log.last_error = None if ok else json.dumps(response_json, ensure_ascii=False)
+        log.save(update_fields=[
+            "response_json",
+            "mx_status",
+            "mx_user_id",
+            "magic_link",
+            "send_status",
+            "sent_at",
+            "last_error",
+            "updated_at",
+        ])
+
+        return {
+            "ok": ok,
+            "status": mx_status,
+            "http_status": response.status_code,
+            "mxUserId": mx_user_id,
+            "magicLink": magic_link,
+            "response": response_json,
+        }
+
+    except Exception as e:
+        log.send_status = "failed"
+        log.last_error = str(e)
+        log.save(update_fields=["send_status", "last_error", "updated_at"])
+
+        return {
+            "ok": False,
+            "status": "RETRYABLE_ERROR",
+            "error": str(e),
+        }
 
 MAX_PER_LEVEL = 3
 
