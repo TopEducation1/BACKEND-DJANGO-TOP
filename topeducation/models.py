@@ -807,6 +807,23 @@ class MxAccessEventLog(models.Model):
         blank=True,
     )
 
+    mx_user_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+    )
+
+    magic_link = models.TextField(
+        null=True,
+        blank=True,
+    )
+
+    mx_status = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+    )
+
     send_status = models.CharField(
         max_length=20,
         default="pending",
