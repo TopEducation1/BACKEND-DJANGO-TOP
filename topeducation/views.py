@@ -6183,14 +6183,6 @@ def billing_subscription_create(request):
 
 #ENVIO INFORMACIÓN STRIPE MEXICO
 
-def _json_dumps(payload):
-    return json.dumps(
-        payload,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        sort_keys=True,
-    )
-
 @require_POST
 @csrf_exempt
 @login_required
@@ -6278,11 +6270,15 @@ def _mx_iso_now():
 
 
 def _json_dumps(payload):
-    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(
+        payload,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
 
 
 def _build_mx_headers(raw_body, event_id, occurred_at):
-    secret = settings.MX_B2C_ACCESS_EVENT_HMAC_SECRET
+    secret = (settings.MX_B2C_ACCESS_EVENT_HMAC_SECRET or "").strip()
 
     signature = hmac.new(
         secret.encode("utf-8"),
@@ -6356,7 +6352,12 @@ def send_stripe_event_to_mx(
 
     raw_body = _json_dumps(payload)
     occurred_at = payload.get("occurredAt") or _mx_iso_now()
-    headers = _build_mx_headers(raw_body, event_id, occurred_at)
+
+    headers = _build_mx_headers(
+        raw_body=raw_body,
+        event_id=payload["eventId"],
+        occurred_at=occurred_at,
+    )
 
     log.attempts = (log.attempts or 0) + 1
     log.last_attempt_at = timezone.now()
@@ -6374,10 +6375,10 @@ def send_stripe_event_to_mx(
 
     try:
         response = requests.post(
-            settings.MX_STRIPE_B2C_WEBHOOK_URL,
+            settings.MX_B2C_ACCESS_EVENT_URL,
             data=raw_body.encode("utf-8"),
             headers=headers,
-            timeout=getattr(settings, "MX_WEBHOOK_TIMEOUT", 10),
+            timeout=getattr(settings, "MX_B2C_TIMEOUT", 15),
         )
 
         try:
