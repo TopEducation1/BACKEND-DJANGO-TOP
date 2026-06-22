@@ -40,6 +40,7 @@ from django.views import View
 from django.views.decorators.cache import cache_page
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
+from datetime import timezone as dt_timezone
 
 from rest_framework import generics, status, viewsets
 from rest_framework import permissions as drf_permissions
@@ -63,7 +64,7 @@ from topeducation.services.import_courses import (
     ingest_specializations_payload,
 )
 from topeducation.services.mx_payload_builder import build_mx_payload_from_stripe_event
-from topeducation.services.mx_webhook_sender import send_stripe_event_to_mx
+from topeducation.services.mx_webhook_sender import send_b2c_access_event_to_mx
 
 
 @staff_member_required(login_url="/signin/")
@@ -5636,7 +5637,12 @@ class LearningRouteCompleteSignupView(APIView):
         )
 
         event_type = "USER_ACCESS_PROVISION"
-        plan_value = selected_plan if selected_plan == "free" else request.data.get("selected_paid_plan") or selected_plan
+
+        plan_value = (
+            selected_plan
+            if selected_plan == "free"
+            else request.data.get("selected_paid_plan") or selected_plan
+        )
 
         event_id = f"evt_col_provision_route_{route.id}_user_{user.id}_{uuid.uuid4()}"
 
@@ -5654,23 +5660,6 @@ class LearningRouteCompleteSignupView(APIView):
             user=user,
             route=route,
         )
-        event_id = f"colombia-b2c:{event_type}:{route.id}:{user.id}"
-
-        payload = build_learning_route_mx_payload(
-            event_id=event_id,
-            event_type=event_type,
-            user=user,
-            route=route,
-            subscription=subscription,
-        )
-
-        mx_result = send_stripe_event_to_mx(
-            event_id=event_id,
-            event_type=event_type,
-            payload=payload,
-            stripe_event_id=None,
-            stripe_object_id=route.stripe_subscription_id or str(route.id),
-        )
 
         route.mx_status = mx_result.get("status") or "unknown"
         route.mx_response = mx_result
@@ -5684,6 +5673,7 @@ class LearningRouteCompleteSignupView(APIView):
             update_fields=[
                 "mx_status",
                 "mx_response",
+                "mx_magic_link",
                 "status",
                 "updated_at",
             ]
@@ -6279,7 +6269,12 @@ def billing_subscription_cancel(request):
         )
 
 def _mx_iso_now():
-    return timezone.now().astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return (
+        timezone.now()
+        .astimezone(dt_timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _json_dumps(payload):
@@ -6307,8 +6302,13 @@ def get_mx_package_code(plan_value):
 
     mapping = {
         "free": "TOP_EDUCATION_FREE",
+
+        "monthly_basic": "TOP_EDUCATION_BASIC_MONTHLY",
+        "yearly_basic": "TOP_EDUCATION_BASIC_ANNUAL",
+
         "monthly_x": "TOP_EDUCATION_X_MONTHLY",
         "yearly_x": "TOP_EDUCATION_X_ANNUAL",
+
         "monthly_plus": "TOP_EDUCATION_PLUS_MONTHLY",
         "yearly_plus": "TOP_EDUCATION_PLUS_ANNUAL",
     }
@@ -6355,7 +6355,8 @@ def send_stripe_event_to_mx(
         }
 
     raw_body = _json_dumps(payload)
-    headers = _build_mx_headers(raw_body, event_id)
+    occurred_at = payload.get("occurredAt") or _mx_iso_now()
+    headers = _build_mx_headers(raw_body, event_id, occurred_at)
 
     log.attempts = (log.attempts or 0) + 1
     log.last_attempt_at = timezone.now()

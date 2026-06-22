@@ -682,6 +682,7 @@ class LearningRouteLead(models.Model):
     country = models.CharField( max_length=120, blank=True, default="",)
     mx_status = models.CharField( max_length=50, default="pending",)
     mx_response = models.JSONField( null=True, blank=True,)
+    mx_magic_link = models.TextField(null=True, blank=True)
     selected_plan = models.CharField(
         max_length=20,
         choices=[
