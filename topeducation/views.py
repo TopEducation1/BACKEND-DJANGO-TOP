@@ -6270,15 +6270,14 @@ def _mx_iso_now():
 
 
 def _json_dumps(payload):
-    return json.dumps(
-        payload,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
 
 def _build_mx_headers(raw_body, event_id, occurred_at):
     secret = (settings.MX_B2C_ACCESS_EVENT_HMAC_SECRET or "").strip()
+    print("SECRET_LEN:", len(secret))
+    print("SECRET_PREFIX:", secret[:8])
+    print("SECRET_SUFFIX:", secret[-8:])
 
     signature = hmac.new(
         secret.encode("utf-8"),
@@ -6351,12 +6350,13 @@ def send_stripe_event_to_mx(
         }
 
     raw_body = _json_dumps(payload)
-    occurred_at = payload.get("occurredAt") or _mx_iso_now()
+    headers = _build_mx_headers(raw_body, payload["eventId"], payload["occurredAt"])
 
-    headers = _build_mx_headers(
-        raw_body=raw_body,
-        event_id=payload["eventId"],
-        occurred_at=occurred_at,
+    response = requests.post(
+        settings.MX_B2C_ACCESS_EVENT_URL,
+        data=raw_body.encode("utf-8"),
+        headers=headers,
+        timeout=getattr(settings, "MX_B2C_TIMEOUT", 15),
     )
 
     log.attempts = (log.attempts or 0) + 1
