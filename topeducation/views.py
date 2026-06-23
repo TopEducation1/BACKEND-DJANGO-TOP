@@ -4949,7 +4949,7 @@ COLOR_MAP = {
 }
 
 MAX_ITEMS_PER_SKILL = 8
-CACHE_KEY = "home_skills_grid_v1"
+CACHE_KEY = "home_skills_grid_v4"
 CACHE_TIMEOUT = 60 * 30  # 30 minutos
 
 MAX_SKILLS_ON_HOME = 12
@@ -5156,7 +5156,6 @@ class HomeSkillsGridAPIView(APIView):
             SkillsCertification.objects
             .filter(skill_id__in=skill_ids)
             .select_related(
-                "skill",
                 "certificacion",
                 "certificacion__universidad_certificacion",
                 "certificacion__empresa_certificacion",
@@ -5170,7 +5169,6 @@ class HomeSkillsGridAPIView(APIView):
                 "certificacion__id",
                 "certificacion__nombre",
                 "certificacion__slug",
-                "certificacion__instructores_certificacion",
                 "certificacion__universidad_certificacion_id",
                 "certificacion__empresa_certificacion_id",
                 "certificacion__plataforma_certificacion_id",
@@ -5209,6 +5207,13 @@ class HomeSkillsGridAPIView(APIView):
             seen_companies = set()
             seen_certs = set()
 
+            skill_type_raw = (skill.skill_type or "").strip()
+            skill_type = skill_type_raw.lower()
+
+            is_topic = skill_type == "tema"
+            filter_key = "tema_id" if is_topic else "habilidad_id"
+            item_type = "topic" if is_topic else "skill"
+
             skill_links = grouped_links.get(skill.id, [])
 
             for link in skill_links:
@@ -5233,7 +5238,7 @@ class HomeSkillsGridAPIView(APIView):
                         "img": uni_img,
                         "initial": get_initial(uni.nombre),
                         "filter": {
-                            "tema_id": skill.id,
+                            filter_key: skill.id,
                             "universidad_id": uni.id,
                         },
                     })
@@ -5255,7 +5260,7 @@ class HomeSkillsGridAPIView(APIView):
                         "img": emp_img,
                         "initial": get_initial(emp.nombre),
                         "filter": {
-                            "tema_id": skill.id,
+                            filter_key: skill.id,
                             "empresa_id": emp.id,
                         },
                     })
@@ -5287,14 +5292,10 @@ class HomeSkillsGridAPIView(APIView):
                 "id": skill.id,
                 "name": (skill.translate or skill.nombre or "").strip(),
                 "slug": skill.slug,
-                "skill_type": (skill.skill_type or "").strip(),
-                "type": (
-                    "topic"
-                    if (skill.skill_type or "").strip().lower() == "tema"
-                    else "skill"
-                ),
+                "skill_type": skill_type_raw,
+                "type": item_type,
                 "filter": {
-                    "tema_id": skill.id,
+                    filter_key: skill.id,
                 },
                 "img": (
                     normalize_media_url(request, skill.skill_ico)
@@ -5303,8 +5304,6 @@ class HomeSkillsGridAPIView(APIView):
                 "color": COLOR_MAP.get(skill.skill_col, "#034694"),
                 "description": (skill.descripcion or "").strip(),
                 "items": related_items,
-
-                # compatibilidad con tu frontend actual
                 "universities": related_items,
             })
 
@@ -5312,7 +5311,7 @@ class HomeSkillsGridAPIView(APIView):
 
         cache.set(CACHE_KEY, response_data, CACHE_TIMEOUT)
         return Response(response_data)
-    
+        
 def get_stripe_price_for_plan(plan):
     plan_normalized = str(plan or "monthly_x").strip().lower()
 
