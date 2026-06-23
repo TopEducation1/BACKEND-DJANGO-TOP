@@ -5266,13 +5266,16 @@ class HomeSkillsGridAPIView(APIView):
                 if "masterclass" in platform_name and cert.id not in seen_certs:
                     seen_certs.add(cert.id)
 
-                    instructor_img = pick_first_instructor_image(cert, request)
+                    platform_img = (
+                        normalize_media_url(request, getattr(plataforma, "plat_ico", None))
+                        or normalize_media_url(request, getattr(plataforma, "plat_img", None))
+                    )
 
                     related_items.append({
                         "id": cert.id,
                         "name": cert.nombre,
                         "type": "certification",
-                        "img": instructor_img,
+                        "img": platform_img,
                         "initial": get_initial(cert.nombre),
                         "link": build_cert_link(cert),
                     })
@@ -5284,7 +5287,12 @@ class HomeSkillsGridAPIView(APIView):
                 "id": skill.id,
                 "name": (skill.translate or skill.nombre or "").strip(),
                 "slug": skill.slug,
-                "type": "skill",
+                "skill_type": (skill.skill_type or "").strip(),
+                "type": (
+                    "topic"
+                    if (skill.skill_type or "").strip().lower() == "tema"
+                    else "skill"
+                ),
                 "filter": {
                     "tema_id": skill.id,
                 },
