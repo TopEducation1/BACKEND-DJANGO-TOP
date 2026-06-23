@@ -4833,6 +4833,39 @@ def api_run_courses_sync(request):
                 except Exception:
                     response_text_preview = ""
 
+                if resp.status_code in (502, 503, 504):
+                    took_ms = int((time.time() - t0) * 1000)
+
+                    next_page = page + 1 if uses_cursor else None
+
+                    ExternalSyncLog.objects.create(
+                        key=state_key,
+                        run_id=run_id,
+                        page=page if uses_cursor else None,
+                        page_size=page_size if uses_cursor else None,
+                        ok=False,
+                        took_ms=took_ms,
+                        error="external_api_bad_gateway_skipped",
+                        detail=(
+                            f"HTTP {resp.status_code}. Página omitida para no detener cron. "
+                            f"url={getattr(resp, 'url', endpoint)} "
+                            f"body={response_text_preview}"
+                        ),
+                        trace="",
+                    )
+
+                    if uses_cursor and next_page:
+                        ExternalSyncState.objects.filter(key=state_key).update(
+                            cursor_value=str(next_page),
+                            last_error_at=timezone.now(),
+                            last_error=f"Página {page} omitida por HTTP {resp.status_code}",
+                            updated_at=timezone.now(),
+                        )
+
+                    page = next_page
+
+                    continue
+
                 if resp.status_code >= 400:
                     took_ms = int((time.time() - t0) * 1000)
 
