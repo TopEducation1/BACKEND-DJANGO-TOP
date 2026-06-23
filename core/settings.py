@@ -38,7 +38,7 @@ MX_B2C_COLOMBIA_ACCOUNT_URL = os.getenv(
     "MX_B2C_COLOMBIA_ACCOUNT_URL",
     "https://top.education/account",
 )
-MX_B2C_TIMEOUT = int(os.getenv("MX_B2C_TIMEOUT", "15"))
+MX_B2C_TIMEOUT = int(os.getenv("MX_B2C_TIMEOUT", "45"))
 
 MX_STRIPE_B2C_WEBHOOK_URL = os.getenv("MX_STRIPE_B2C_WEBHOOK_URL")
 STRIPE_B2C_WEBHOOK_SECRET = os.getenv("STRIPE_B2C_WEBHOOK_SECRET")
