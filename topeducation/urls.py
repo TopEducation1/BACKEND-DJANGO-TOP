@@ -69,6 +69,7 @@ urlpatterns = [
     path("certificaciones/languages/", CertificationLanguagesList.as_view(), name="certification-languages"),
     path('certificaciones/filter/', filter_by_tags.as_view()    , name='filter-by-tags'),
     path('certificaciones/busqueda/', filter_by_search.as_view(), name='filter_by_search'),
+    path("certificaciones/busqueda-rapida/", QuickCertificationSearchAPIView.as_view(), name="certificaciones_busqueda_rapida",),
     path('certificacionesInterest/', CertificationsCafam.as_view(), name="certificaciones_interest"),
     path('cafam/certificacion/<slug:slug>/', CertificationDetailView.as_view(), name='get-certification'),
     path('blogs/', BlogList.as_view(), name="blog-list"),

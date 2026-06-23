@@ -2934,6 +2934,159 @@ class filter_by_search(APIView):
             status=status.HTTP_200_OK,
         )
         
+class QuickCertificationSearchAPIView(APIView):
+    permission_classes = []
+
+    def post(self, request):
+        query_string = (request.data.get("data") or "").strip()
+        limit = request.data.get("limit", 8)
+
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 8
+
+        limit = max(1, min(limit, 12))
+
+        if not query_string or len(query_string) < 3:
+            return Response({"results": [], "count": 0}, status=status.HTTP_200_OK)
+
+        search_filter = (
+            Q(nombre__icontains=query_string) |
+            Q(slug__icontains=query_string) |
+            Q(universidad_certificacion__nombre__icontains=query_string) |
+            Q(empresa_certificacion__nombre__icontains=query_string) |
+            Q(plataforma_certificacion__nombre__icontains=query_string) |
+            Q(skills_rel__skill__nombre__icontains=query_string) |
+            Q(skills_rel__skill__translate__icontains=query_string)
+        )
+
+        rows = list(
+            Certificaciones.objects
+            .filter(search_filter)
+            .filter(language_normalized__in=["es"])
+            .annotate(
+                search_priority=Case(
+                    When(nombre__istartswith=query_string, then=Value(1)),
+                    When(skills_rel__skill__nombre__istartswith=query_string, then=Value(2)),
+                    When(skills_rel__skill__translate__istartswith=query_string, then=Value(2)),
+                    When(universidad_certificacion__nombre__istartswith=query_string, then=Value(3)),
+                    When(empresa_certificacion__nombre__istartswith=query_string, then=Value(4)),
+                    When(plataforma_certificacion__nombre__istartswith=query_string, then=Value(5)),
+                    default=Value(99),
+                    output_field=IntegerField(),
+                )
+            )
+            .values("id", "search_priority", "nombre")
+            .order_by("search_priority", "nombre")
+            .distinct()[:limit]
+        )
+
+        ids = [row["id"] for row in rows]
+
+        if not ids:
+            return Response({"results": [], "count": 0}, status=status.HTTP_200_OK)
+
+        preserved_order = Case(
+            *[When(id=pk, then=pos) for pos, pk in enumerate(ids)],
+            output_field=IntegerField(),
+        )
+
+        certs = (
+            Certificaciones.objects
+            .filter(id__in=ids)
+            .select_related(
+                "plataforma_certificacion",
+                "universidad_certificacion",
+                "empresa_certificacion",
+            )
+            .only(
+                "id",
+                "nombre",
+                "slug",
+                "imagen_final",
+
+                "plataforma_certificacion_id",
+                "plataforma_certificacion__id",
+                "plataforma_certificacion__nombre",
+                "plataforma_certificacion__plat_ico",
+                "plataforma_certificacion__plat_img",
+
+                "universidad_certificacion_id",
+                "universidad_certificacion__id",
+                "universidad_certificacion__nombre",
+                "universidad_certificacion__univ_ico",
+                "universidad_certificacion__univ_img",
+
+                "empresa_certificacion_id",
+                "empresa_certificacion__id",
+                "empresa_certificacion__nombre",
+                "empresa_certificacion__empr_ico",
+                "empresa_certificacion__empr_img",
+            )
+            .order_by(preserved_order)
+        )
+
+        results = []
+
+        for cert in certs:
+            plataforma = cert.plataforma_certificacion
+            universidad = cert.universidad_certificacion
+            empresa = cert.empresa_certificacion
+
+            platform_name = getattr(plataforma, "nombre", "") or ""
+            platform_slug = platform_name.strip().lower()
+
+            if platform_slug == "edx.org":
+                platform_slug = "edx"
+
+            image = (
+                getattr(universidad, "univ_ico", None)
+                or getattr(universidad, "univ_img", None)
+                or getattr(empresa, "empr_ico", None)
+                or getattr(empresa, "empr_img", None)
+                or getattr(plataforma, "plat_ico", None)
+                or getattr(plataforma, "plat_img", None)
+                or cert.imagen_final
+                or ""
+            )
+
+            results.append({
+                "id": cert.id,
+                "nombre": cert.nombre,
+                "slug": cert.slug,
+                "image": image,
+                "url": (
+                    f"/certificacion/{platform_slug}/{cert.slug}"
+                    if platform_slug
+                    else f"/certificacion/{cert.slug}"
+                ),
+                "plataforma_certificacion": {
+                    "id": getattr(plataforma, "id", None),
+                    "nombre": platform_name,
+                } if plataforma else None,
+                "universidad_certificacion": {
+                    "id": getattr(universidad, "id", None),
+                    "nombre": getattr(universidad, "nombre", ""),
+                    "univ_ico": getattr(universidad, "univ_ico", ""),
+                    "univ_img": getattr(universidad, "univ_img", ""),
+                } if universidad else None,
+                "empresa_certificacion": {
+                    "id": getattr(empresa, "id", None),
+                    "nombre": getattr(empresa, "nombre", ""),
+                    "empr_ico": getattr(empresa, "empr_ico", ""),
+                    "empr_img": getattr(empresa, "empr_img", ""),
+                } if empresa else None,
+            })
+
+        return Response(
+            {
+                "results": results,
+                "count": len(results),
+            },
+            status=status.HTTP_200_OK,
+        )
+
 class LatestCertificationsView(APIView):
     def get(self, request):
         try:
