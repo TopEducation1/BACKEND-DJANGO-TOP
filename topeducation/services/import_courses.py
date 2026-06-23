@@ -1,4 +1,4 @@
-from django.db import transaction
+from django.db import transaction, IntegrityError
 
 import json
 import re
@@ -137,17 +137,54 @@ def _has_field(model, field_name: str) -> bool:
     return field_name in _model_field_names(model)
 
 
-def _safe_get_or_create_unique(model, lookup: dict, defaults: dict, *, order_by="id"):
-    qs = model.objects.filter(**lookup)
-    obj = _pick_one(qs, order_by=order_by)
+def _safe_get_or_create_unique(
+    model,
+    lookup: dict,
+    defaults: dict,
+    *,
+    order_by="id",
+    unique_fallbacks: list[dict] | None = None,
+):
+    lookup = lookup or {}
+    defaults = defaults or {}
+    unique_fallbacks = unique_fallbacks or []
+
+    obj = _pick_one(model.objects.filter(**lookup), order_by=order_by)
     if obj:
         return obj, False
 
+    for fallback in unique_fallbacks:
+        fallback = {k: v for k, v in (fallback or {}).items() if v not in [None, ""]}
+        if not fallback:
+            continue
+
+        obj = _pick_one(model.objects.filter(**fallback), order_by=order_by)
+        if obj:
+            return obj, False
+
     create_data = {}
-    create_data.update(lookup or {})
-    create_data.update(defaults or {})
-    obj = model.objects.create(**create_data)
-    return obj, True
+    create_data.update(lookup)
+    create_data.update(defaults)
+
+    try:
+        obj = model.objects.create(**create_data)
+        return obj, True
+
+    except IntegrityError:
+        for fallback in unique_fallbacks:
+            fallback = {k: v for k, v in (fallback or {}).items() if v not in [None, ""]}
+            if not fallback:
+                continue
+
+            obj = _pick_one(model.objects.filter(**fallback), order_by=order_by)
+            if obj:
+                return obj, False
+
+        obj = _pick_one(model.objects.filter(**lookup), order_by=order_by)
+        if obj:
+            return obj, False
+
+        raise
 
 
 def _apply_updates(obj, values: dict) -> list[str]:
@@ -531,6 +568,9 @@ def upsert_skill(item: dict) -> tuple[Skills | None, bool]:
         Skills,
         lookup=lookup,
         defaults=defaults,
+        unique_fallbacks=[
+            {"slug": defaults.get("slug")} if _has_field(Skills, "slug") else {},
+        ],
     )
 
     updates = {}
@@ -609,6 +649,9 @@ def upsert_skill_by_name(
         Skills,
         lookup={"nombre": nombre},
         defaults=defaults,
+        unique_fallbacks=[
+            {"slug": defaults.get("slug")} if _has_field(Skills, "slug") else {},
+        ],
     )
 
     updates = {}
