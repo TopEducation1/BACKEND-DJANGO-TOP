@@ -4453,7 +4453,7 @@ logger = logging.getLogger(__name__)
 def _get_base_external_url():
     return f"{settings.COURSES_EXTERNAL_ENDPOINT.rstrip('/')}/course-information"
 
-LOCK_TTL_SECONDS = 14 * 60
+LOCK_TTL_SECONDS = 10 * 60
 
 
 def _get_external_api_key():
@@ -4629,7 +4629,7 @@ def api_run_courses_sync(request):
 
     # Tiempo máximo seguro para responder antes de Cloudflare.
     # Ajusta si tu Cloudflare/origen permite más.
-    MAX_HTTP_SECONDS = 240
+    MAX_HTTP_SECONDS = 480
 
     if _is_sync_paused():
         return JsonResponse(
@@ -4737,7 +4737,7 @@ def api_run_courses_sync(request):
     # Límites más seguros para ejecución por inspector/HTTP.
     # El cron puede correr más veces, pero cada request debe ser corto.
     max_pages_per_run = max(1, min(max_pages_per_run, 3))
-    page_size = max(1, min(page_size, 100))
+    page_size = max(1, min(page_size, 60))
     timeout = max(5, min(timeout, 180))
 
     state, _ = ExternalSyncState.objects.get_or_create(
