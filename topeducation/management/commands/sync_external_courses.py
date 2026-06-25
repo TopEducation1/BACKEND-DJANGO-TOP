@@ -7,6 +7,8 @@ import traceback
 import logging
 
 import requests
+from requests.exceptions import RequestException, Timeout, ConnectionError
+
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from django.conf import settings
@@ -22,8 +24,10 @@ from topeducation.services.import_courses import (
 
 logger = logging.getLogger(__name__)
 
-LOCK_TTL_SECONDS = 14 * 60  # ~14 min para cron de 15 min
+LOCK_TTL_SECONDS = 14 * 60
 BASE_EXTERNAL_URL = "https://api-colombia-dev.universidad.top/course-information"
+
+RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
 
 
 def _is_sync_paused() -> bool:
@@ -34,7 +38,6 @@ def _is_sync_paused() -> bool:
 def _get_resource_endpoint(resource: str, specialization_id: str | None = None) -> str:
     custom_endpoint = getattr(settings, "COURSES_EXTERNAL_ENDPOINT", None)
 
-    # Compatibilidad: si solo tienes configurado un endpoint custom, lo respetamos para courses
     if custom_endpoint and resource == "courses":
         return custom_endpoint
 
@@ -53,8 +56,13 @@ def _get_resource_endpoint(resource: str, specialization_id: str | None = None) 
 
 
 def _build_external_headers() -> dict:
-    headers = {"Accept": "application/json"}
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "TopEducation-Colombia-Sync/1.0",
+    }
+
     api_key = getattr(settings, "COURSES_EXTERNAL_API_KEY", None) or getattr(settings, "AWS_COURSES_API_KEY", None)
+
     if not api_key:
         return headers
 
@@ -100,14 +108,15 @@ def _compute_next_page(page: int, payload: dict) -> int:
     total_pages = _extract_total_pages(payload)
 
     if isinstance(total_pages, int) and total_pages > 0:
-        return 1 if page >= total_pages else (page + 1)
+        return 1 if page >= total_pages else page + 1
 
-    return 1 if items_len == 0 else (page + 1)
+    return 1 if items_len == 0 else page + 1
 
 
 def _normalize_provider(provider: str | None) -> str | None:
     if not provider:
         return None
+
     provider = str(provider).strip()
     return provider.upper() if provider else None
 
@@ -115,6 +124,7 @@ def _normalize_provider(provider: str | None) -> str | None:
 def _validate_specialization_id(specialization_id: str | None) -> bool:
     if not specialization_id or ":" not in specialization_id:
         return False
+
     provider, raw_id = specialization_id.split(":", 1)
     return bool(provider.strip() and raw_id.strip())
 
@@ -127,7 +137,6 @@ def _build_params(resource: str, page: int, page_size: int, provider: str | None
         params["pageSize"] = page_size
 
     if provider and resource in ("courses", "certifications", "specializations"):
-        # el endpoint documentado soporta provider o providerId
         params["provider"] = provider
         params["providerId"] = provider
 
@@ -154,14 +163,41 @@ def _ingest_by_resource(resource: str, payload: dict, provider: str | None = Non
     raise ValueError(f"Unsupported ingestion resource: {resource}")
 
 
+def _safe_response_json(resp) -> dict:
+    try:
+        data = resp.json()
+        return data if isinstance(data, dict) else {"data": data}
+    except Exception:
+        return {"raw": resp.text[:2000] if getattr(resp, "text", None) else ""}
+
+
+def _extract_retry_after(resp, payload: dict | None = None) -> int:
+    retry_after = None
+
+    try:
+        retry_after = resp.headers.get("Retry-After")
+    except Exception:
+        pass
+
+    if not retry_after and isinstance(payload, dict):
+        retry_after = payload.get("retry_after")
+
+    try:
+        retry_after = int(retry_after)
+    except Exception:
+        retry_after = 60
+
+    return max(30, min(retry_after, 180))
+
+
 class Command(BaseCommand):
     help = "Sincroniza recursos desde endpoint externo de Top Education con cursor, logs y soporte multi-resource."
 
     def add_arguments(self, parser):
         parser.add_argument("--resource", type=str, default="courses")
         parser.add_argument("--provider", type=str, default="")
-        parser.add_argument("--page-size", type=int, default=50)
-        parser.add_argument("--timeout", type=int, default=30)
+        parser.add_argument("--page-size", type=int, default=25)
+        parser.add_argument("--timeout", type=int, default=120)
         parser.add_argument("--max-pages", type=int, default=1)
         parser.add_argument("--state-key", type=str, default="")
         parser.add_argument("--specialization-id", type=str, default="")
@@ -200,9 +236,9 @@ class Command(BaseCommand):
         endpoint = _get_resource_endpoint(resource, specialization_id=specialization_id)
         headers = _build_external_headers()
 
-        page_size = max(1, min(int(opts["page_size"]), 100))
-        timeout = int(opts["timeout"])
-        max_pages = max(1, min(int(opts["max_pages"]), 10))
+        page_size = max(1, min(int(opts["page_size"]), 60))
+        timeout = max(10, min(int(opts["timeout"]), 180))
+        max_pages = max(1, min(int(opts["max_pages"]), 3))
 
         lower_headers = {k.lower(): v for k, v in headers.items()}
         if "authorization" not in lower_headers and "x-api-key" not in lower_headers:
@@ -223,10 +259,9 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("Lock activo, ya hay una ejecución en curso"))
             return
 
-        locked_at_value = now
         ExternalSyncState.objects.filter(key=state_key).update(
             running=True,
-            locked_at=locked_at_value,
+            locked_at=now,
             updated_at=now,
         )
 
@@ -250,15 +285,105 @@ class Command(BaseCommand):
 
             for _ in range(max_pages):
                 params = _build_params(resource, page, page_size, provider)
+                final_url = requests.Request("GET", endpoint, params=params).prepare().url
 
                 try:
-                    resp = requests.get(endpoint, headers=headers, params=params, timeout=timeout)
+                    resp = requests.get(
+                        endpoint,
+                        headers=headers,
+                        params=params,
+                        timeout=timeout,
+                    )
+
+                    if resp.status_code in RETRYABLE_STATUS_CODES:
+                        err_payload = _safe_response_json(resp)
+                        retry_after = _extract_retry_after(resp, err_payload)
+                        took_ms = int((time.time() - t0) * 1000)
+
+                        error_name = err_payload.get("error_name") or err_payload.get("title") or f"HTTP {resp.status_code}"
+                        ray_id = err_payload.get("ray_id") or err_payload.get("cf-ray") or ""
+                        cloudflare_error = err_payload.get("cloudflare_error", False)
+
+                        ExternalSyncLog.objects.create(
+                            key=state_key,
+                            run_id=run_id,
+                            page=page if uses_cursor else None,
+                            page_size=page_size if uses_cursor else None,
+                            ok=False,
+                            took_ms=took_ms,
+                            error=f"http_{resp.status_code}",
+                            detail=(
+                                f"External API retryable error. "
+                                f"status={resp.status_code} error_name={error_name} "
+                                f"retry_after={retry_after}s ray_id={ray_id} "
+                                f"url={final_url}"
+                            ),
+                            trace=json.dumps({
+                                "status_code": resp.status_code,
+                                "url": final_url,
+                                "retry_after": retry_after,
+                                "cloudflare_error": cloudflare_error,
+                                "ray_id": ray_id,
+                                "response": err_payload,
+                            }, default=str)[:8000],
+                        )
+
+                        ExternalSyncState.objects.filter(key=state_key).update(
+                            last_error_at=timezone.now(),
+                            last_error=(
+                                f"http_{resp.status_code}: {error_name}; "
+                                f"retry_after={retry_after}s; ray_id={ray_id}"
+                            )[:500],
+                            updated_at=timezone.now(),
+                        )
+
+                        self.stderr.write(self.style.WARNING(
+                            f"External API error HTTP {resp.status_code}. "
+                            f"retry_after={retry_after}s ray_id={ray_id or '-'} url={final_url}"
+                        ))
+
+                        return
+
                     resp.raise_for_status()
+
                     payload = resp.json()
                     if not isinstance(payload, dict):
                         payload = {"data": payload}
-                except Exception as e:
+
+                except (Timeout, ConnectionError) as e:
                     took_ms = int((time.time() - t0) * 1000)
+
+                    ExternalSyncLog.objects.create(
+                        key=state_key,
+                        run_id=run_id,
+                        page=page if uses_cursor else None,
+                        page_size=page_size if uses_cursor else None,
+                        ok=False,
+                        took_ms=took_ms,
+                        error="network_failed",
+                        detail=f"{type(e).__name__}: {e}; url={final_url}",
+                        trace=traceback.format_exc()[:8000],
+                    )
+
+                    ExternalSyncState.objects.filter(key=state_key).update(
+                        last_error_at=timezone.now(),
+                        last_error=f"network_failed: {type(e).__name__}: {e}"[:500],
+                        updated_at=timezone.now(),
+                    )
+
+                    self.stderr.write(self.style.ERROR(f"network_failed: {e}"))
+                    return
+
+                except RequestException as e:
+                    took_ms = int((time.time() - t0) * 1000)
+                    status_code = getattr(getattr(e, "response", None), "status_code", None)
+                    response_text = ""
+
+                    try:
+                        response_text = e.response.text[:2000] if e.response else ""
+                    except Exception:
+                        pass
+
                     ExternalSyncLog.objects.create(
                         key=state_key,
                         run_id=run_id,
@@ -267,13 +392,45 @@ class Command(BaseCommand):
                         ok=False,
                         took_ms=took_ms,
                         error="fetch_failed",
-                        detail=str(e),
-                        trace=traceback.format_exc()[:8000],
+                        detail=f"status={status_code} error={e}; url={final_url}",
+                        trace=json.dumps({
+                            "status_code": status_code,
+                            "url": final_url,
+                            "response_text": response_text,
+                            "trace": traceback.format_exc()[:5000],
+                        }, default=str)[:8000],
                     )
+
                     ExternalSyncState.objects.filter(key=state_key).update(
                         last_error_at=timezone.now(),
-                        last_error=f"fetch_failed: {e}",
+                        last_error=f"fetch_failed: status={status_code} {e}"[:500],
+                        updated_at=timezone.now(),
                     )
+
+                    self.stderr.write(self.style.ERROR(f"fetch_failed: {e}"))
+                    return
+
+                except Exception as e:
+                    took_ms = int((time.time() - t0) * 1000)
+
+                    ExternalSyncLog.objects.create(
+                        key=state_key,
+                        run_id=run_id,
+                        page=page if uses_cursor else None,
+                        page_size=page_size if uses_cursor else None,
+                        ok=False,
+                        took_ms=took_ms,
+                        error="fetch_failed",
+                        detail=f"{type(e).__name__}: {e}; url={final_url}",
+                        trace=traceback.format_exc()[:8000],
+                    )
+
+                    ExternalSyncState.objects.filter(key=state_key).update(
+                        last_error_at=timezone.now(),
+                        last_error=f"fetch_failed: {type(e).__name__}: {e}"[:500],
+                        updated_at=timezone.now(),
+                    )
+
                     self.stderr.write(self.style.ERROR(f"fetch_failed: {e}"))
                     return
 
@@ -290,6 +447,7 @@ class Command(BaseCommand):
                     )
                 except Exception as e:
                     took_ms = int((time.time() - t0) * 1000)
+
                     ExternalSyncLog.objects.create(
                         key=state_key,
                         run_id=run_id,
@@ -303,15 +461,19 @@ class Command(BaseCommand):
                         detail=str(e),
                         trace=traceback.format_exc()[:8000],
                     )
+
                     ExternalSyncState.objects.filter(key=state_key).update(
                         last_error_at=timezone.now(),
-                        last_error=f"ingestion_failed: {e}",
+                        last_error=f"ingestion_failed: {e}"[:500],
+                        updated_at=timezone.now(),
                     )
+
                     self.stderr.write(self.style.ERROR(f"ingestion_failed: {e}"))
                     return
 
                 if uses_cursor:
                     next_page = _compute_next_page(page, payload)
+
                     ExternalSyncState.objects.filter(key=state_key).update(
                         cursor_value=str(next_page),
                         last_ok_at=timezone.now(),
@@ -320,6 +482,7 @@ class Command(BaseCommand):
                     )
                 else:
                     next_page = None
+
                     ExternalSyncState.objects.filter(key=state_key).update(
                         last_ok_at=timezone.now(),
                         last_error="",
@@ -346,9 +509,12 @@ class Command(BaseCommand):
 
                 if uses_cursor:
                     self.stdout.write(self.style.SUCCESS(
-                        f"OK resource={resource} page={page} items={items_len} total_pages={total_pages} next={next_page}"
+                        f"OK resource={resource} page={page} items={items_len} "
+                        f"total_pages={total_pages} next={next_page}"
                     ))
+
                     page = next_page
+
                     if next_page == 1:
                         break
                 else:
@@ -358,7 +524,8 @@ class Command(BaseCommand):
                     break
 
             self.stdout.write(self.style.SUCCESS(
-                f"Done. resource={resource} processed_pages={processed_pages} took_ms={int((time.time()-t0)*1000)}"
+                f"Done. resource={resource} processed_pages={processed_pages} "
+                f"took_ms={int((time.time() - t0) * 1000)}"
             ))
 
         finally:
