@@ -6897,23 +6897,24 @@ def billing_subscription_cancel(request):
         )
 
         route.mx_status = mx_result.get("status") or route.mx_status
-        route.mx_response = mx_result
 
         magic_link = mx_result.get("magicLink") or mx_result.get("response", {}).get("magicLink")
         mx_user_id = mx_result.get("mxUserId") or mx_result.get("response", {}).get("mxUserId")
 
+        route.mx_response = {
+            **mx_result,
+            "mxUserId": mx_user_id,
+            "magicLink": magic_link,
+        }
+
         if magic_link:
             route.mx_magic_link = magic_link
-
-        if mx_user_id:
-            route.mx_user_id = mx_user_id
 
         route.save(
             update_fields=[
                 "mx_status",
                 "mx_response",
                 "mx_magic_link",
-                "mx_user_id",
                 "updated_at",
             ]
         )
