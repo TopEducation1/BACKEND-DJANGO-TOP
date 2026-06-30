@@ -4633,7 +4633,7 @@ def mx_magic_link_refresh(request):
         "ok": True,
         "data": {
             "magic_link": magic_link,
-            "mx_user_id": route.mx_user_id,
+            "mx_user_id": mx_user_id,
             "mx_status": route.mx_status,
         },
     })
