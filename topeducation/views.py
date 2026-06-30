@@ -4615,13 +4615,15 @@ def mx_magic_link_refresh(request):
     mx_user_id = result.get("mxUserId") or result.get("response", {}).get("mxUserId")
 
     route.mx_magic_link = magic_link
-    route.mx_user_id = mx_user_id or route.mx_user_id
     route.mx_status = result.get("status") or "APPLIED"
-    route.mx_response = result
+    route.mx_response = {
+        **result,
+        "mxUserId": mx_user_id,
+        "magicLink": magic_link,
+    }
 
     route.save(update_fields=[
         "mx_magic_link",
-        "mx_user_id",
         "mx_status",
         "mx_response",
         "updated_at",
