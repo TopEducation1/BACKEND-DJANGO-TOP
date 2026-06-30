@@ -4292,7 +4292,71 @@ def account_purchases(request):
 
     return JsonResponse({"ok": True, "data": items})
 
+@require_GET
+@login_required
+def billing_invoices_list(request):
+    billing = UserBillingProfile.objects.filter(user=request.user).first()
 
+    if not billing or not billing.stripe_customer_id:
+        return JsonResponse({"ok": True, "data": []})
+
+    invoices = stripe.Invoice.list(
+        customer=billing.stripe_customer_id,
+        limit=50,
+    )
+
+    return JsonResponse({
+        "ok": True,
+        "data": [
+            {
+                "id": inv.get("id"),
+                "number": inv.get("number"),
+                "status": inv.get("status"),
+                "amount": inv.get("amount_paid") or inv.get("total") or 0,
+                "amount_due": inv.get("amount_due") or 0,
+                "currency": inv.get("currency") or "usd",
+                "created_at": timezone.datetime.fromtimestamp(
+                    inv.get("created"),
+                    tz=timezone.get_current_timezone(),
+                ).isoformat() if inv.get("created") else None,
+                "hosted_invoice_url": inv.get("hosted_invoice_url"),
+                "invoice_pdf": inv.get("invoice_pdf"),
+                "attempt_count": inv.get("attempt_count"),
+                "next_payment_attempt": inv.get("next_payment_attempt"),
+            }
+            for inv in invoices.get("data", [])
+        ],
+    })
+
+@require_POST
+@csrf_exempt
+@login_required
+def billing_portal_session(request):
+    billing = UserBillingProfile.objects.filter(user=request.user).first()
+
+    if not billing or not billing.stripe_customer_id:
+        return JsonResponse(
+            {"ok": False, "error": "missing_stripe_customer"},
+            status=400,
+        )
+
+    return_url = getattr(
+        settings,
+        "STRIPE_BILLING_PORTAL_RETURN_URL",
+        "https://top.education/account?tab=license",
+    )
+
+    session = stripe.billing_portal.Session.create(
+        customer=billing.stripe_customer_id,
+        return_url=return_url,
+    )
+
+    return JsonResponse({
+        "ok": True,
+        "data": {
+            "url": session.url,
+        },
+    })
 
 @require_GET
 @csrf_exempt

@@ -40,6 +40,11 @@ MX_B2C_COLOMBIA_ACCOUNT_URL = os.getenv(
 )
 MX_B2C_TIMEOUT = int(os.getenv("MX_B2C_TIMEOUT", "45"))
 
+STRIPE_BILLING_PORTAL_RETURN_URL = os.getenv(
+    "STRIPE_BILLING_PORTAL_RETURN_URL",
+    "https://top.education/account?tab=license",
+)
+
 MX_STRIPE_B2C_WEBHOOK_URL = os.getenv("MX_STRIPE_B2C_WEBHOOK_URL")
 STRIPE_B2C_WEBHOOK_SECRET = os.getenv("STRIPE_B2C_WEBHOOK_SECRET")
 MX_WEBHOOK_TIMEOUT = int(os.getenv("MX_WEBHOOK_TIMEOUT", "10"))
