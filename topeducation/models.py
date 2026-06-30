@@ -677,6 +677,7 @@ class LearningRouteLead(models.Model):
     phone_country_code = models.CharField(max_length=10, blank=True, null=True)
     phone_number = models.CharField(max_length=30, blank=True, null=True)
     phone_e164 = models.CharField(max_length=40, blank=True, null=True)
+    mx_user_id = models.CharField(max_length=255, null=True, blank=True)
     
     topics = models.JSONField(default=list)
     goal = models.CharField(max_length=150)
