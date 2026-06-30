@@ -4504,10 +4504,19 @@ def billing_portal_session(request):
         },
     })
 
-@require_POST
 @csrf_exempt
 @login_required
 def mx_magic_link_refresh(request):
+    if request.method == "OPTIONS":
+        response = HttpResponse(status=204)
+        response["Access-Control-Allow-Origin"] = "https://top.education"
+        response["Access-Control-Allow-Credentials"] = "true"
+        response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response["Access-Control-Allow-Headers"] = "Content-Type, X-CSRFToken"
+        return response
+
+    if request.method != "POST":
+        return JsonResponse({"ok": False, "error": "method_not_allowed"}, status=405)
     user = request.user
 
     route = (
