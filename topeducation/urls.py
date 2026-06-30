@@ -125,6 +125,7 @@ urlpatterns = [
     path("api/account/me/", views.account_me, name="account_me"),
     path("api/billing/invoices/", views.billing_invoices_list),
     path("api/billing/portal/", views.billing_portal_session),
+    path("api/account/mx/magic-link/refresh/", views.mx_magic_link_refresh),
     path("api/auth/password/reset/", views.auth_password_reset_request, name="auth_password_reset_request"),
     path("api/auth/password/reset/confirm/", views.auth_password_reset_confirm, name="auth_password_reset_confirm"),
     path("api/admin/purchases/",login_required(views.admin_purchases_api, login_url="/signin/"),name="admin_purchases_api"),

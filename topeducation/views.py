@@ -4358,6 +4358,82 @@ def billing_portal_session(request):
         },
     })
 
+@require_POST
+@csrf_exempt
+@login_required
+def mx_magic_link_refresh(request):
+    user = request.user
+
+    route = (
+        LearningRouteLead.objects
+        .filter(user=user)
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+
+    subscription = (
+        StripeSubscription.objects
+        .filter(user=user)
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+
+    if not route:
+        return JsonResponse({"ok": False, "error": "learning_route_not_found"}, status=404)
+
+    status = str(getattr(subscription, "status", "") or "").lower()
+
+    if status in ["past_due", "unpaid", "canceled", "cancelled"]:
+        return JsonResponse({
+            "ok": False,
+            "error": "access_inactive",
+            "message": "Tu acceso está inactivo o suspendido.",
+        }, status=403)
+
+    event_id = f"evt_col_magic_refresh_route_{route.id}_user_{user.id}_{uuid.uuid4()}"
+
+    payload = build_learning_route_mx_payload(
+        event_id=event_id,
+        event_type="USER_ACCESS_UPDATED",
+        user=user,
+        route=route,
+        subscription=subscription,
+        plan_value=route.selected_paid_plan or "free",
+    )
+
+    result = send_b2c_access_event_to_mx(
+        payload=payload,
+        user=user,
+        route=route,
+    )
+
+    if not result.get("ok"):
+        return JsonResponse(result, status=400)
+
+    magic_link = result.get("magicLink") or result.get("response", {}).get("magicLink")
+    mx_user_id = result.get("mxUserId") or result.get("response", {}).get("mxUserId")
+
+    route.mx_magic_link = magic_link
+    route.mx_user_id = mx_user_id or route.mx_user_id
+    route.mx_status = result.get("status") or "APPLIED"
+    route.mx_response = result
+    route.save(update_fields=[
+        "mx_magic_link",
+        "mx_user_id",
+        "mx_status",
+        "mx_response",
+        "updated_at",
+    ])
+
+    return JsonResponse({
+        "ok": True,
+        "data": {
+            "magic_link": magic_link,
+            "mx_user_id": route.mx_user_id,
+            "mx_status": route.mx_status,
+        },
+    })
+
 @require_GET
 @csrf_exempt
 def stripe_sync_session(request):
