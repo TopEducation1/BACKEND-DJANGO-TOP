@@ -4197,13 +4197,27 @@ def auth_logout(request):
     logout(request)
     return JsonResponse({"ok": True})
 
-
 @api_login_required
 def account_me(request):
     u = request.user
 
     billing = UserBillingProfile.objects.filter(user=u).first()
-    sub = StripeSubscription.objects.filter(user=u).order_by("-updated_at").first()
+    sub = (
+        StripeSubscription.objects
+        .filter(user=u)
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+
+    route = (
+        LearningRouteLead.objects
+        .filter(user=u)
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+
+    selected_plan = getattr(route, "selected_plan", None) or "free"
+    selected_paid_plan = getattr(route, "selected_paid_plan", None) or None
 
     return JsonResponse({
         "ok": True,
@@ -4211,15 +4225,50 @@ def account_me(request):
             "id": u.id,
             "email": u.email,
             "full_name": u.get_full_name() or u.username,
+
             "stripe_customer_id": getattr(billing, "stripe_customer_id", None),
+            "stripe_subscription_id": getattr(sub, "stripe_subscription_id", None),
+
             "subscription_status": getattr(sub, "status", None),
-            "plan": getattr(sub, "interval", None),
+            "selected_plan": selected_plan,
+            "selected_paid_plan": selected_paid_plan,
+            "billing_variant": selected_paid_plan,
+            "interval": getattr(sub, "interval", None),
             "price_id": getattr(sub, "price_id", None),
-            "current_period_end": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
+
+            "current_period_end": (
+                sub.current_period_end.isoformat()
+                if sub and sub.current_period_end else None
+            ),
             "cancel_at_period_end": bool(sub.cancel_at_period_end) if sub else False,
+
+            "trial_start": (
+                route.trial_start.isoformat()
+                if route and getattr(route, "trial_start", None) else None
+            ),
+            "trial_end": (
+                route.trial_end.isoformat()
+                if route and getattr(route, "trial_end", None) else None
+            ),
+
+            "mx_status": getattr(route, "mx_status", None),
+            "mx_user_id": getattr(route, "mx_user_id", None),
+            "mx_magic_link": getattr(route, "mx_magic_link", None),
+
+            "mx_access_status": (
+                "RESTRICTED"
+                if getattr(sub, "status", None) in ["past_due", "unpaid", "canceled", "cancelled"]
+                else "ALLOWED"
+            ),
+            "lifecycle_status": (
+                "EXPIRED"
+                if getattr(sub, "status", None) in ["canceled", "cancelled"]
+                else str(getattr(sub, "status", "") or selected_plan).upper()
+            ),
+
+            "learning_streak_days": getattr(route, "learning_streak_days", 0) if route else 0,
         }
     })
-
 @api_login_required
 def account_purchases(request):
     qs = StripePurchase.objects.filter(user=request.user).order_by("-created_at")[:100]
@@ -5613,6 +5662,10 @@ class LearningRouteCreateView(APIView):
         first_name = (request.data.get("first_name") or "").strip()
         last_name = (request.data.get("last_name") or "").strip()
 
+        phone_country_code = (request.data.get("phone_country_code") or "").strip()
+        phone_number = (request.data.get("phone_number") or "").strip()
+        phone_e164 = (request.data.get("phone_e164") or "").strip()
+
         age = request.data.get("age")
         gender = (request.data.get("gender") or "").strip()
         country = (request.data.get("country") or "").strip()
@@ -5622,22 +5675,22 @@ class LearningRouteCreateView(APIView):
         recommended = request.data.get("recommended_certifications") or []
 
         if not email:
-            return Response(
-                {"error": "email es obligatorio"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "email es obligatorio"}, status=400)
 
         if not first_name:
-            return Response(
-                {"error": "first_name es obligatorio"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "first_name es obligatorio"}, status=400)
+
+        if not phone_country_code:
+            return Response({"error": "phone_country_code es obligatorio"}, status=400)
+
+        if not phone_number:
+            return Response({"error": "phone_number es obligatorio"}, status=400)
+
+        if not phone_e164:
+            phone_e164 = f"{phone_country_code}{''.join(filter(str.isdigit, phone_number))}"
 
         if not goal:
-            return Response(
-                {"error": "goal es obligatorio"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "goal es obligatorio"}, status=400)
 
         user = User.objects.filter(email=email).first()
 
@@ -5646,19 +5699,16 @@ class LearningRouteCreateView(APIView):
             email=email,
             first_name=first_name,
             last_name=last_name,
-
-            # nuevos campos
+            phone_country_code=phone_country_code,
+            phone_number=phone_number,
+            phone_e164=phone_e164,
             age=age,
             gender=gender,
             country=country,
-
             topics=topics,
             goal=goal,
             recommended_certifications=recommended,
-
             status="route_created",
-
-            # para MX posteriormente
             mx_status="pending",
             mx_response=None,
         )
@@ -5669,11 +5719,14 @@ class LearningRouteCreateView(APIView):
                 "email": route.email,
                 "first_name": route.first_name,
                 "last_name": route.last_name,
+                "phone_country_code": route.phone_country_code,
+                "phone_number": route.phone_number,
+                "phone_e164": route.phone_e164,
                 "status": route.status,
             },
-            status=status.HTTP_201_CREATED,
+            status=201,
         )
-
+    
 class LearningRouteFreeSignupView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -6816,6 +6869,9 @@ def build_learning_route_mx_payload(
             "emailNormalized": user.email.lower(),
             "name": user.first_name or route.first_name or "",
             "lastName": user.last_name or route.last_name or "",
+            "phoneCountryCode": route.phone_country_code,
+            "phoneNumber": route.phone_number,
+            "phoneE164": route.phone_e164,
             "age": route.age,
             "gender": route.gender,
             "country": route.country or "Colombia",

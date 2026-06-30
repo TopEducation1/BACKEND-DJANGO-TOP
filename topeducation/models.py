@@ -674,7 +674,10 @@ class LearningRouteLead(models.Model):
     email = models.EmailField(db_index=True)
     first_name = models.CharField(max_length=120)
     last_name = models.CharField(max_length=120, blank=True, null=True)
-
+    phone_country_code = models.CharField(max_length=10, blank=True, null=True)
+    phone_number = models.CharField(max_length=30, blank=True, null=True)
+    phone_e164 = models.CharField(max_length=40, blank=True, null=True)
+    
     topics = models.JSONField(default=list)
     goal = models.CharField(max_length=150)
     age = models.IntegerField( null=True, blank=True,)
