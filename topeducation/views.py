@@ -4553,6 +4553,7 @@ def mx_magic_link_refresh(request):
 
     if request.method != "POST":
         return JsonResponse({"ok": False, "error": "method_not_allowed"}, status=405)
+
     user = request.user
 
     route = (
@@ -4581,6 +4582,15 @@ def mx_magic_link_refresh(request):
             "message": "Tu acceso está inactivo o suspendido.",
         }, status=403)
 
+    plan_value = (
+        getattr(route, "selected_paid_plan", None)
+        or (
+            f"{subscription.interval}_{route.selected_plan}"
+            if subscription and route.selected_plan != "free"
+            else "free"
+        )
+    )
+
     event_id = f"evt_col_magic_refresh_route_{route.id}_user_{user.id}_{uuid.uuid4()}"
 
     payload = build_learning_route_mx_payload(
@@ -4589,7 +4599,7 @@ def mx_magic_link_refresh(request):
         user=user,
         route=route,
         subscription=subscription,
-        plan_value=route.selected_plan or "free",
+        plan_value=plan_value,
     )
 
     result = send_b2c_access_event_to_mx(
@@ -4608,6 +4618,7 @@ def mx_magic_link_refresh(request):
     route.mx_user_id = mx_user_id or route.mx_user_id
     route.mx_status = result.get("status") or "APPLIED"
     route.mx_response = result
+
     route.save(update_fields=[
         "mx_magic_link",
         "mx_user_id",
