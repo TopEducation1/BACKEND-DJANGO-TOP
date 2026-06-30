@@ -4589,7 +4589,7 @@ def mx_magic_link_refresh(request):
         user=user,
         route=route,
         subscription=subscription,
-        plan_value=route.selected_paid_plan or "free",
+        plan_value=route.selected_plan or "free",
     )
 
     result = send_b2c_access_event_to_mx(
