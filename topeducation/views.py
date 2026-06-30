@@ -4320,22 +4320,58 @@ def auth_register(request):
         }
     })
 
-
 @csrf_exempt
 @require_POST
 def auth_login(request):
     body = json.loads(request.body or "{}")
-    email = body.get("email")
-    password = body.get("password")
 
-    user = authenticate(request, username=email, password=password)  # depende de tu auth
+    identifier = (body.get("email") or "").strip()
+    password = body.get("password", "")
+
+    if not identifier or not password:
+        return JsonResponse(
+            {"ok": False, "error": "missing_credentials"},
+            status=400
+        )
+
+    # Buscar primero por email
+    user_obj = User.objects.filter(email__iexact=identifier).first()
+
+    # Si no existe, buscar por username
+    if not user_obj:
+        user_obj = User.objects.filter(username__iexact=identifier).first()
+
+    if not user_obj:
+        return JsonResponse(
+            {"ok": False, "error": "invalid_credentials"},
+            status=400
+        )
+
+    # Django autentica usando el username
+    user = authenticate(
+        request,
+        username=user_obj.username,
+        password=password
+    )
+
     if not user:
-        return JsonResponse({"ok": False, "error": "invalid_credentials"}, status=400)
+        return JsonResponse(
+            {"ok": False, "error": "invalid_credentials"},
+            status=400
+        )
 
-    login(request, user)  # ✅ esto crea sessionid
-    return JsonResponse({"ok": True})
+    login(request, user)
 
-
+    return JsonResponse({
+        "ok": True,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+        }
+    })
 
 @csrf_exempt
 @require_POST
