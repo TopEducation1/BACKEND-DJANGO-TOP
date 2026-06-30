@@ -3775,86 +3775,144 @@ def stripe_webhook(request):
         print("❌ Stripe signature error:", str(e))
         return HttpResponse(status=400)
 
-    event_id = event.get("id")
-    event_type = event.get("type")
+    stripe_event_id = event.get("id")
+    stripe_event_type = event.get("type")
     obj = (event.get("data") or {}).get("object") or {}
 
-    def send_to_mx_safe(current_obj, user=None):
-        stripe_event_id = event.get("id")
+    def get_user_from_customer(customer_id):
+        if not customer_id:
+            return None
 
-        is_subscription_event = str(event_type or "").startswith("customer.subscription")
-        is_invoice_event = str(event_type or "").startswith("invoice.")
-
-        subscription_id = (
-            current_obj.get("id")
-            if is_subscription_event
-            else current_obj.get("subscription")
+        profile = (
+            UserBillingProfile.objects
+            .filter(stripe_customer_id=customer_id)
+            .select_related("user")
+            .first()
         )
 
-        customer_id = current_obj.get("customer")
-        invoice_id = current_obj.get("id") if is_invoice_event else None
+        return profile.user if profile else None
+
+    def get_route_for_user(user):
+        if not user:
+            return None
+
+        return (
+            LearningRouteLead.objects
+            .filter(user=user)
+            .order_by("-updated_at", "-id")
+            .first()
+        )
+
+    def get_subscription_for_user(user, subscription_id=None):
+        qs = StripeSubscription.objects.filter(user=user)
+
+        if subscription_id:
+            found = qs.filter(stripe_subscription_id=subscription_id).first()
+            if found:
+                return found
+
+        return qs.order_by("-updated_at", "-id").first()
+
+    def build_plan_value(route, subscription):
+        if route and getattr(route, "selected_paid_plan", None):
+            return route.selected_paid_plan
+
+        if route and route.selected_plan and subscription and subscription.interval:
+            if route.selected_plan == "free":
+                return "free"
+            return f"{subscription.interval}_{route.selected_plan}"
+
+        return "free"
+
+    def send_access_event_to_mx_safe(
+        *,
+        user,
+        route,
+        subscription,
+        mx_event_type,
+        lifecycle_status,
+        access_status,
+        pending_action="NONE",
+    ):
+        if not user or not route:
+            print("⚠️ No se envía a MX: falta user o route")
+            return None
 
         try:
-            response = _send_current_stripe_event_to_mx(
-                event=event,
-                event_type=event_type,
-                obj=current_obj,
-                user=user,
+            event_id = (
+                f"evt_col_stripe_{mx_event_type.lower()}_"
+                f"route_{route.id}_user_{user.id}_{stripe_event_id or uuid.uuid4()}"
             )
 
-            try:
-                MxAccessEventLog.objects.create(
-                    user=user,
-                    stripe_event_id=stripe_event_id,
-                    stripe_customer_id=customer_id,
-                    stripe_subscription_id=subscription_id,
-                    stripe_invoice_id=invoice_id,
-                    event_type=event_type,
-                    event_source="stripe",
-                    payload_json=dict(event),
-                    response_json=response if isinstance(response, dict) else {"response": str(response)},
-                    send_status="sent",
-                    attempts=1,
-                    sent_at=timezone.now(),
-                )
-            except IntegrityError:
-                print("⚠️ Evento Stripe ya registrado:", stripe_event_id)
+            plan_value = build_plan_value(route, subscription)
+
+            payload = build_learning_route_mx_payload(
+                event_id=event_id,
+                event_type=mx_event_type,
+                user=user,
+                route=route,
+                subscription=subscription,
+                plan_value=plan_value,
+                lifecycle_status_override=lifecycle_status,
+                access_status_override=access_status,
+                pending_action_override=pending_action,
+            )
+
+            mx_result = send_b2c_access_event_to_mx(
+                payload=payload,
+                user=user,
+                route=route,
+            )
+
+            route.mx_status = mx_result.get("status") or route.mx_status
+            route.mx_response = mx_result
+
+            magic_link = (
+                mx_result.get("magicLink")
+                or mx_result.get("response", {}).get("magicLink")
+            )
+
+            mx_user_id = (
+                mx_result.get("mxUserId")
+                or mx_result.get("response", {}).get("mxUserId")
+            )
+
+            if magic_link:
+                route.mx_magic_link = magic_link
+
+            if mx_user_id:
+                route.mx_user_id = mx_user_id
+
+            route.save(
+                update_fields=[
+                    "mx_status",
+                    "mx_response",
+                    "mx_magic_link",
+                    "mx_user_id",
+                    "updated_at",
+                ]
+            )
+
+            print("✅ Evento enviado a MX:", mx_event_type, mx_result.get("status"))
+            return mx_result
 
         except Exception as e:
-            print("⚠️ Error enviando evento a MX:", str(e))
+            print("⚠️ Error enviando evento de acceso a MX:", str(e))
+            return {
+                "ok": False,
+                "error": str(e),
+                "status": "RETRYABLE_ERROR",
+            }
 
-            try:
-                MxAccessEventLog.objects.create(
-                    user=user,
-                    stripe_event_id=stripe_event_id,
-                    stripe_customer_id=customer_id,
-                    stripe_subscription_id=subscription_id,
-                    stripe_invoice_id=invoice_id,
-                    event_type=event_type,
-                    event_source="stripe",
-                    payload_json=dict(event),
-                    response_json={"error": str(e)},
-                    send_status="failed",
-                    attempts=1,
-                    last_error=str(e),
-                )
-            except IntegrityError:
-                print("⚠️ Evento Stripe ya registrado con error:", stripe_event_id)
     # --------------------------------------------
     # A) checkout.session.completed
+    # Mantener por compatibilidad si aún llega algún checkout viejo.
     # --------------------------------------------
-    if event_type == "checkout.session.completed":
+    if stripe_event_type == "checkout.session.completed":
         session = obj
         session_id = session.get("id")
 
         user = _find_user_from_session(session)
-
-        print("session.id:", session_id)
-        print("client_reference_id:", session.get("client_reference_id"))
-        print("metadata:", session.get("metadata"))
-        print("customer_details:", session.get("customer_details"))
-        print("customer_email:", session.get("customer_email"))
-        print("found user:", user.id if user else None)
 
         if not user:
             return HttpResponse(status=200)
@@ -3885,30 +3943,23 @@ def stripe_webhook(request):
         if subscription_id:
             _upsert_subscription(user, subscription_id)
 
-        send_to_mx_safe(session, user=user)
-
         return HttpResponse(status=200)
 
     # --------------------------------------------
-    # B) invoice paid / payment succeeded
+    # B) invoice.paid / invoice.payment_succeeded
+    # Pago exitoso o renovación exitosa.
+    # MX: USER_ACCESS_UPDATED / ACTIVE / ALLOWED / NONE
     # --------------------------------------------
-    if event_type in ("invoice.paid", "invoice.payment_succeeded"):
+    if stripe_event_type in ("invoice.paid", "invoice.payment_succeeded"):
         invoice = obj
         invoice_id = invoice.get("id")
         customer_id = invoice.get("customer")
         subscription_id = invoice.get("subscription")
 
-        profile = (
-            UserBillingProfile.objects
-            .filter(stripe_customer_id=customer_id)
-            .select_related("user")
-            .first()
-        )
+        user = get_user_from_customer(customer_id)
 
-        if not profile:
+        if not user:
             return HttpResponse(status=200)
-
-        user = profile.user
 
         already_exists = (
             invoice_id and
@@ -3935,64 +3986,159 @@ def stripe_webhook(request):
         if subscription_id:
             _upsert_subscription(user, subscription_id)
 
-        send_to_mx_safe(invoice, user=user)
+        route = get_route_for_user(user)
+        subscription = get_subscription_for_user(user, subscription_id)
+
+        if route:
+            route.status = "active"
+            route.save(update_fields=["status", "updated_at"])
+
+        send_access_event_to_mx_safe(
+            user=user,
+            route=route,
+            subscription=subscription,
+            mx_event_type="USER_ACCESS_UPDATED",
+            lifecycle_status="ACTIVE",
+            access_status="ALLOWED",
+            pending_action="NONE",
+        )
 
         return HttpResponse(status=200)
 
     # --------------------------------------------
     # C) invoice.payment_failed
+    # Pago fallido.
+    # MX: USER_ACCESS_UPDATED / PAST_DUE / RESTRICTED / NONE
     # --------------------------------------------
-    if event_type == "invoice.payment_failed":
+    if stripe_event_type == "invoice.payment_failed":
         invoice = obj
         customer_id = invoice.get("customer")
         subscription_id = invoice.get("subscription")
 
-        profile = (
-            UserBillingProfile.objects
-            .filter(stripe_customer_id=customer_id)
-            .select_related("user")
-            .first()
-        )
+        user = get_user_from_customer(customer_id)
 
-        if not profile:
+        if not user:
             return HttpResponse(status=200)
-
-        user = profile.user
 
         if subscription_id:
             _upsert_subscription(user, subscription_id)
 
-        send_to_mx_safe(invoice, user=user)
+        route = get_route_for_user(user)
+        subscription = get_subscription_for_user(user, subscription_id)
+
+        if route:
+            route.status = "past_due"
+            route.save(update_fields=["status", "updated_at"])
+
+        send_access_event_to_mx_safe(
+            user=user,
+            route=route,
+            subscription=subscription,
+            mx_event_type="USER_ACCESS_UPDATED",
+            lifecycle_status="PAST_DUE",
+            access_status="RESTRICTED",
+            pending_action="NONE",
+        )
 
         return HttpResponse(status=200)
 
     # --------------------------------------------
-    # D) subscription updated / deleted
+    # D) customer.subscription.updated
+    # Si cancel_at_period_end=True, NO se revoca.
+    # MX: USER_ACCESS_UPDATED / ACTIVE|TRIALING / ALLOWED / CANCEL_AT_PERIOD_END
     # --------------------------------------------
-    if event_type in (
-        "customer.subscription.updated",
-        "customer.subscription.deleted",
-    ):
+    if stripe_event_type == "customer.subscription.updated":
         sub_obj = obj
         subscription_id = sub_obj.get("id")
         customer_id = sub_obj.get("customer")
+        status_raw = str(sub_obj.get("status") or "").lower()
+        cancel_at_period_end = bool(sub_obj.get("cancel_at_period_end", False))
 
-        profile = (
-            UserBillingProfile.objects
-            .filter(stripe_customer_id=customer_id)
-            .select_related("user")
-            .first()
-        )
+        user = get_user_from_customer(customer_id)
 
-        if not profile:
+        if not user:
             return HttpResponse(status=200)
-
-        user = profile.user
 
         if subscription_id:
             _upsert_subscription(user, subscription_id)
 
-        send_to_mx_safe(sub_obj, user=user)
+        route = get_route_for_user(user)
+        subscription = get_subscription_for_user(user, subscription_id)
+
+        if route:
+            route.status = (
+                "cancel_at_period_end"
+                if cancel_at_period_end
+                else status_raw or route.status
+            )
+            route.save(update_fields=["status", "updated_at"])
+
+        if status_raw == "trialing":
+            lifecycle_status = "TRIALING"
+            access_status = "ALLOWED"
+        elif status_raw in ["active"]:
+            lifecycle_status = "ACTIVE"
+            access_status = "ALLOWED"
+        elif status_raw in ["past_due", "unpaid"]:
+            lifecycle_status = "PAST_DUE"
+            access_status = "RESTRICTED"
+        elif status_raw in ["canceled", "cancelled"]:
+            lifecycle_status = "EXPIRED"
+            access_status = "RESTRICTED"
+        else:
+            lifecycle_status = "ACTIVE"
+            access_status = "ALLOWED"
+
+        send_access_event_to_mx_safe(
+            user=user,
+            route=route,
+            subscription=subscription,
+            mx_event_type="USER_ACCESS_UPDATED",
+            lifecycle_status=lifecycle_status,
+            access_status=access_status,
+            pending_action=(
+                "CANCEL_AT_PERIOD_END"
+                if cancel_at_period_end and access_status == "ALLOWED"
+                else "NONE"
+            ),
+        )
+
+        return HttpResponse(status=200)
+
+    # --------------------------------------------
+    # E) customer.subscription.deleted
+    # La suscripción ya terminó realmente.
+    # MX: USER_ACCESS_EXPIRED / EXPIRED / RESTRICTED / NONE
+    # --------------------------------------------
+    if stripe_event_type == "customer.subscription.deleted":
+        sub_obj = obj
+        subscription_id = sub_obj.get("id")
+        customer_id = sub_obj.get("customer")
+
+        user = get_user_from_customer(customer_id)
+
+        if not user:
+            return HttpResponse(status=200)
+
+        if subscription_id:
+            _upsert_subscription(user, subscription_id)
+
+        route = get_route_for_user(user)
+        subscription = get_subscription_for_user(user, subscription_id)
+
+        if route:
+            route.status = "expired"
+            route.save(update_fields=["status", "updated_at"])
+
+        send_access_event_to_mx_safe(
+            user=user,
+            route=route,
+            subscription=subscription,
+            mx_event_type="USER_ACCESS_EXPIRED",
+            lifecycle_status="EXPIRED",
+            access_status="RESTRICTED",
+            pending_action="NONE",
+        )
 
         return HttpResponse(status=200)
 
@@ -5799,6 +5945,19 @@ class LearningRouteCreateView(APIView):
 
     def post(self, request):
         email = (request.data.get("email") or "").strip().lower()
+        existing_user = User.objects.filter(email__iexact=email).first()
+
+        if existing_user:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "email_already_registered",
+                    "message": "Ya existe una cuenta con este correo.",
+                    "redirect": "/login",
+                    "email": email,
+                },
+                status=409,
+            )
         first_name = (request.data.get("first_name") or "").strip()
         last_name = (request.data.get("last_name") or "").strip()
 
@@ -6568,7 +6727,6 @@ def billing_subscription_create(request):
     })
 
 #ENVIO INFORMACIÓN STRIPE MEXICO
-
 @require_POST
 @csrf_exempt
 @login_required
@@ -6602,6 +6760,19 @@ def billing_subscription_cancel(request):
             status=400,
         )
 
+    route = (
+        LearningRouteLead.objects
+        .filter(user=request.user)
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+
+    if not route:
+        return JsonResponse(
+            {"ok": False, "error": "learning_route_not_found"},
+            status=404,
+        )
+
     try:
         stripe_subscription = stripe.Subscription.modify(
             subscription.stripe_subscription_id,
@@ -6613,26 +6784,94 @@ def billing_subscription_cancel(request):
             },
         )
 
+        current_period_end = (
+            timezone.datetime.fromtimestamp(
+                stripe_subscription.get("current_period_end"),
+                tz=timezone.get_current_timezone(),
+            )
+            if stripe_subscription.get("current_period_end")
+            else subscription.current_period_end
+        )
+
         subscription.cancel_at_period_end = True
         subscription.status = stripe_subscription.get("status") or subscription.status
-        subscription.current_period_end = timezone.datetime.fromtimestamp(
-            stripe_subscription.get("current_period_end"),
-            tz=timezone.get_current_timezone(),
-        ) if stripe_subscription.get("current_period_end") else subscription.current_period_end
+        subscription.current_period_end = current_period_end
 
         subscription.save(
             update_fields=[
                 "cancel_at_period_end",
                 "status",
                 "current_period_end",
+                "updated_at",
+            ]
+        )
+
+        route.status = "cancel_at_period_end"
+        route.save(update_fields=["status", "updated_at"])
+
+        plan_value = (
+            getattr(route, "selected_paid_plan", None)
+            or f"{subscription.interval}_{route.selected_plan}"
+            or "monthly_x"
+        )
+
+        event_id = (
+            f"evt_col_cancel_at_period_end_"
+            f"route_{route.id}_user_{request.user.id}_{uuid.uuid4()}"
+        )
+
+        payload = build_learning_route_mx_payload(
+            event_id=event_id,
+            event_type="USER_ACCESS_UPDATED",
+            user=request.user,
+            route=route,
+            subscription=subscription,
+            plan_value=plan_value,
+            lifecycle_status_override="ACTIVE",
+            access_status_override="ALLOWED",
+            pending_action_override="CANCEL_AT_PERIOD_END",
+        )
+
+        mx_result = send_b2c_access_event_to_mx(
+            payload=payload,
+            user=request.user,
+            route=route,
+        )
+
+        route.mx_status = mx_result.get("status") or route.mx_status
+        route.mx_response = mx_result
+
+        magic_link = mx_result.get("magicLink") or mx_result.get("response", {}).get("magicLink")
+        mx_user_id = mx_result.get("mxUserId") or mx_result.get("response", {}).get("mxUserId")
+
+        if magic_link:
+            route.mx_magic_link = magic_link
+
+        if mx_user_id:
+            route.mx_user_id = mx_user_id
+
+        route.save(
+            update_fields=[
+                "mx_status",
+                "mx_response",
+                "mx_magic_link",
+                "mx_user_id",
+                "updated_at",
             ]
         )
 
         return JsonResponse({
             "ok": True,
-            "message": "subscription_will_cancel",
+            "message": "subscription_will_cancel_at_period_end",
             "cancel_at_period_end": True,
-            "current_period_end": subscription.current_period_end.isoformat() if subscription.current_period_end else None,
+            "current_period_end": (
+                subscription.current_period_end.isoformat()
+                if subscription.current_period_end
+                else None
+            ),
+            "mx_sent": bool(mx_result.get("ok")),
+            "mx_status": mx_result.get("status"),
+            "mx_response": mx_result,
         })
 
     except Exception as e:
@@ -6877,7 +7116,6 @@ def _get_plan_amount_cents(price_id=None, selected_plan=None, interval=None):
 
     return fallback.get((selected_plan, interval), 0)
 
-
 def build_learning_route_mx_payload(
     *,
     event_id,
@@ -6886,6 +7124,9 @@ def build_learning_route_mx_payload(
     route,
     subscription=None,
     plan_value="free",
+    lifecycle_status_override=None,
+    access_status_override=None,
+    pending_action_override=None,
 ):
     occurred_at = _mx_iso_now()
 
@@ -6925,12 +7166,24 @@ def build_learning_route_mx_payload(
             lifecycle_status = "TRIALING" if route.trial_start and route.trial_end else "ACTIVE"
             is_trial = lifecycle_status == "TRIALING"
 
-        access_status = "ALLOWED"
+        access_status = "RESTRICTED" if lifecycle_status in ["PAST_DUE", "CANCELLED", "EXPIRED"] else "ALLOWED"
+
         pending_action = (
             "CANCEL_AT_PERIOD_END"
             if subscription and subscription.cancel_at_period_end
             else "NONE"
         )
+
+    if lifecycle_status_override:
+        lifecycle_status = lifecycle_status_override
+
+    if access_status_override:
+        access_status = access_status_override
+
+    if pending_action_override:
+        pending_action = pending_action_override
+
+    is_trial = lifecycle_status == "TRIALING"
 
     trial_start = route.trial_start
     trial_end = route.trial_end or (
@@ -6988,7 +7241,6 @@ def build_learning_route_mx_payload(
     )
 
     stripe_customer_id = route.stripe_customer_id
-
     stripe_price_id = subscription.price_id if subscription else None
 
     current_period_end = (
