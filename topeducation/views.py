@@ -6944,6 +6944,32 @@ def billing_subscription_cancel(request):
             status=400,
         )
 
+@require_POST
+@csrf_exempt
+@login_required
+def billing_subscription_reactivate(request):
+    subscription = (
+        StripeSubscription.objects
+        .filter(user=request.user)
+        .exclude(status__in=["canceled", "cancelled"])
+        .order_by("-id")
+        .first()
+    )
+
+    if not subscription:
+        return JsonResponse({"ok": False, "error": "subscription_not_found"}, status=404)
+
+    stripe_subscription = stripe.Subscription.modify(
+        subscription.stripe_subscription_id,
+        cancel_at_period_end=False,
+    )
+
+    subscription.cancel_at_period_end = False
+    subscription.status = stripe_subscription.get("status") or subscription.status
+    subscription.save(update_fields=["cancel_at_period_end", "status", "updated_at"])
+
+    return JsonResponse({"ok": True})
+
 def _mx_iso_now():
     return (
         timezone.now()
