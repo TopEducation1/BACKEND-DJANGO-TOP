@@ -79,25 +79,29 @@ def admin_purchases_page(request):
 def inicio(request):
     return HttpResponse("<h1>Bienvenido a Top.Education</h1>")
 
+
+@login_required
 def dashboard(request):
-    certifications = Certificaciones.objects.count()
-    edx = Certificaciones.objects.filter(plataforma_certificacion=1).count()
-    coursera = Certificaciones.objects.filter(plataforma_certificacion=2).count()
-    masterclass = Certificaciones.objects.filter(plataforma_certificacion=3).count()
-    cursos = Certificaciones.objects.filter(tipo_certificacion="Curso").count()
-    especializaciones = Certificaciones.objects.filter(tipo_certificacion="Especialización").count()
+    cert_stats = Certificaciones.objects.aggregate(
+        certifications=Count("id"),
+        edx=Count("id", filter=Q(plataforma_certificacion_id=1)),
+        coursera=Count("id", filter=Q(plataforma_certificacion_id=2)),
+        masterclass=Count("id", filter=Q(plataforma_certificacion_id=3)),
+        cursos=Count("id", filter=Q(tipo_certificacion="Curso")),
+        especializaciones=Count("id", filter=Q(tipo_certificacion="Especialización")),
+    )
+
     posts = Blog.objects.count()
 
     return render(request, "pages/dashboard.html", {
-        "certifications": certifications,
-        "edx": edx,
-        "coursera": coursera,
-        "masterclass": masterclass,
-        "posts": posts,
-        "cursos": cursos,
-        "especializaciones": especializaciones,
+        "certifications": cert_stats["certifications"] or 0,
+        "edx": cert_stats["edx"] or 0,
+        "coursera": cert_stats["coursera"] or 0,
+        "masterclass": cert_stats["masterclass"] or 0,
+        "cursos": cert_stats["cursos"] or 0,
+        "especializaciones": cert_stats["especializaciones"] or 0,
+        "posts": posts or 0,
     })
-
 
 def signout(request):
     logout(request)

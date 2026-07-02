@@ -269,6 +269,10 @@ class Certificaciones(models.Model):
 
     class Meta:
         db_table = 'Certificaciones'
+        indexes = [
+            models.Index(fields=["tipo_certificacion"], name="cert_tipo_idx"),
+            models.Index(fields=["plataforma_certificacion"], name="cert_plat_idx"),
+        ]
 
 
 class Instructores(models.Model):
