@@ -227,51 +227,52 @@ def deletePost(request,post_id):
     messages.success(request, f'Blog eliminado correctamente!')
     return redirect('posts') 
 
+
 def certifications(request):
     q = (request.GET.get("q") or "").strip()
 
-    # per_page
     try:
         per_page = int(request.GET.get("per_page", 50))
     except (TypeError, ValueError):
         per_page = 50
+
     per_page = max(1, min(per_page, 200))
 
-    # page
     try:
         page_number = int(request.GET.get("page", 1))
     except (TypeError, ValueError):
         page_number = 1
 
-    qs = Certificaciones.objects.select_related("plataforma_certificacion", "tema_certificacion")
+    qs = (
+        Certificaciones.objects
+        .select_related("plataforma_certificacion", "tema_certificacion")
+        .only(
+            "id",
+            "nombre",
+            "slug",
+            "tiempo_certificacion",
+            "nivel_certificacion",
+            "tipo_certificacion",
+            "lenguaje_certificacion",
+            "fecha_creado_cert",
+            "plataforma_certificacion_id",
+            "tema_certificacion_id",
+            "plataforma_certificacion__nombre",
+            "tema_certificacion__nombre",
+        )
+        .order_by("-id")
+    )
 
-    # 🔎 búsqueda (ajusta campos si alguno es FK/choice)
     if q:
         qs = qs.filter(
             Q(nombre__icontains=q)
             | Q(slug__icontains=q)
             | Q(plataforma_certificacion__nombre__icontains=q)
             | Q(tema_certificacion__nombre__icontains=q)
-            # si estos campos son texto:
             | Q(nivel_certificacion__icontains=q)
             | Q(tipo_certificacion__icontains=q)
             | Q(lenguaje_certificacion__icontains=q)
-        )
-
-    # ⚡ optimiza campos usados en el template (incluye los FK ids)
-    qs = qs.only(
-        "id",
-        "nombre",
-        "slug",
-        "tiempo_certificacion",
-        "nivel_certificacion",
-        "lenguaje_certificacion",
-        "fecha_creado_cert",
-        "plataforma_certificacion_id",
-        "tema_certificacion_id",
-        "plataforma_certificacion__nombre",
-        "tema_certificacion__nombre",
-    ).order_by("-id")
+        ).distinct()
 
     paginator = Paginator(qs, per_page)
     page_obj = paginator.get_page(page_number)
@@ -279,20 +280,18 @@ def certifications(request):
     current = page_obj.number
     start_page = max(1, current - 3)
     end_page = min(paginator.num_pages, current + 3)
-    page_numbers = range(start_page, end_page + 1)
 
-    context = {
+    return render(request, "certifications/index.html", {
         "certifications": page_obj.object_list,
         "page_obj": page_obj,
         "paginator": paginator,
         "per_page": per_page,
-        "page_numbers": page_numbers,
+        "page_numbers": range(start_page, end_page + 1),
         "show_inicio": start_page > 1,
         "show_final": end_page < paginator.num_pages,
         "per_page_options": [25, 50, 100, 200],
         "q": q,
-    }
-    return render(request, "certifications/index.html", context)
+    })
 
 def createCertification(request):
     if request.method == 'GET':
