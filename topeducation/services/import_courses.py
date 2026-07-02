@@ -869,22 +869,27 @@ def _find_existing_certificacion(cert: dict, plat_fk=None, univ_fk=None, empresa
 
     qs_base = Certificaciones.objects.all()
 
+    # 1. Regla principal: id_interno
+    # Si existe id_interno, este manda sobre todo.
     if id_interno and _has_field(Certificaciones, "id_interno"):
-        obj = qs_base.filter(id_interno=id_interno).first()
+        obj = qs_base.filter(id_interno=id_interno).order_by("id").first()
         if obj:
             return obj
 
+        # Si viene id_interno y no existe, NO buscar por slug/url/nombre.
+        # Esto evita actualizar una certificación equivocada.
+        return None
+
+    # 2. Fallback solo para registros antiguos sin id_interno
     if url_original and url_original.lower() != "null":
-        obj = qs_base.filter(
-            url_certificacion_original=url_original
-        ).first()
+        obj = qs_base.filter(url_certificacion_original=url_original).order_by("id").first()
         if obj:
             return obj
 
     if nombre:
         slug = safe_slug_from_name(nombre)
         if slug:
-            obj = qs_base.filter(slug=slug).first()
+            obj = qs_base.filter(slug=slug).order_by("id").first()
             if obj:
                 return obj
 
@@ -900,7 +905,7 @@ def _find_existing_certificacion(cert: dict, plat_fk=None, univ_fk=None, empresa
         if empresa_fk is not None and _has_field(Certificaciones, "empresa_certificacion"):
             filters["empresa_certificacion"] = empresa_fk
 
-        return qs_base.filter(**filters).first()
+        return qs_base.filter(**filters).order_by("id").first()
 
     return None
 
@@ -927,8 +932,19 @@ def upsert_certificacion(cert: dict, univ_map: dict, plat_map: dict, reconciliat
 
     specialization_obj, _ = upsert_specialization(cert)
 
-    obj = _find_existing_certificacion(cert, plat_fk=plat_fk, univ_fk=univ_fk, empresa_fk=empresa_fk)
-    slug_value = build_unique_slug(Certificaciones, nombre, existing_obj=obj, max_length=500)
+    obj = _find_existing_certificacion(
+        cert,
+        plat_fk=plat_fk,
+        univ_fk=univ_fk,
+        empresa_fk=empresa_fk,
+    )
+
+    slug_value = build_unique_slug(
+        Certificaciones,
+        nombre,
+        existing_obj=obj,
+        max_length=500,
+    )
 
     merged_skill_names = _extract_skill_names_from_cert(cert)
     habilidades_value = ", ".join(merged_skill_names) if merged_skill_names else clean_habilidades(cert.get("habilidades_certificacion"))
