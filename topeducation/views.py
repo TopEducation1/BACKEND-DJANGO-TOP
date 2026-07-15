@@ -7578,6 +7578,9 @@ def build_learning_route_mx_payload(
 ):
     occurred_at = _mx_iso_now()
 
+    # =========================================================
+    # NORMALIZACIÓN DEL PLAN
+    # =========================================================
     plan_value = str(
         plan_value or "free"
     ).strip().lower()
@@ -7596,89 +7599,124 @@ def build_learning_route_mx_payload(
     ).strip().upper()
 
     selected_plan = str(
-        route.selected_plan or "free"
+        getattr(route, "selected_plan", None)
+        or "free"
     ).strip().lower()
 
-    is_free_plan = (
-        package_code == "TOP_EDUCATION_FREE"
+    # =========================================================
+    # CONFIGURACIÓN CONTRACTUAL POR PAQUETE
+    # =========================================================
+    plan_contracts = {
+        "TOP_EDUCATION_FREE": {
+            "tier": "FREE",
+            "billing_period": "MONTHLY",
+            "default_lifecycle_status": "FREE",
+            "default_access_status": "ALLOWED",
+            "default_pending_action": "NONE",
+            "is_paid": False,
+        },
+        "TOP_EDUCATION_X_MONTHLY": {
+            "tier": "X",
+            "billing_period": "MONTHLY",
+            "default_lifecycle_status": "TRIALING",
+            "default_access_status": "ALLOWED",
+            "default_pending_action": "NONE",
+            "is_paid": True,
+        },
+        "TOP_EDUCATION_X_ANNUAL": {
+            "tier": "X",
+            "billing_period": "ANNUAL",
+            "default_lifecycle_status": "TRIALING",
+            "default_access_status": "ALLOWED",
+            "default_pending_action": "NONE",
+            "is_paid": True,
+        },
+        "TOP_EDUCATION_PLUS_MONTHLY": {
+            "tier": "PLUS",
+            "billing_period": "MONTHLY",
+            "default_lifecycle_status": "TRIALING",
+            "default_access_status": "ALLOWED",
+            "default_pending_action": "NONE",
+            "is_paid": True,
+        },
+        "TOP_EDUCATION_PLUS_ANNUAL": {
+            "tier": "PLUS",
+            "billing_period": "ANNUAL",
+            "default_lifecycle_status": "TRIALING",
+            "default_access_status": "ALLOWED",
+            "default_pending_action": "NONE",
+            "is_paid": True,
+        },
+    }
+
+    plan_contract = plan_contracts.get(
+        package_code
+    )
+
+    if not plan_contract:
+        raise ValueError(
+            f"unsupported_mx_plan_contract_for_{package_code}"
+        )
+
+    tier = plan_contract["tier"]
+    billing_period = plan_contract["billing_period"]
+    is_paid_plan = plan_contract["is_paid"]
+
+    lifecycle_status = (
+        plan_contract["default_lifecycle_status"]
+    )
+
+    access_status = (
+        plan_contract["default_access_status"]
+    )
+
+    pending_action = (
+        plan_contract["default_pending_action"]
     )
 
     # =========================================================
-    # CONFIGURACIÓN DEL PLAN
+    # ESTADO DEL PLAN PAGO SEGÚN STRIPE
     # =========================================================
-    if is_free_plan:
-        tier = "FREE"
-
-        # IMPORTANTE:
-        # Para FREE no enviamos billingPeriod.
-        billing_period = None
-
-        lifecycle_status = "FREE"
-        access_status = "ALLOWED"
-        pending_action = "NONE"
-        is_trial = False
-
-    else:
-        tier = (
-            "PLUS"
-            if "PLUS" in package_code
-            else "X"
-        )
-
-        if package_code.endswith("_ANNUAL"):
-            billing_period = "ANNUAL"
-        elif package_code.endswith("_MONTHLY"):
-            billing_period = "MONTHLY"
-        else:
-            raise ValueError(
-                f"unsupported_billing_period_for_{package_code}"
-            )
-
+    if is_paid_plan:
         status_raw = str(
-            subscription.status
-            if subscription
-            else ""
+            getattr(subscription, "status", None)
+            or ""
         ).strip().lower()
 
         if status_raw == "trialing":
             lifecycle_status = "TRIALING"
-            is_trial = True
 
         elif status_raw in {
             "active",
             "paid",
         }:
             lifecycle_status = "ACTIVE"
-            is_trial = False
 
         elif status_raw in {
             "past_due",
             "unpaid",
         }:
             lifecycle_status = "PAST_DUE"
-            is_trial = False
 
         elif status_raw in {
             "canceled",
             "cancelled",
         }:
             lifecycle_status = "CANCELLED"
-            is_trial = False
+
+        elif status_raw == "expired":
+            lifecycle_status = "EXPIRED"
 
         else:
             has_trial_dates = bool(
-                route.trial_start
-                and route.trial_end
+                getattr(route, "trial_start", None)
+                and getattr(route, "trial_end", None)
             )
 
             lifecycle_status = (
                 "TRIALING"
                 if has_trial_dates
                 else "ACTIVE"
-            )
-
-            is_trial = (
-                lifecycle_status == "TRIALING"
             )
 
         access_status = (
@@ -7695,7 +7733,11 @@ def build_learning_route_mx_payload(
             "CANCEL_AT_PERIOD_END"
             if (
                 subscription
-                and subscription.cancel_at_period_end
+                and getattr(
+                    subscription,
+                    "cancel_at_period_end",
+                    False,
+                )
             )
             else "NONE"
         )
@@ -7722,44 +7764,81 @@ def build_learning_route_mx_payload(
         lifecycle_status == "TRIALING"
     )
 
-    trial_start = route.trial_start
+    # =========================================================
+    # FECHAS
+    # =========================================================
+    trial_start = getattr(
+        route,
+        "trial_start",
+        None,
+    )
+
+    route_trial_end = getattr(
+        route,
+        "trial_end",
+        None,
+    )
+
+    subscription_period_end = (
+        getattr(
+            subscription,
+            "current_period_end",
+            None,
+        )
+        if subscription
+        else None
+    )
 
     trial_end = (
-        route.trial_end
-        or (
-            subscription.current_period_end
-            if subscription
-            else None
-        )
+        route_trial_end
+        or subscription_period_end
     )
 
     # =========================================================
-    # CURSOS RECOMENDADOS
+    # RECOMENDACIONES
     # =========================================================
     recommended_courses = []
 
+    raw_recommendations = (
+        getattr(
+            route,
+            "recommended_certifications",
+            None,
+        )
+        or []
+    )
+
     for index, course in enumerate(
-        route.recommended_certifications or [],
+        raw_recommendations,
         start=1,
     ):
+        if not isinstance(course, dict):
+            continue
+
+        id_interno = (
+            course.get("idInterno")
+            or course.get("id_interno")
+            or course.get("idInternoMx")
+            or course.get("id_interno_mx")
+            or course.get("external_id")
+            or ""
+        )
+
+        colombia_certification_id = (
+            course.get("colombiaCertificationId")
+            or course.get("id")
+            or course.get("certification_id")
+        )
+
         recommended_courses.append(
             {
-                "idInterno": (
-                    course.get("idInterno")
-                    or course.get("id_interno")
-                    or course.get("idInternoMx")
-                    or course.get("id_interno_mx")
-                    or course.get("external_id")
-                    or str(course.get("id") or "")
+                "idInterno": str(
+                    id_interno
+                    or colombia_certification_id
+                    or ""
                 ),
                 "colombiaCertificationId": (
-                    course.get(
-                        "colombiaCertificationId"
-                    )
-                    or course.get("id")
-                    or course.get(
-                        "certification_id"
-                    )
+                    colombia_certification_id
                 ),
                 "title": (
                     course.get("title")
@@ -7795,42 +7874,125 @@ def build_learning_route_mx_payload(
         )
 
     # =========================================================
-    # BILLING / STRIPE
+    # STRIPE / BILLING
     # =========================================================
     stripe_subscription_id = (
-        subscription.stripe_subscription_id
+        getattr(
+            subscription,
+            "stripe_subscription_id",
+            None,
+        )
         if subscription
-        else route.stripe_subscription_id
+        else getattr(
+            route,
+            "stripe_subscription_id",
+            None,
+        )
     )
 
     stripe_customer_id = (
-        route.stripe_customer_id
+        getattr(
+            subscription,
+            "stripe_customer_id",
+            None,
+        )
+        if subscription
+        else None
+    ) or getattr(
+        route,
+        "stripe_customer_id",
+        None,
     )
 
     stripe_price_id = (
-        subscription.price_id
+        getattr(
+            subscription,
+            "price_id",
+            None,
+        )
+        if subscription
+        else None
+    )
+
+    stripe_payment_method_id = (
+        getattr(
+            subscription,
+            "stripe_payment_method_id",
+            None,
+        )
+        or getattr(
+            subscription,
+            "payment_method_id",
+            None,
+        )
+        if subscription
+        else None
+    )
+
+    subscription_status = (
+        getattr(
+            subscription,
+            "status",
+            None,
+        )
         if subscription
         else None
     )
 
     current_period_end = (
-        subscription.current_period_end
-        if (
-            subscription
-            and subscription.current_period_end
+        getattr(
+            subscription,
+            "current_period_end",
+            None,
         )
+        if subscription
         else None
     )
 
     # =========================================================
-    # PLAN PAYLOAD
+    # DATOS DEL USUARIO
+    # =========================================================
+    user_email = str(
+        getattr(user, "email", None)
+        or getattr(route, "email", None)
+        or ""
+    ).strip().lower()
+
+    if not user_email:
+        raise ValueError(
+            "missing_email_for_mx_payload"
+        )
+
+    first_name = str(
+        getattr(user, "first_name", None)
+        or getattr(route, "first_name", None)
+        or ""
+    ).strip()
+
+    last_name = str(
+        getattr(user, "last_name", None)
+        or getattr(route, "last_name", None)
+        or ""
+    ).strip()
+
+    # =========================================================
+    # PLAN
     # =========================================================
     plan_payload = {
         "packageCode": package_code,
+
+        # Importante para el contrato de MX.
+        "planCode": package_code,
+
         "tier": tier,
+
+        # FREE también debe enviarse como MONTHLY según la matriz.
+        "billingPeriod": billing_period,
+
         "accessStatus": access_status,
         "lifecycleStatus": lifecycle_status,
         "pendingAction": pending_action,
+
         "trial": {
             "isTrial": is_trial,
             "trialStart": (
@@ -7851,16 +8013,10 @@ def build_learning_route_mx_payload(
         },
     }
 
-    # Solo se incluye para planes pagos.
-    if billing_period:
-        plan_payload["billingPeriod"] = (
-            billing_period
-        )
-
     # =========================================================
     # PAYLOAD FINAL
     # =========================================================
-    return {
+    payload = {
         "schemaVersion": "1.0",
         "eventId": event_id,
         "eventType": event_type,
@@ -7871,40 +8027,62 @@ def build_learning_route_mx_payload(
         "occurredAt": occurred_at,
 
         "customer": {
-            "email": user.email,
-            "emailNormalized": (
-                user.email.strip().lower()
+            "email": user_email,
+            "emailNormalized": user_email,
+            "name": first_name,
+            "lastName": last_name,
+            "phoneCountryCode": getattr(
+                route,
+                "phone_country_code",
+                None,
             ),
-            "name": (
-                user.first_name
-                or route.first_name
-                or ""
+            "phoneNumber": getattr(
+                route,
+                "phone_number",
+                None,
             ),
-            "lastName": (
-                user.last_name
-                or route.last_name
-                or ""
+            "phoneE164": getattr(
+                route,
+                "phone_e164",
+                None,
             ),
-            "phoneCountryCode": (
-                route.phone_country_code
+            "age": getattr(
+                route,
+                "age",
+                None,
             ),
-            "phoneNumber": (
-                route.phone_number
+            "gender": getattr(
+                route,
+                "gender",
+                None,
             ),
-            "phoneE164": (
-                route.phone_e164
-            ),
-            "age": route.age,
-            "gender": route.gender,
             "country": (
-                route.country
+                getattr(
+                    route,
+                    "country",
+                    None,
+                )
                 or "Colombia"
             ),
         },
 
         "learningProfile": {
-            "topics": route.topics or [],
-            "goal": route.goal or "",
+            "topics": (
+                getattr(
+                    route,
+                    "topics",
+                    None,
+                )
+                or []
+            ),
+            "goal": (
+                getattr(
+                    route,
+                    "goal",
+                    None,
+                )
+                or ""
+            ),
         },
 
         "recommendedCourses": (
@@ -7921,11 +8099,14 @@ def build_learning_route_mx_payload(
             "stripeSubscriptionId": (
                 stripe_subscription_id
             ),
-            "stripePaymentMethodId": None,
+            "stripePaymentMethodId": (
+                stripe_payment_method_id
+            ),
             "status": (
-                subscription.status
-                if subscription
-                else None
+                "free"
+                if package_code
+                == "TOP_EDUCATION_FREE"
+                else subscription_status
             ),
             "currentPeriodEnd": (
                 current_period_end.isoformat()
@@ -7954,6 +8135,8 @@ def build_learning_route_mx_payload(
             "colombiaUserId": user.id,
         },
     }
+
+    return payload
 
 def send_b2c_access_event_to_mx(*, payload, user=None, route=None):
     event_id = payload["eventId"]
