@@ -1021,6 +1021,145 @@ class PersonalizedRecommendationSerializer(serializers.ModelSerializer):
             "tiempo_certificacion",
         ]
 
+class PersonalizedLeadRecommendationSerializer(
+    serializers.ModelSerializer
+):
+    id_interno = serializers.CharField(
+        read_only=True,
+        allow_null=True,
+        default="",
+    )
+
+    platform_id = serializers.IntegerField(
+        source="plataforma_certificacion_id",
+        read_only=True,
+        allow_null=True,
+    )
+
+    provider = serializers.SerializerMethodField()
+    platform_logo = serializers.SerializerMethodField()
+
+    universidad_nombre = serializers.SerializerMethodField()
+    empresa_nombre = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Certificaciones
+
+        fields = [
+            "id",
+            "id_interno",
+            "slug",
+            "nombre",
+            "imagen_final",
+            "nivel_certificacion",
+            "tiempo_certificacion",
+
+            # Plataforma
+            "platform_id",
+            "provider",
+            "platform_logo",
+
+            # Institución
+            "universidad_nombre",
+            "empresa_nombre",
+        ]
+
+    def get_provider(self, obj):
+        platform = getattr(
+            obj,
+            "plataforma_certificacion",
+            None,
+        )
+
+        if not platform:
+            return ""
+
+        return str(
+            getattr(platform, "nombre", "") or ""
+        ).strip()
+
+    def get_platform_logo(self, obj):
+        """
+        plat_ico es un campo texto.
+
+        Devolvemos la ruta prácticamente igual a como está en BD.
+        No utilizamos request.build_absolute_uri porque los assets
+        pueden pertenecer al frontend y no al servidor Django.
+        """
+
+        platform = getattr(
+            obj,
+            "plataforma_certificacion",
+            None,
+        )
+
+        if not platform:
+            return ""
+
+        raw_logo = (
+            getattr(platform, "plat_ico", None)
+            or getattr(platform, "plat_img", None)
+            or ""
+        )
+
+        logo = str(raw_logo or "").strip()
+
+        if not logo:
+            return ""
+
+        if logo.lower() in {
+            "none",
+            "null",
+            "undefined",
+        }:
+            return ""
+
+        # Normalizar rutas guardadas desde Windows.
+        logo = logo.replace("\\", "/")
+
+        # Una URL externa se conserva.
+        if logo.startswith(("http://", "https://")):
+            return logo
+
+        # Ruta del public/assets del frontend.
+        if logo.startswith("assets/"):
+            return f"/{logo}"
+
+        # Ya es una ruta absoluta relativa al dominio.
+        if logo.startswith("/"):
+            return logo
+
+        # Cualquier otra ruta relativa.
+        return f"/{logo}"
+
+    def get_universidad_nombre(self, obj):
+        university = getattr(
+            obj,
+            "universidad_certificacion",
+            None,
+        )
+
+        if not university:
+            return ""
+
+        return str(
+            getattr(university, "nombre", "") or ""
+        ).strip()
+
+    def get_empresa_nombre(self, obj):
+        company = getattr(
+            obj,
+            "empresa_certificacion",
+            None,
+        )
+
+        if not company:
+            return ""
+
+        return str(
+            getattr(company, "nombre", "") or ""
+        ).strip()
+        
 class RankingEntrySerializer(serializers.ModelSerializer):
     universidad = UniversidadMiniSerializer(read_only=True)
     empresa = EmpresaMiniSerializer(read_only=True)

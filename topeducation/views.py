@@ -55,6 +55,10 @@ from .models import *
 from .serializers import *
 from .utils.auth import api_login_required
 
+from django.db import DatabaseError
+
+logger = logging.getLogger(__name__)
+
 from topeducation.inspectors.courses_inspector import fetch_and_parse_page
 from topeducation.models import ExternalSyncState
 from topeducation.services.import_courses import (
@@ -3587,6 +3591,62 @@ User = get_user_model()
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
+def get_or_create_user_from_learning_route(route, request):
+    email = (
+        getattr(route, "email", None)
+        or request.data.get("email")
+        or ""
+    )
+
+    email = str(email).strip().lower()
+
+    if not email:
+        return None, False, "missing_email"
+
+    user = (
+        User.objects
+        .filter(email__iexact=email)
+        .first()
+    )
+
+    if user:
+        return user, False, None
+
+    username = email
+
+    # Si tu modelo permite username duplicado o no utiliza username,
+    # puedes simplificar este bloque.
+    if hasattr(User, "username"):
+        base_username = email
+
+        counter = 1
+
+        while User.objects.filter(
+            username=username
+        ).exists():
+            username = f"{base_username}-{counter}"
+            counter += 1
+
+    user_data = {
+        "email": email,
+        "first_name": (
+            getattr(route, "first_name", None)
+            or request.data.get("first_name")
+            or ""
+        ),
+        "last_name": (
+            getattr(route, "last_name", None)
+            or request.data.get("last_name")
+            or ""
+        ),
+    }
+
+    if hasattr(User, "username"):
+        user_data["username"] = username
+
+    user = User.objects.create(**user_data)
+
+    return user, True, None
 def _ts_to_dt(ts):
     """Stripe timestamps (unix) -> datetime aware"""
     if not ts:
@@ -6155,17 +6215,26 @@ class LearningRouteCompleteSignupView(APIView):
     def post(self, request):
         route_id = request.data.get("route_id")
         password = request.data.get("password")
-        selected_plan = request.data.get("selected_plan") or "free"
+        selected_plan = (
+            request.data.get("selected_plan")
+            or "free"
+        )
 
         if not route_id:
             return Response(
-                {"ok": False, "error": "route_id requerido"},
+                {
+                    "ok": False,
+                    "error": "route_id requerido",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if not password:
             return Response(
-                {"ok": False, "error": "password requerido"},
+                {
+                    "ok": False,
+                    "error": "password requerido",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -6179,18 +6248,29 @@ class LearningRouteCompleteSignupView(APIView):
 
         if not route:
             return Response(
-                {"ok": False, "error": "ruta no encontrada"},
+                {
+                    "ok": False,
+                    "error": "ruta no encontrada",
+                },
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         user = route.user
 
         if not user:
-            user, _, error = _get_or_create_user_from_onboarding(request)
+            user, created, error = (
+                get_or_create_user_from_learning_route(
+                    route=route,
+                    request=request,
+                )
+            )
 
             if error:
                 return Response(
-                    {"ok": False, "error": error},
+                    {
+                        "ok": False,
+                        "error": error,
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -6198,38 +6278,68 @@ class LearningRouteCompleteSignupView(APIView):
 
         try:
             validate_password(password, user)
-        except ValidationError as e:
+        except ValidationError as error:
             return Response(
                 {
                     "ok": False,
                     "error": "password_invalido",
-                    "messages": e.messages,
+                    "messages": error.messages,
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         user.set_password(password)
         user.is_active = True
-        user.save(update_fields=["password", "is_active"])
 
-        # Login directo sin depender de username/email authenticate
+        update_fields = [
+            "password",
+            "is_active",
+        ]
+
+        # Asegura que el correo quede guardado.
+        route_email = str(
+            getattr(route, "email", "") or ""
+        ).strip().lower()
+
+        if route_email and not getattr(user, "email", None):
+            user.email = route_email
+            update_fields.append("email")
+
+        user.save(
+            update_fields=list(dict.fromkeys(update_fields))
+        )
+
         backend = get_backends()[0]
-        user.backend = f"{backend.__module__}.{backend.__class__.__name__}"
+        user.backend = (
+            f"{backend.__module__}."
+            f"{backend.__class__.__name__}"
+        )
+
         login(request, user)
 
-        subscription = (
-            StripeSubscription.objects
-            .filter(user=user)
-            .order_by("-id")
-            .first()
-        )
+        subscription = None
+
+        # Un plan gratuito no necesita buscar suscripción Stripe.
+        if selected_plan != "free":
+            subscription = (
+                StripeSubscription.objects
+                .filter(user=user)
+                .order_by("-id")
+                .first()
+            )
 
         route.selected_plan = selected_plan
         route.status = "account_pending_mx"
 
         if subscription:
-            route.stripe_subscription_id = subscription.stripe_subscription_id
-            route.trial_end = route.trial_end or subscription.current_period_end
+            route.stripe_subscription_id = (
+                subscription.stripe_subscription_id
+            )
+
+            route.trial_end = (
+                route.trial_end
+                or subscription.current_period_end
+            )
 
         route.save(
             update_fields=[
@@ -6245,12 +6355,18 @@ class LearningRouteCompleteSignupView(APIView):
         event_type = "USER_ACCESS_PROVISION"
 
         plan_value = (
-            selected_plan
+            "free"
             if selected_plan == "free"
-            else request.data.get("selected_paid_plan") or selected_plan
+            else (
+                request.data.get("selected_paid_plan")
+                or selected_plan
+            )
         )
 
-        event_id = f"evt_col_provision_route_{route.id}_user_{user.id}_{uuid.uuid4()}"
+        event_id = (
+            f"evt_col_provision_route_{route.id}"
+            f"_user_{user.id}_{uuid.uuid4()}"
+        )
 
         payload = build_learning_route_mx_payload(
             event_id=event_id,
@@ -6267,13 +6383,32 @@ class LearningRouteCompleteSignupView(APIView):
             route=route,
         )
 
-        route.mx_status = mx_result.get("status") or "unknown"
+        mx_status = str(
+            mx_result.get("status") or ""
+        ).strip().upper()
+
+        route.mx_status = mx_status or "UNKNOWN"
         route.mx_response = mx_result
 
-        if mx_result.get("magicLink"):
-            route.mx_magic_link = mx_result.get("magicLink")
+        magic_link = (
+            mx_result.get("magicLink")
+            or mx_result.get("magicLinkUrl")
+        )
 
-        route.status = "account_created" if mx_result.get("ok") else "mx_error"
+        if magic_link:
+            route.mx_magic_link = magic_link
+
+        if mx_status in ["APPLIED", "DUPLICATE"]:
+            route.status = "account_created"
+
+        elif mx_status == "RETRYABLE_ERROR":
+            route.status = "mx_retry_pending"
+
+        elif mx_status == "PERMANENT_ERROR":
+            route.status = "mx_permanent_error"
+
+        else:
+            route.status = "mx_unknown_error"
 
         route.save(
             update_fields=[
@@ -6291,31 +6426,31 @@ class LearningRouteCompleteSignupView(APIView):
             else "/account?tab=license"
         )
 
-        if not mx_result.get("ok"):
+        if route.mx_status not in ["APPLIED", "DUPLICATE"]:
             return Response(
                 {
-                    "ok": True,
-                    "warning": "mx_user_creation_failed",
+                    "ok": False,
                     "mx_sent": False,
                     "mx_status": route.mx_status,
                     "mx_response": mx_result,
                     "redirect": redirect_url,
                 },
-                status=status.HTTP_200_OK,
+                status=status.HTTP_400_BAD_REQUEST,
             )
-
+        
         return Response(
             {
                 "ok": True,
                 "user_id": user.id,
                 "route_id": route.id,
+                "selected_plan": selected_plan,
                 "mx_sent": True,
                 "mx_status": route.mx_status,
                 "mx_response": mx_result,
                 "redirect": redirect_url,
             },
             status=status.HTTP_200_OK,
-        )
+        )   
     
 def _json_body(request):
     try:
@@ -7501,22 +7636,28 @@ LEVEL_RULES = {
         "label": "Nivel 1",
         "subtitle": "Fundamentos",
         "badge": "DISPONIBLE",
-        "platform_ids": [2],  # Coursera
+        "platform_ids": [2],
         "nivel": "BEGINNER",
+        "limit": 3,
+        "one_per_platform": False,
     },
     "level_2": {
         "label": "Nivel 2",
         "subtitle": "Especialización",
         "badge": "PLAN X / PLUS",
-        "platform_ids": [1, 3],  # EdX + MasterClass
+        "platform_ids": [1, 3],
         "nivel": "INTERMEDIATE",
+        "limit": 3,
+        "one_per_platform": True,
     },
     "level_3": {
         "label": "Nivel 3",
         "subtitle": "Certificación",
         "badge": "PLAN PLUS",
-        "platform_ids": [1, 2, 3],  # EdX + Coursera + MasterClass
+        "platform_ids": [1, 2, 3],
         "nivel": "ADVANCED",
+        "limit": 3,
+        "one_per_platform": True,
     },
 }
 
@@ -7581,6 +7722,48 @@ def get_cert_platform_logo(cert):
         or ""
     )
 
+def get_recommendation_base_queryset():
+    return (
+        Certificaciones.objects
+        .filter(vigente_certificacion=True)
+        .exclude(nombre__isnull=True)
+        .exclude(nombre__exact="")
+        .select_related(
+            "plataforma_certificacion",
+            "universidad_certificacion",
+            "empresa_certificacion",
+        )
+        .only(
+            # Certificación
+            "id",
+            "id_interno",
+            "slug",
+            "nombre",
+            "imagen_final",
+            "nivel_certificacion",
+            "tiempo_certificacion",
+            "vigente_certificacion",
+
+            # Foreign keys
+            "plataforma_certificacion_id",
+            "universidad_certificacion_id",
+            "empresa_certificacion_id",
+
+            # Plataforma
+            "plataforma_certificacion__id",
+            "plataforma_certificacion__nombre",
+            "plataforma_certificacion__plat_ico",
+            "plataforma_certificacion__plat_img",
+
+            # Universidad
+            "universidad_certificacion__id",
+            "universidad_certificacion__nombre",
+
+            # Empresa
+            "empresa_certificacion__id",
+            "empresa_certificacion__nombre",
+        )
+    )
 
 def get_cert_main_skill(cert):
     skill = cert.skills.first()
@@ -7616,94 +7799,348 @@ def serialize_recommended_cert(request, cert):
     }
 
 
+
 def get_topic_skill_ids(topics):
-    if not topics:
+
+    if not isinstance(topics, (list, tuple)) or not topics:
         return []
 
-    clean_topics = [normalize_text(topic) for topic in topics if normalize_text(topic)]
+    clean_topics = []
+
+    for topic in topics:
+        clean_topic = normalize_text(topic)
+
+        if clean_topic and clean_topic not in clean_topics:
+            clean_topics.append(clean_topic)
 
     if not clean_topics:
         return []
 
-    query = Q()
+    exact_query = Q()
 
     for topic in clean_topics:
-        query |= Q(nombre__icontains=topic)
-        query |= Q(translate__icontains=topic)
-        query |= Q(slug__icontains=topic.replace(" ", "-"))
+        topic_slug = slugify(topic)
 
-    return list(
-        Skills.objects.filter(query, estado=True)
+        exact_query |= Q(nombre__iexact=topic)
+        exact_query |= Q(translate__iexact=topic)
+
+        if topic_slug:
+            exact_query |= Q(slug__iexact=topic_slug)
+
+    exact_ids = list(
+        Skills.objects.filter(
+            exact_query,
+            estado=True,
+        )
         .values_list("id", flat=True)
         .distinct()
     )
 
+    # Si todos los temas encontraron coincidencia exacta,
+    # devolvemos directamente los resultados.
+    if exact_ids:
+        matched_topic_names = set()
 
-def get_cert_ids_by_skills(skill_ids):
-    if not skill_ids:
+        matched_skills = Skills.objects.filter(
+            id__in=exact_ids,
+            estado=True,
+        ).values(
+            "nombre",
+            "translate",
+            "slug",
+        )
+
+        for skill in matched_skills:
+            values = {
+                normalize_text(skill.get("nombre")).lower(),
+                normalize_text(skill.get("translate")).lower(),
+                normalize_text(skill.get("slug")).lower(),
+            }
+
+            for topic in clean_topics:
+                normalized_topic = topic.lower()
+                topic_slug = slugify(topic).lower()
+
+                if normalized_topic in values or topic_slug in values:
+                    matched_topic_names.add(normalized_topic)
+
+        missing_topics = [
+            topic
+            for topic in clean_topics
+            if topic.lower() not in matched_topic_names
+        ]
+    else:
+        missing_topics = clean_topics
+
+    # Respaldo para temas cuyos nombres no coinciden exactamente
+    # con los registros almacenados en la base de datos.
+    fallback_query = Q()
+
+    for topic in missing_topics:
+        topic_slug = slugify(topic)
+
+        fallback_query |= Q(nombre__icontains=topic)
+        fallback_query |= Q(translate__icontains=topic)
+
+        if topic_slug:
+            fallback_query |= Q(slug__icontains=topic_slug)
+
+    fallback_ids = []
+
+    if missing_topics and fallback_query:
+        fallback_ids = list(
+            Skills.objects.filter(
+                fallback_query,
+                estado=True,
+            )
+            .values_list("id", flat=True)
+            .distinct()
+        )
+
+    return list(dict.fromkeys(exact_ids + fallback_ids))
+
+def get_valid_topic_skill_ids(topic_ids):
+    if not isinstance(topic_ids, (list, tuple)) or not topic_ids:
+        return []
+
+    clean_ids = []
+
+    for topic_id in topic_ids:
+        try:
+            topic_id = int(topic_id)
+        except (TypeError, ValueError):
+            continue
+
+        if topic_id > 0:
+            clean_ids.append(topic_id)
+
+    clean_ids = list(dict.fromkeys(clean_ids))
+
+    if not clean_ids:
         return []
 
     return list(
-        SkillsCertification.objects.filter(skill_id__in=skill_ids)
-        .values_list("certificacion_id", flat=True)
+        Skills.objects.filter(
+            id__in=clean_ids,
+            estado=True,
+        )
+        .values_list("id", flat=True)
+        .distinct()
+    )
+
+def get_cert_ids_by_skills(skill_ids):
+    if not skill_ids:
+        return (
+            SkillsCertification.objects
+            .none()
+            .values_list(
+                "certificacion_id",
+                flat=True,
+            )
+        )
+
+    return (
+        SkillsCertification.objects
+        .filter(skill_id__in=skill_ids)
+        .values_list(
+            "certificacion_id",
+            flat=True,
+        )
         .distinct()
     )
 
 
-def build_level_recommendations(request, cert_ids, rule):
-    base_qs = (
-        Certificaciones.objects
+def build_level_recommendations(request, cert_ids_queryset, rule):
+    platform_ids = list(rule.get("platform_ids") or [])
+    nivel = str(rule.get("nivel") or "").strip().upper()
+    limit = max(1, int(rule.get("limit") or 3))
+    one_per_platform = bool(rule.get("one_per_platform"))
+
+    if not platform_ids:
+        return []
+
+    base_queryset = (
+        get_recommendation_base_queryset()
         .filter(
-            plataforma_certificacion_id__in=rule["platform_ids"],
-            nivel_certificacion=rule["nivel"],
+            plataforma_certificacion_id__in=platform_ids,
         )
-        .select_related(
-            "plataforma_certificacion",
-            "universidad_certificacion",
-            "empresa_certificacion",
-        )
-        .order_by("?")
     )
 
-    if cert_ids:
-        matched_qs = base_qs.filter(id__in=cert_ids)
-    else:
-        matched_qs = base_qs
+    # =========================================================
+    # UNA CERTIFICACIÓN POR PLATAFORMA
+    # Niveles 2 y 3
+    # =========================================================
+    if one_per_platform:
+        selected = []
+        selected_ids = set()
 
-    selected = []
-    selected_ids = set()
+        # =========================================================
+        # PASO 1: garantizar al menos una por cada plataforma
+        # =========================================================
+        for platform_id in platform_ids:
+            platform_queryset = base_queryset.filter(
+                plataforma_certificacion_id=platform_id,
+            )
 
-    # 1. Intentar traer mínimo 1 por proveedor
-    for platform_id in rule["platform_ids"]:
-        cert = matched_qs.filter(plataforma_certificacion_id=platform_id).first()
+            if platform_id == 3:
+                level_queryset = platform_queryset.filter(
+                    Q(nivel_certificacion__iexact=nivel)
+                    | Q(nivel_certificacion__isnull=True)
+                    | Q(nivel_certificacion__exact="")
+                    | Q(nivel_certificacion__iexact="none")
+                    | Q(nivel_certificacion__iexact="uncategorized")
+                    | Q(nivel_certificacion__iexact="all levels")
+                    | Q(nivel_certificacion__iexact="mixed")
+                )
+            else:
+                level_queryset = platform_queryset.filter(
+                    nivel_certificacion__iexact=nivel,
+                )
 
-        if cert and cert.id not in selected_ids:
-            selected.append(cert)
-            selected_ids.add(cert.id)
+            if selected_ids:
+                level_queryset = level_queryset.exclude(
+                    id__in=selected_ids,
+                )
 
-        if len(selected) >= MAX_PER_LEVEL:
-            break
+            # Primera prioridad: coincide con los temas seleccionados.
+            certification = (
+                level_queryset
+                .filter(id__in=cert_ids_queryset)
+                .order_by("-id")
+                .first()
+            )
 
-    # 2. Completar hasta máximo 3
-    if len(selected) < MAX_PER_LEVEL:
-        extra_qs = matched_qs.exclude(id__in=selected_ids)[: MAX_PER_LEVEL - len(selected)]
+            # Segunda prioridad: misma plataforma y nivel.
+            if certification is None:
+                certification = (
+                    level_queryset
+                    .order_by("-id")
+                    .first()
+                )
 
-        for cert in extra_qs:
-          if cert.id not in selected_ids:
-              selected.append(cert)
-              selected_ids.add(cert.id)
+            # Fallback para MasterClass sin restringir nivel.
+            if certification is None and platform_id == 3:
+                masterclass_queryset = platform_queryset
 
-    # 3. Fallback si no hubo suficientes por temas seleccionados
-    if len(selected) < MAX_PER_LEVEL and cert_ids:
-        fallback_qs = base_qs.exclude(id__in=selected_ids)[: MAX_PER_LEVEL - len(selected)]
+                if selected_ids:
+                    masterclass_queryset = masterclass_queryset.exclude(
+                        id__in=selected_ids,
+                    )
 
-        for cert in fallback_qs:
-            if cert.id not in selected_ids:
-                selected.append(cert)
-                selected_ids.add(cert.id)
+                certification = (
+                    masterclass_queryset
+                    .filter(id__in=cert_ids_queryset)
+                    .order_by("-id")
+                    .first()
+                )
 
-    return [serialize_recommended_cert(request, cert) for cert in selected[:MAX_PER_LEVEL]]
+                if certification is None:
+                    certification = (
+                        masterclass_queryset
+                        .order_by("-id")
+                        .first()
+                    )
 
+            if certification is not None:
+                selected.append(certification)
+                selected_ids.add(certification.id)
+
+            if len(selected) >= limit:
+                break
+
+        # =========================================================
+        # PASO 2: completar hasta llegar al límite
+        # =========================================================
+        if len(selected) < limit:
+            missing = limit - len(selected)
+
+            completion_queryset = base_queryset
+
+            if selected_ids:
+                completion_queryset = completion_queryset.exclude(
+                    id__in=selected_ids,
+                )
+
+            # Prioridad: recomendaciones que coincidan con los temas.
+            matching_completion = list(
+                completion_queryset
+                .filter(id__in=cert_ids_queryset)
+                .order_by("-id")[:missing]
+            )
+
+            selected.extend(matching_completion)
+            selected_ids.update(
+                certification.id
+                for certification in matching_completion
+            )
+
+        # =========================================================
+        # PASO 3: último fallback si aún faltan resultados
+        # =========================================================
+        if len(selected) < limit:
+            missing = limit - len(selected)
+
+            fallback_queryset = base_queryset
+
+            if selected_ids:
+                fallback_queryset = fallback_queryset.exclude(
+                    id__in=selected_ids,
+                )
+
+            fallback_items = list(
+                fallback_queryset
+                .order_by("-id")[:missing]
+            )
+
+            selected.extend(fallback_items)
+
+        return PersonalizedLeadRecommendationSerializer(
+            selected[:limit],
+            many=True,
+            context={"request": request},
+        ).data
+
+    # =========================================================
+    # NIVEL 1
+    # Tres certificaciones de Coursera
+    # =========================================================
+    matched_queryset = (
+        base_queryset
+        .filter(
+            nivel_certificacion__iexact=nivel,
+            id__in=cert_ids_queryset,
+        )
+        .order_by("-id")
+    )
+
+    selected = list(matched_queryset[:limit])
+    selected_ids = {item.id for item in selected}
+
+    # Completar si los temas seleccionados no producen 3 resultados.
+    if len(selected) < limit:
+        missing = limit - len(selected)
+
+        fallback_queryset = base_queryset.filter(
+            nivel_certificacion__iexact=nivel,
+        )
+
+        if selected_ids:
+            fallback_queryset = fallback_queryset.exclude(
+                id__in=selected_ids,
+            )
+
+        selected.extend(
+            list(
+                fallback_queryset
+                .order_by("-id")[:missing]
+            )
+        )
+
+    return PersonalizedLeadRecommendationSerializer(
+        selected,
+        many=True,
+        context={"request": request},
+    ).data
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteRecommendationsAPIView(APIView):
@@ -7712,7 +8149,8 @@ class LearningRouteRecommendationsAPIView(APIView):
 
     def post(self, request, *args, **kwargs):
         topics = request.data.get("topics") or []
-        goal = request.data.get("goal") or ""
+        topic_ids = request.data.get("topic_ids") or []
+        goal = str(request.data.get("goal") or "").strip()
 
         if not isinstance(topics, list):
             return Response(
@@ -7723,8 +8161,21 @@ class LearningRouteRecommendationsAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        skill_ids = get_topic_skill_ids(topics)
-        cert_ids = get_cert_ids_by_skills(skill_ids)
+        if not isinstance(topic_ids, list):
+            return Response(
+                {
+                    "ok": False,
+                    "error": "topic_ids debe ser una lista.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        skill_ids = get_valid_topic_skill_ids(topic_ids)
+
+        if not skill_ids:
+            skill_ids = get_topic_skill_ids(topics)
+
+        cert_ids_queryset = get_cert_ids_by_skills(skill_ids)
 
         data = {}
 
@@ -7735,7 +8186,11 @@ class LearningRouteRecommendationsAPIView(APIView):
                 "badge": rule["badge"],
                 "platform_ids": rule["platform_ids"],
                 "nivel": rule["nivel"],
-                "items": build_level_recommendations(request, cert_ids, rule),
+                "items": build_level_recommendations(
+                    request=request,
+                    cert_ids_queryset=cert_ids_queryset,
+                    rule=rule,
+                ),
             }
 
         return Response(
@@ -7744,9 +8199,9 @@ class LearningRouteRecommendationsAPIView(APIView):
                 "data": data,
                 "meta": {
                     "topics": topics,
+                    "topic_ids": topic_ids,
                     "goal": goal,
                     "skill_ids": skill_ids,
-                    "matched_certification_ids_count": len(cert_ids),
                 },
             },
             status=status.HTTP_200_OK,
