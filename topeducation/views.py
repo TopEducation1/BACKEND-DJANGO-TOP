@@ -7564,7 +7564,6 @@ def _get_plan_amount_cents(price_id=None, selected_plan=None, interval=None):
     }
 
     return fallback.get((selected_plan, interval), 0)
-
 def build_learning_route_mx_payload(
     *,
     event_id,
@@ -7579,143 +7578,328 @@ def build_learning_route_mx_payload(
 ):
     occurred_at = _mx_iso_now()
 
-    plan_value = str(plan_value or "free").strip().lower()
-    package_code = get_mx_package_code(plan_value)
+    plan_value = str(
+        plan_value or "free"
+    ).strip().lower()
+
+    package_code = get_mx_package_code(
+        plan_value
+    )
 
     if not package_code:
-        raise ValueError(f"unsupported_mx_package_code_for_{plan_value}")
+        raise ValueError(
+            f"unsupported_mx_package_code_for_{plan_value}"
+        )
 
-    selected_plan = str(route.selected_plan or "free").lower()
+    package_code = str(
+        package_code
+    ).strip().upper()
 
-    if plan_value == "free":
+    selected_plan = str(
+        route.selected_plan or "free"
+    ).strip().lower()
+
+    is_free_plan = (
+        package_code == "TOP_EDUCATION_FREE"
+    )
+
+    # =========================================================
+    # CONFIGURACIÓN DEL PLAN
+    # =========================================================
+    if is_free_plan:
         tier = "FREE"
-        billing_period = "MONTHLY"
+
+        # IMPORTANTE:
+        # Para FREE no enviamos billingPeriod.
+        billing_period = None
+
         lifecycle_status = "FREE"
         access_status = "ALLOWED"
         pending_action = "NONE"
         is_trial = False
+
     else:
-        tier = "PLUS" if "plus" in plan_value else "X"
-        billing_period = "ANNUAL" if "yearly" in plan_value else "MONTHLY"
-        status_raw = str(subscription.status if subscription else "").lower()
+        tier = (
+            "PLUS"
+            if "PLUS" in package_code
+            else "X"
+        )
+
+        if package_code.endswith("_ANNUAL"):
+            billing_period = "ANNUAL"
+        elif package_code.endswith("_MONTHLY"):
+            billing_period = "MONTHLY"
+        else:
+            raise ValueError(
+                f"unsupported_billing_period_for_{package_code}"
+            )
+
+        status_raw = str(
+            subscription.status
+            if subscription
+            else ""
+        ).strip().lower()
 
         if status_raw == "trialing":
             lifecycle_status = "TRIALING"
             is_trial = True
-        elif status_raw in ["active", "paid"]:
+
+        elif status_raw in {
+            "active",
+            "paid",
+        }:
             lifecycle_status = "ACTIVE"
             is_trial = False
-        elif status_raw in ["past_due", "unpaid"]:
+
+        elif status_raw in {
+            "past_due",
+            "unpaid",
+        }:
             lifecycle_status = "PAST_DUE"
             is_trial = False
-        elif status_raw in ["canceled", "cancelled"]:
+
+        elif status_raw in {
+            "canceled",
+            "cancelled",
+        }:
             lifecycle_status = "CANCELLED"
             is_trial = False
-        else:
-            lifecycle_status = "TRIALING" if route.trial_start and route.trial_end else "ACTIVE"
-            is_trial = lifecycle_status == "TRIALING"
 
-        access_status = "RESTRICTED" if lifecycle_status in ["PAST_DUE", "CANCELLED", "EXPIRED"] else "ALLOWED"
+        else:
+            has_trial_dates = bool(
+                route.trial_start
+                and route.trial_end
+            )
+
+            lifecycle_status = (
+                "TRIALING"
+                if has_trial_dates
+                else "ACTIVE"
+            )
+
+            is_trial = (
+                lifecycle_status == "TRIALING"
+            )
+
+        access_status = (
+            "RESTRICTED"
+            if lifecycle_status in {
+                "PAST_DUE",
+                "CANCELLED",
+                "EXPIRED",
+            }
+            else "ALLOWED"
+        )
 
         pending_action = (
             "CANCEL_AT_PERIOD_END"
-            if subscription and subscription.cancel_at_period_end
+            if (
+                subscription
+                and subscription.cancel_at_period_end
+            )
             else "NONE"
         )
 
+    # =========================================================
+    # OVERRIDES
+    # =========================================================
     if lifecycle_status_override:
-        lifecycle_status = lifecycle_status_override
+        lifecycle_status = str(
+            lifecycle_status_override
+        ).strip().upper()
 
     if access_status_override:
-        access_status = access_status_override
+        access_status = str(
+            access_status_override
+        ).strip().upper()
 
     if pending_action_override:
-        pending_action = pending_action_override
+        pending_action = str(
+            pending_action_override
+        ).strip().upper()
 
-    is_trial = lifecycle_status == "TRIALING"
-
-    trial_start = route.trial_start
-    trial_end = route.trial_end or (
-        subscription.current_period_end if subscription else None
+    is_trial = (
+        lifecycle_status == "TRIALING"
     )
 
+    trial_start = route.trial_start
+
+    trial_end = (
+        route.trial_end
+        or (
+            subscription.current_period_end
+            if subscription
+            else None
+        )
+    )
+
+    # =========================================================
+    # CURSOS RECOMENDADOS
+    # =========================================================
     recommended_courses = []
 
-    for index, course in enumerate(route.recommended_certifications or [], start=1):
-        recommended_courses.append({
-            "idInterno": (
-                course.get("idInterno")
-                or course.get("id_interno")
-                or course.get("idInternoMx")
-                or course.get("id_interno_mx")
-                or course.get("external_id")
-                or str(course.get("id") or "")
-            ),
-            "colombiaCertificationId": (
-                course.get("colombiaCertificationId")
-                or course.get("id")
-                or course.get("certification_id")
-            ),
-            "title": (
-                course.get("title")
-                or course.get("nombre")
-                or course.get("name")
-                or ""
-            ),
-            "level": (
-                course.get("level")
-                or course.get("nivel_certificacion")
-                or course.get("nivel")
-                or ""
-            ),
-            "provider": (
-                course.get("provider")
-                or course.get("plataforma")
-                or course.get("platform")
-                or ""
-            ),
-            "order": course.get("order") or index,
-            "routeLevel": (
-                course.get("routeLevel")
-                or course.get("route_level")
-                or course.get("level_route")
-                or 1
-            ),
-        })
+    for index, course in enumerate(
+        route.recommended_certifications or [],
+        start=1,
+    ):
+        recommended_courses.append(
+            {
+                "idInterno": (
+                    course.get("idInterno")
+                    or course.get("id_interno")
+                    or course.get("idInternoMx")
+                    or course.get("id_interno_mx")
+                    or course.get("external_id")
+                    or str(course.get("id") or "")
+                ),
+                "colombiaCertificationId": (
+                    course.get(
+                        "colombiaCertificationId"
+                    )
+                    or course.get("id")
+                    or course.get(
+                        "certification_id"
+                    )
+                ),
+                "title": (
+                    course.get("title")
+                    or course.get("nombre")
+                    or course.get("name")
+                    or ""
+                ),
+                "level": (
+                    course.get("level")
+                    or course.get(
+                        "nivel_certificacion"
+                    )
+                    or course.get("nivel")
+                    or ""
+                ),
+                "provider": (
+                    course.get("provider")
+                    or course.get("plataforma")
+                    or course.get("platform")
+                    or ""
+                ),
+                "order": (
+                    course.get("order")
+                    or index
+                ),
+                "routeLevel": (
+                    course.get("routeLevel")
+                    or course.get("route_level")
+                    or course.get("level_route")
+                    or 1
+                ),
+            }
+        )
 
+    # =========================================================
+    # BILLING / STRIPE
+    # =========================================================
     stripe_subscription_id = (
         subscription.stripe_subscription_id
         if subscription
         else route.stripe_subscription_id
     )
 
-    stripe_customer_id = route.stripe_customer_id
-    stripe_price_id = subscription.price_id if subscription else None
+    stripe_customer_id = (
+        route.stripe_customer_id
+    )
 
-    current_period_end = (
-        subscription.current_period_end
-        if subscription and subscription.current_period_end
+    stripe_price_id = (
+        subscription.price_id
+        if subscription
         else None
     )
 
+    current_period_end = (
+        subscription.current_period_end
+        if (
+            subscription
+            and subscription.current_period_end
+        )
+        else None
+    )
+
+    # =========================================================
+    # PLAN PAYLOAD
+    # =========================================================
+    plan_payload = {
+        "packageCode": package_code,
+        "tier": tier,
+        "accessStatus": access_status,
+        "lifecycleStatus": lifecycle_status,
+        "pendingAction": pending_action,
+        "trial": {
+            "isTrial": is_trial,
+            "trialStart": (
+                trial_start.isoformat()
+                if trial_start
+                else None
+            ),
+            "trialEnd": (
+                trial_end.isoformat()
+                if trial_end
+                else None
+            ),
+            "trialDays": (
+                7
+                if is_trial
+                else 0
+            ),
+        },
+    }
+
+    # Solo se incluye para planes pagos.
+    if billing_period:
+        plan_payload["billingPeriod"] = (
+            billing_period
+        )
+
+    # =========================================================
+    # PAYLOAD FINAL
+    # =========================================================
     return {
         "schemaVersion": "1.0",
         "eventId": event_id,
         "eventType": event_type,
-        "traceId": f"col-startnow-route-{route.id}-user-{user.id}",
+        "traceId": (
+            f"col-startnow-route-{route.id}"
+            f"-user-{user.id}"
+        ),
         "occurredAt": occurred_at,
 
         "customer": {
             "email": user.email,
-            "emailNormalized": user.email.lower(),
-            "name": user.first_name or route.first_name or "",
-            "lastName": user.last_name or route.last_name or "",
-            "phoneCountryCode": route.phone_country_code,
-            "phoneNumber": route.phone_number,
-            "phoneE164": route.phone_e164,
+            "emailNormalized": (
+                user.email.strip().lower()
+            ),
+            "name": (
+                user.first_name
+                or route.first_name
+                or ""
+            ),
+            "lastName": (
+                user.last_name
+                or route.last_name
+                or ""
+            ),
+            "phoneCountryCode": (
+                route.phone_country_code
+            ),
+            "phoneNumber": (
+                route.phone_number
+            ),
+            "phoneE164": (
+                route.phone_e164
+            ),
             "age": route.age,
             "gender": route.gender,
-            "country": route.country or "Colombia",
+            "country": (
+                route.country
+                or "Colombia"
+            ),
         },
 
         "learningProfile": {
@@ -7723,35 +7907,42 @@ def build_learning_route_mx_payload(
             "goal": route.goal or "",
         },
 
-        "recommendedCourses": recommended_courses,
+        "recommendedCourses": (
+            recommended_courses
+        ),
 
-        "plan": {
-            "packageCode": package_code,
-            "tier": tier,
-            "billingPeriod": billing_period,
-            "accessStatus": access_status,
-            "lifecycleStatus": lifecycle_status,
-            "pendingAction": pending_action,
-            "trial": {
-                "isTrial": is_trial,
-                "trialStart": trial_start.isoformat() if trial_start else None,
-                "trialEnd": trial_end.isoformat() if trial_end else None,
-                "trialDays": 7 if is_trial else 0,
-            },
-        },
+        "plan": plan_payload,
 
         "billing": {
             "source": "COLOMBIA",
-            "stripeCustomerId": stripe_customer_id,
-            "stripeSubscriptionId": stripe_subscription_id,
+            "stripeCustomerId": (
+                stripe_customer_id
+            ),
+            "stripeSubscriptionId": (
+                stripe_subscription_id
+            ),
             "stripePaymentMethodId": None,
-            "status": subscription.status if subscription else None,
-            "currentPeriodEnd": current_period_end.isoformat() if current_period_end else None,
+            "status": (
+                subscription.status
+                if subscription
+                else None
+            ),
+            "currentPeriodEnd": (
+                current_period_end.isoformat()
+                if current_period_end
+                else None
+            ),
         },
 
         "redirects": {
-            "subscriptionManagementUrl": settings.MX_B2C_SUBSCRIPTION_MANAGEMENT_URL,
-            "colombiaAccountUrl": settings.MX_B2C_COLOMBIA_ACCOUNT_URL,
+            "subscriptionManagementUrl": (
+                settings
+                .MX_B2C_SUBSCRIPTION_MANAGEMENT_URL
+            ),
+            "colombiaAccountUrl": (
+                settings
+                .MX_B2C_COLOMBIA_ACCOUNT_URL
+            ),
         },
 
         "metadata": {
