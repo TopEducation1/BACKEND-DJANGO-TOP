@@ -26,6 +26,14 @@ from django.core.mail import send_mail
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.db import transaction
 from django.db.models import Case, Count, IntegerField, OuterRef, Prefetch, Q, Subquery, Value, When
+from django.db.models import (
+    Case,
+    Exists,
+    IntegerField,
+    OuterRef,
+    Q,
+    When,
+)
 from django.forms import modelformset_factory
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.middleware.csrf import get_token
@@ -6206,6 +6214,131 @@ class LearningRouteFreeSignupView(APIView):
             "redirect": "/account",
         })
 
+
+MX_SUCCESS_STATUSES = {
+    "APPLIED",
+    "DUPLICATE",
+}
+
+MX_RETRYABLE_STATUS = "RETRYABLE_ERROR"
+MX_PERMANENT_STATUS = "PERMANENT_ERROR"
+
+
+def _as_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def normalize_mx_result(mx_result):
+    """
+    Normaliza las distintas formas en las que el helper HTTP
+    puede envolver la respuesta contractual de MX.
+
+    Soporta, por ejemplo:
+
+    {
+        "status": "APPLIED"
+    }
+
+    {
+        "data": {
+            "status": "APPLIED"
+        }
+    }
+
+    {
+        "response": {
+            "status": "APPLIED"
+        }
+    }
+
+    {
+        "body": {
+            "status": "APPLIED"
+        }
+    }
+    """
+
+    root = _as_dict(mx_result)
+    data = _as_dict(root.get("data"))
+    body = _as_dict(root.get("body"))
+    response_data = _as_dict(root.get("response"))
+    result = _as_dict(root.get("result"))
+
+    containers = [
+        root,
+        data,
+        body,
+        response_data,
+        result,
+    ]
+
+    mx_status = ""
+
+    for container in containers:
+        candidate = (
+            container.get("status")
+            or container.get("mx_status")
+            or container.get("eventStatus")
+            or container.get("event_status")
+        )
+
+        if candidate:
+            mx_status = str(candidate).strip().upper()
+            break
+
+    magic_link = ""
+
+    for container in containers:
+        candidate = (
+            container.get("magicLink")
+            or container.get("magicLinkUrl")
+            or container.get("magic_link")
+            or container.get("magic_link_url")
+        )
+
+        if candidate:
+            magic_link = str(candidate).strip()
+            break
+
+    message = ""
+
+    for container in containers:
+        candidate = (
+            container.get("message")
+            or container.get("detail")
+            or container.get("errorMessage")
+            or container.get("error_message")
+        )
+
+        if candidate:
+            message = str(candidate).strip()
+            break
+
+        error_value = container.get("error")
+
+        if isinstance(error_value, str) and error_value.strip():
+            message = error_value.strip()
+            break
+
+        if isinstance(error_value, dict):
+            nested_message = (
+                error_value.get("message")
+                or error_value.get("detail")
+                or error_value.get("code")
+            )
+
+            if nested_message:
+                message = str(nested_message).strip()
+                break
+
+    return {
+        "status": mx_status,
+        "magic_link": magic_link,
+        "message": message,
+        "raw": root,
+    }
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteCompleteSignupView(APIView):
     permission_classes = [AllowAny]
@@ -6215,16 +6348,21 @@ class LearningRouteCompleteSignupView(APIView):
     def post(self, request):
         route_id = request.data.get("route_id")
         password = request.data.get("password")
-        selected_plan = (
-            request.data.get("selected_plan")
-            or "free"
-        )
+
+        selected_plan = str(
+            request.data.get("selected_plan") or "free"
+        ).strip().lower()
+
+        selected_paid_plan = str(
+            request.data.get("selected_paid_plan") or ""
+        ).strip().lower()
 
         if not route_id:
             return Response(
                 {
                     "ok": False,
-                    "error": "route_id requerido",
+                    "error": "route_id_required",
+                    "message": "route_id requerido.",
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -6233,7 +6371,8 @@ class LearningRouteCompleteSignupView(APIView):
             return Response(
                 {
                     "ok": False,
-                    "error": "password requerido",
+                    "error": "password_required",
+                    "message": "password requerido.",
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -6250,7 +6389,8 @@ class LearningRouteCompleteSignupView(APIView):
             return Response(
                 {
                     "ok": False,
-                    "error": "ruta no encontrada",
+                    "error": "route_not_found",
+                    "message": "Ruta no encontrada.",
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )
@@ -6258,18 +6398,19 @@ class LearningRouteCompleteSignupView(APIView):
         user = route.user
 
         if not user:
-            user, created, error = (
+            user, created, creation_error = (
                 get_or_create_user_from_learning_route(
                     route=route,
                     request=request,
                 )
             )
 
-            if error:
+            if creation_error:
                 return Response(
                     {
                         "ok": False,
-                        "error": error,
+                        "error": creation_error,
+                        "message": creation_error,
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
@@ -6283,30 +6424,36 @@ class LearningRouteCompleteSignupView(APIView):
                 {
                     "ok": False,
                     "error": "password_invalido",
+                    "message": (
+                        error.messages[0]
+                        if error.messages
+                        else "La contraseña no cumple los requisitos."
+                    ),
                     "messages": error.messages,
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        user.set_password(password)
-        user.is_active = True
-
-        update_fields = [
-            "password",
-            "is_active",
-        ]
-
-        # Asegura que el correo quede guardado.
         route_email = str(
             getattr(route, "email", "") or ""
         ).strip().lower()
 
-        if route_email and not getattr(user, "email", None):
+        user.set_password(password)
+        user.is_active = True
+
+        user_update_fields = [
+            "password",
+            "is_active",
+        ]
+
+        if route_email and not str(
+            getattr(user, "email", "") or ""
+        ).strip():
             user.email = route_email
-            update_fields.append("email")
+            user_update_fields.append("email")
 
         user.save(
-            update_fields=list(dict.fromkeys(update_fields))
+            update_fields=list(dict.fromkeys(user_update_fields))
         )
 
         backend = get_backends()[0]
@@ -6319,7 +6466,6 @@ class LearningRouteCompleteSignupView(APIView):
 
         subscription = None
 
-        # Un plan gratuito no necesita buscar suscripción Stripe.
         if selected_plan != "free":
             subscription = (
                 StripeSubscription.objects
@@ -6357,16 +6503,32 @@ class LearningRouteCompleteSignupView(APIView):
         plan_value = (
             "free"
             if selected_plan == "free"
-            else (
-                request.data.get("selected_paid_plan")
-                or selected_plan
-            )
+            else selected_paid_plan or selected_plan
         )
 
-        event_id = (
-            f"evt_col_provision_route_{route.id}"
-            f"_user_{user.id}_{uuid.uuid4()}"
-        )
+        # IMPORTANTE:
+        # Para cumplir el contrato de reintentos, este valor debería
+        # persistirse en route.mx_event_id.
+        event_id = str(
+            getattr(route, "mx_event_id", "") or ""
+        ).strip()
+
+        if not event_id:
+            event_id = (
+                f"evt_col_provision_route_{route.id}"
+                f"_user_{user.id}_{uuid.uuid4()}"
+            )
+
+            # Conserva este bloque solo si ya agregaste mx_event_id
+            # al modelo LearningRouteLead.
+            if hasattr(route, "mx_event_id"):
+                route.mx_event_id = event_id
+                route.save(
+                    update_fields=[
+                        "mx_event_id",
+                        "updated_at",
+                    ]
+                )
 
         payload = build_learning_route_mx_payload(
             event_id=event_id,
@@ -6383,28 +6545,40 @@ class LearningRouteCompleteSignupView(APIView):
             route=route,
         )
 
-        mx_status = str(
-            mx_result.get("status") or ""
-        ).strip().upper()
+        print("=" * 90)
+        print("MX COMPLETE SIGNUP RESULT:")
+        print(mx_result)
+        print("=" * 90)
+
+        normalized_mx = normalize_mx_result(mx_result)
+
+        mx_status = normalized_mx["status"]
+        magic_link = normalized_mx["magic_link"]
+        mx_message = normalized_mx["message"]
+        raw_mx_result = normalized_mx["raw"]
+
+        print(
+            "MX NORMALIZED RESULT:",
+            {
+                "status": mx_status,
+                "message": mx_message,
+                "has_magic_link": bool(magic_link),
+            },
+        )
 
         route.mx_status = mx_status or "UNKNOWN"
-        route.mx_response = mx_result
-
-        magic_link = (
-            mx_result.get("magicLink")
-            or mx_result.get("magicLinkUrl")
-        )
+        route.mx_response = raw_mx_result
 
         if magic_link:
             route.mx_magic_link = magic_link
 
-        if mx_status in ["APPLIED", "DUPLICATE"]:
+        if mx_status in MX_SUCCESS_STATUSES:
             route.status = "account_created"
 
-        elif mx_status == "RETRYABLE_ERROR":
+        elif mx_status == MX_RETRYABLE_STATUS:
             route.status = "mx_retry_pending"
 
-        elif mx_status == "PERMANENT_ERROR":
+        elif mx_status == MX_PERMANENT_STATUS:
             route.status = "mx_permanent_error"
 
         else:
@@ -6426,31 +6600,83 @@ class LearningRouteCompleteSignupView(APIView):
             else "/account?tab=license"
         )
 
-        if route.mx_status not in ["APPLIED", "DUPLICATE"]:
+        if mx_status in MX_SUCCESS_STATUSES:
+            return Response(
+                {
+                    "ok": True,
+                    "user_id": user.id,
+                    "route_id": route.id,
+                    "selected_plan": selected_plan,
+                    "mx_sent": True,
+                    "mx_status": mx_status,
+                    "mx_response": raw_mx_result,
+                    "magic_link": magic_link or None,
+                    "redirect": redirect_url,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if mx_status == MX_RETRYABLE_STATUS:
             return Response(
                 {
                     "ok": False,
-                    "mx_sent": False,
-                    "mx_status": route.mx_status,
-                    "mx_response": mx_result,
+                    "error": "mx_retryable_error",
+                    "message": (
+                        mx_message
+                        or (
+                            "MX presentó un error temporal. "
+                            "El evento debe reintentarse con el mismo eventId."
+                        )
+                    ),
+                    "retryable": True,
+                    "route_id": route.id,
+                    "mx_status": mx_status,
+                    "mx_response": raw_mx_result,
                     "redirect": redirect_url,
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        
+
+        if mx_status == MX_PERMANENT_STATUS:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "mx_permanent_error",
+                    "message": (
+                        mx_message
+                        or (
+                            "MX rechazó el evento por un error permanente "
+                            "en el contrato o los datos enviados."
+                        )
+                    ),
+                    "retryable": False,
+                    "route_id": route.id,
+                    "mx_status": mx_status,
+                    "mx_response": raw_mx_result,
+                    "redirect": redirect_url,
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
         return Response(
             {
-                "ok": True,
-                "user_id": user.id,
+                "ok": False,
+                "error": "mx_unknown_status",
+                "message": (
+                    mx_message
+                    or (
+                        "MX devolvió una respuesta sin un estado "
+                        "contractual reconocido."
+                    )
+                ),
+                "retryable": False,
                 "route_id": route.id,
-                "selected_plan": selected_plan,
-                "mx_sent": True,
-                "mx_status": route.mx_status,
-                "mx_response": mx_result,
+                "mx_status": mx_status or "UNKNOWN",
+                "mx_response": raw_mx_result,
                 "redirect": redirect_url,
             },
-            status=status.HTTP_200_OK,
-        )   
+            status=status.HTTP_502_BAD_GATEWAY,
+        ) 
     
 def _json_body(request):
     try:
@@ -7722,12 +7948,128 @@ def get_cert_platform_logo(cert):
         or ""
     )
 
-def get_recommendation_base_queryset():
+def annotate_skill_match(queryset, skill_ids):
+    if not skill_ids:
+        return queryset.annotate(
+            has_skill_match=Exists(
+                SkillsCertification.objects.none()
+            )
+        )
+
+    skill_relation = (
+        SkillsCertification.objects
+        .filter(
+            certificacion_id=OuterRef("pk"),
+            skill_id__in=skill_ids,
+        )
+        .order_by()
+    )
+
+    return queryset.annotate(
+        has_skill_match=Exists(
+            skill_relation
+        )
+    )
+
+def apply_platform_level_filter(queryset, platform_id, level):
+    level = str(level or "").strip().upper()
+
+    if platform_id == 3:
+        # MasterClass puede tener ADVANCED, valores vacíos
+        # o textos no normalizados.
+        return queryset.filter(
+            Q(nivel_certificacion=level)
+            | Q(nivel_certificacion__isnull=True)
+            | Q(nivel_certificacion="")
+            | Q(nivel_certificacion__in=[
+                "NONE",
+                "None",
+                "none",
+                "UNCATEGORIZED",
+                "Uncategorized",
+                "uncategorized",
+                "ALL LEVELS",
+                "All Levels",
+                "all levels",
+                "MIXED",
+                "Mixed",
+                "mixed",
+            ])
+        )
+
+    # Para edX y Coursera usamos igualdad exacta.
+    return queryset.filter(
+        nivel_certificacion=level,
+    )
+
+def select_recommendation_id(
+    *,
+    platform_id,
+    level,
+    skill_ids,
+    excluded_ids=None,
+    require_skill_match=True,
+):
+    excluded_ids = list(excluded_ids or [])
+
+    queryset = (
+        get_recommendation_base_queryset()
+        .filter(
+            plataforma_certificacion_id=platform_id,
+        )
+    )
+
+    queryset = apply_platform_level_filter(
+        queryset,
+        platform_id,
+        level,
+    )
+
+    if excluded_ids:
+        queryset = queryset.exclude(
+            id__in=excluded_ids,
+        )
+
+    if require_skill_match:
+        queryset = annotate_skill_match(
+            queryset,
+            skill_ids,
+        ).filter(
+            has_skill_match=True,
+        )
+
     return (
+        queryset
+        .order_by("-id")
+        .values_list("id", flat=True)
+        .first()
+    )
+
+def load_recommendation_objects(selected_ids):
+    selected_ids = [
+        int(certification_id)
+        for certification_id in selected_ids
+        if certification_id
+    ]
+
+    if not selected_ids:
+        return []
+
+    order_expression = Case(
+        *[
+            When(
+                id=certification_id,
+                then=position,
+            )
+            for position, certification_id
+            in enumerate(selected_ids)
+        ],
+        output_field=IntegerField(),
+    )
+
+    queryset = (
         Certificaciones.objects
-        .filter(vigente_certificacion=True)
-        .exclude(nombre__isnull=True)
-        .exclude(nombre__exact="")
+        .filter(id__in=selected_ids)
         .select_related(
             "plataforma_certificacion",
             "universidad_certificacion",
@@ -7742,7 +8084,6 @@ def get_recommendation_base_queryset():
             "imagen_final",
             "nivel_certificacion",
             "tiempo_certificacion",
-            "vigente_certificacion",
 
             # Foreign keys
             "plataforma_certificacion_id",
@@ -7763,8 +8104,19 @@ def get_recommendation_base_queryset():
             "empresa_certificacion__id",
             "empresa_certificacion__nombre",
         )
+        .order_by(order_expression)
     )
 
+    return list(queryset)
+
+def get_recommendation_base_queryset():
+    return (
+        Certificaciones.objects
+        .filter(vigente_certificacion=True)
+        .exclude(nombre__isnull=True)
+        .exclude(nombre__exact="")
+    )
+    
 def get_cert_main_skill(cert):
     skill = cert.skills.first()
 
@@ -7950,194 +8302,221 @@ def get_cert_ids_by_skills(skill_ids):
     )
 
 
-def build_level_recommendations(request, cert_ids_queryset, rule):
-    platform_ids = list(rule.get("platform_ids") or [])
-    nivel = str(rule.get("nivel") or "").strip().upper()
-    limit = max(1, int(rule.get("limit") or 3))
-    one_per_platform = bool(rule.get("one_per_platform"))
+def build_level_recommendations(
+    request,
+    skill_ids,
+    rule,
+):
+    platform_ids = [
+        int(platform_id)
+        for platform_id in rule.get("platform_ids", [])
+        if platform_id
+    ]
+
+    level = str(
+        rule.get("nivel") or ""
+    ).strip().upper()
+
+    limit = max(
+        1,
+        int(rule.get("limit") or 3),
+    )
+
+    one_per_platform = bool(
+        rule.get("one_per_platform")
+    )
 
     if not platform_ids:
         return []
 
-    base_queryset = (
-        get_recommendation_base_queryset()
-        .filter(
-            plataforma_certificacion_id__in=platform_ids,
-        )
-    )
+    selected_ids = []
 
     # =========================================================
-    # UNA CERTIFICACIÓN POR PLATAFORMA
-    # Niveles 2 y 3
+    # NIVELES QUE DEBEN GARANTIZAR CADA PLATAFORMA
     # =========================================================
     if one_per_platform:
-        selected = []
-        selected_ids = set()
-
-        # =========================================================
-        # PASO 1: garantizar al menos una por cada plataforma
-        # =========================================================
+        # Paso 1:
+        # garantizar al menos una certificación por plataforma.
         for platform_id in platform_ids:
-            platform_queryset = base_queryset.filter(
-                plataforma_certificacion_id=platform_id,
+            certification_id = select_recommendation_id(
+                platform_id=platform_id,
+                level=level,
+                skill_ids=skill_ids,
+                excluded_ids=selected_ids,
+                require_skill_match=True,
             )
 
-            if platform_id == 3:
-                level_queryset = platform_queryset.filter(
-                    Q(nivel_certificacion__iexact=nivel)
-                    | Q(nivel_certificacion__isnull=True)
-                    | Q(nivel_certificacion__exact="")
-                    | Q(nivel_certificacion__iexact="none")
-                    | Q(nivel_certificacion__iexact="uncategorized")
-                    | Q(nivel_certificacion__iexact="all levels")
-                    | Q(nivel_certificacion__iexact="mixed")
-                )
-            else:
-                level_queryset = platform_queryset.filter(
-                    nivel_certificacion__iexact=nivel,
+            # Fallback:
+            # misma plataforma y nivel aunque no coincida
+            # directamente con el tema.
+            if not certification_id:
+                certification_id = select_recommendation_id(
+                    platform_id=platform_id,
+                    level=level,
+                    skill_ids=skill_ids,
+                    excluded_ids=selected_ids,
+                    require_skill_match=False,
                 )
 
-            if selected_ids:
-                level_queryset = level_queryset.exclude(
-                    id__in=selected_ids,
+            # Último fallback para MasterClass:
+            # cualquier certificación vigente de plataforma 3.
+            if not certification_id and platform_id == 3:
+                masterclass_queryset = (
+                    get_recommendation_base_queryset()
+                    .filter(
+                        plataforma_certificacion_id=3,
+                    )
                 )
-
-            # Primera prioridad: coincide con los temas seleccionados.
-            certification = (
-                level_queryset
-                .filter(id__in=cert_ids_queryset)
-                .order_by("-id")
-                .first()
-            )
-
-            # Segunda prioridad: misma plataforma y nivel.
-            if certification is None:
-                certification = (
-                    level_queryset
-                    .order_by("-id")
-                    .first()
-                )
-
-            # Fallback para MasterClass sin restringir nivel.
-            if certification is None and platform_id == 3:
-                masterclass_queryset = platform_queryset
 
                 if selected_ids:
-                    masterclass_queryset = masterclass_queryset.exclude(
-                        id__in=selected_ids,
+                    masterclass_queryset = (
+                        masterclass_queryset.exclude(
+                            id__in=selected_ids,
+                        )
                     )
 
-                certification = (
-                    masterclass_queryset
-                    .filter(id__in=cert_ids_queryset)
+                matched_masterclass = (
+                    annotate_skill_match(
+                        masterclass_queryset,
+                        skill_ids,
+                    )
+                    .filter(has_skill_match=True)
                     .order_by("-id")
+                    .values_list("id", flat=True)
                     .first()
                 )
 
-                if certification is None:
-                    certification = (
-                        masterclass_queryset
-                        .order_by("-id")
-                        .first()
-                    )
+                certification_id = (
+                    matched_masterclass
+                    or masterclass_queryset
+                    .order_by("-id")
+                    .values_list("id", flat=True)
+                    .first()
+                )
 
-            if certification is not None:
-                selected.append(certification)
-                selected_ids.add(certification.id)
+            if certification_id:
+                selected_ids.append(
+                    certification_id
+                )
 
-            if len(selected) >= limit:
+            if len(selected_ids) >= limit:
                 break
 
-        # =========================================================
-        # PASO 2: completar hasta llegar al límite
-        # =========================================================
-        if len(selected) < limit:
-            missing = limit - len(selected)
+        # Paso 2:
+        # nivel 2 tiene dos plataformas, pero requiere tres cards.
+        # Completamos priorizando coincidencias por habilidad.
+        while len(selected_ids) < limit:
+            candidates = []
 
-            completion_queryset = base_queryset
-
-            if selected_ids:
-                completion_queryset = completion_queryset.exclude(
-                    id__in=selected_ids,
+            for platform_id in platform_ids:
+                candidate_id = select_recommendation_id(
+                    platform_id=platform_id,
+                    level=level,
+                    skill_ids=skill_ids,
+                    excluded_ids=selected_ids,
+                    require_skill_match=True,
                 )
 
-            # Prioridad: recomendaciones que coincidan con los temas.
-            matching_completion = list(
-                completion_queryset
-                .filter(id__in=cert_ids_queryset)
-                .order_by("-id")[:missing]
-            )
+                if candidate_id:
+                    candidates.append(candidate_id)
 
-            selected.extend(matching_completion)
-            selected_ids.update(
-                certification.id
-                for certification in matching_completion
-            )
+            if candidates:
+                # Escogemos el ID más reciente entre las plataformas.
+                selected_id = max(candidates)
 
-        # =========================================================
-        # PASO 3: último fallback si aún faltan resultados
-        # =========================================================
-        if len(selected) < limit:
-            missing = limit - len(selected)
+                if selected_id not in selected_ids:
+                    selected_ids.append(selected_id)
+                    continue
 
-            fallback_queryset = base_queryset
+            # Fallback sin coincidencia por habilidad.
+            fallback_candidates = []
 
-            if selected_ids:
-                fallback_queryset = fallback_queryset.exclude(
-                    id__in=selected_ids,
+            for platform_id in platform_ids:
+                candidate_id = select_recommendation_id(
+                    platform_id=platform_id,
+                    level=level,
+                    skill_ids=skill_ids,
+                    excluded_ids=selected_ids,
+                    require_skill_match=False,
                 )
 
-            fallback_items = list(
-                fallback_queryset
-                .order_by("-id")[:missing]
+                if candidate_id:
+                    fallback_candidates.append(
+                        candidate_id
+                    )
+
+            if not fallback_candidates:
+                break
+
+            selected_id = max(fallback_candidates)
+
+            if selected_id in selected_ids:
+                break
+
+            selected_ids.append(selected_id)
+
+    # =========================================================
+    # NIVEL 1: TRES DE COURSERA
+    # =========================================================
+    else:
+        platform_id = platform_ids[0]
+
+        matched_queryset = (
+            get_recommendation_base_queryset()
+            .filter(
+                plataforma_certificacion_id=platform_id,
+                nivel_certificacion=level,
             )
-
-            selected.extend(fallback_items)
-
-        return PersonalizedLeadRecommendationSerializer(
-            selected[:limit],
-            many=True,
-            context={"request": request},
-        ).data
-
-    # =========================================================
-    # NIVEL 1
-    # Tres certificaciones de Coursera
-    # =========================================================
-    matched_queryset = (
-        base_queryset
-        .filter(
-            nivel_certificacion__iexact=nivel,
-            id__in=cert_ids_queryset,
         )
-        .order_by("-id")
+
+        matched_queryset = (
+            annotate_skill_match(
+                matched_queryset,
+                skill_ids,
+            )
+            .filter(has_skill_match=True)
+            .order_by("-id")
+            .values_list("id", flat=True)
+        )
+
+        selected_ids = list(
+            matched_queryset[:limit]
+        )
+
+        if len(selected_ids) < limit:
+            missing = limit - len(selected_ids)
+
+            fallback_queryset = (
+                get_recommendation_base_queryset()
+                .filter(
+                    plataforma_certificacion_id=platform_id,
+                    nivel_certificacion=level,
+                )
+            )
+
+            if selected_ids:
+                fallback_queryset = (
+                    fallback_queryset.exclude(
+                        id__in=selected_ids,
+                    )
+                )
+
+            fallback_ids = list(
+                fallback_queryset
+                .order_by("-id")
+                .values_list("id", flat=True)[:missing]
+            )
+
+            selected_ids.extend(fallback_ids)
+
+    selected_ids = selected_ids[:limit]
+
+    recommendation_objects = (
+        load_recommendation_objects(selected_ids)
     )
 
-    selected = list(matched_queryset[:limit])
-    selected_ids = {item.id for item in selected}
-
-    # Completar si los temas seleccionados no producen 3 resultados.
-    if len(selected) < limit:
-        missing = limit - len(selected)
-
-        fallback_queryset = base_queryset.filter(
-            nivel_certificacion__iexact=nivel,
-        )
-
-        if selected_ids:
-            fallback_queryset = fallback_queryset.exclude(
-                id__in=selected_ids,
-            )
-
-        selected.extend(
-            list(
-                fallback_queryset
-                .order_by("-id")[:missing]
-            )
-        )
-
     return PersonalizedLeadRecommendationSerializer(
-        selected,
+        recommendation_objects,
         many=True,
         context={"request": request},
     ).data
@@ -8150,7 +8529,9 @@ class LearningRouteRecommendationsAPIView(APIView):
     def post(self, request, *args, **kwargs):
         topics = request.data.get("topics") or []
         topic_ids = request.data.get("topic_ids") or []
-        goal = str(request.data.get("goal") or "").strip()
+        goal = str(
+            request.data.get("goal") or ""
+        ).strip()
 
         if not isinstance(topics, list):
             return Response(
@@ -8170,12 +8551,14 @@ class LearningRouteRecommendationsAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        skill_ids = get_valid_topic_skill_ids(topic_ids)
+        skill_ids = get_valid_topic_skill_ids(
+            topic_ids
+        )
 
         if not skill_ids:
-            skill_ids = get_topic_skill_ids(topics)
-
-        cert_ids_queryset = get_cert_ids_by_skills(skill_ids)
+            skill_ids = get_topic_skill_ids(
+                topics
+            )
 
         data = {}
 
@@ -8188,7 +8571,7 @@ class LearningRouteRecommendationsAPIView(APIView):
                 "nivel": rule["nivel"],
                 "items": build_level_recommendations(
                     request=request,
-                    cert_ids_queryset=cert_ids_queryset,
+                    skill_ids=skill_ids,
                     rule=rule,
                 ),
             }

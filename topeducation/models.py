@@ -72,26 +72,59 @@ class Skills(models.Model):
 
 class SkillsCertification(models.Model):
     certificacion = models.ForeignKey(
-        'Certificaciones',
+        "Certificaciones",
         on_delete=models.CASCADE,
-        related_name='skills_rel'
+        related_name="skills_rel",
     )
+
     skill = models.ForeignKey(
-        'Skills',
+        "Skills",
         on_delete=models.CASCADE,
-        related_name='certificaciones_rel'
+        related_name="certificaciones_rel",
     )
-    orden = models.PositiveIntegerField(default=1, db_index=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+
+    orden = models.PositiveIntegerField(
+        default=1,
+        db_index=True,
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
 
     class Meta:
-        db_table = 'SkillsCertification'
-        unique_together = ('certificacion', 'skill')
-        ordering = ['orden', 'id']
+        db_table = "SkillsCertification"
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "certificacion",
+                    "skill",
+                ],
+                name="uq_certificacion_skill",
+            ),
+        ]
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "skill",
+                    "certificacion",
+                ],
+                name="idx_skill_cert",
+            ),
+        ]
+
+        ordering = [
+            "orden",
+            "id",
+        ]
 
     def __str__(self):
-        return f"{self.certificacion_id} - {self.skill_id} ({self.orden})"
-
+        return (
+            f"{self.certificacion_id} - "
+            f"{self.skill_id} ({self.orden})"
+        )
 
 class Regiones(models.Model):
     nombre = models.CharField(max_length=100, null=True)
@@ -185,7 +218,10 @@ class Certificaciones(models.Model):
     modulos_certificacion = models.TextField(default="NONE")
 
     tipo_certificacion = models.CharField(max_length=100, null=True, blank=True, default="NONE")
-    vigente_certificacion = models.BooleanField(default=True, null=True, blank=True)
+    vigente_certificacion = models.BooleanField(
+        default=True,
+        db_index=False,
+    )
 
     universidad_certificacion = models.ForeignKey(
         Universidades,
@@ -268,10 +304,30 @@ class Certificaciones(models.Model):
         return str(self.id) + " - " + self.nombre
 
     class Meta:
-        db_table = 'Certificaciones'
+        db_table = "Certificaciones"
+
         indexes = [
-            models.Index(fields=["tipo_certificacion"], name="cert_tipo_idx"),
-            models.Index(fields=["plataforma_certificacion"], name="cert_plat_idx"),
+            models.Index(
+                fields=[
+                    "tipo_certificacion",
+                ],
+                name="cert_tipo_idx",
+            ),
+            models.Index(
+                fields=[
+                    "plataforma_certificacion",
+                ],
+                name="cert_plat_idx",
+            ),
+            models.Index(
+                fields=[
+                    "vigente_certificacion",
+                    "plataforma_certificacion",
+                    "nivel_certificacion",
+                    "id",
+                ],
+                name="idx_rec_platform_level",
+            ),
         ]
 
 
@@ -691,6 +747,12 @@ class LearningRouteLead(models.Model):
     mx_status = models.CharField( max_length=50, default="pending",)
     mx_response = models.JSONField( null=True, blank=True,)
     mx_magic_link = models.TextField(null=True, blank=True)
+    mx_event_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     selected_plan = models.CharField(
         max_length=20,
         choices=[
