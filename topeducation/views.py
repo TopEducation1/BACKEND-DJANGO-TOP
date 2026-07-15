@@ -4144,8 +4144,11 @@ class OriginalDetailView(APIView):
                                 "certification",
                                 "certification__plataforma_certificacion",
                                 "certification__tema_certificacion",
+                                "certification__universidad_certificacion",
+                                "certification__empresa_certificacion",
                             )
                             .only(
+                                # OriginalCertification
                                 "id",
                                 "original_id",
                                 "certification_id",
@@ -4154,22 +4157,41 @@ class OriginalDetailView(APIView):
                                 "hist",
                                 "fondo",
 
+                                # Certificación
                                 "certification__id",
                                 "certification__nombre",
                                 "certification__slug",
                                 "certification__imagen_final",
+
+                                # Foreign keys
                                 "certification__tema_certificacion_id",
                                 "certification__plataforma_certificacion_id",
+                                "certification__universidad_certificacion_id",
+                                "certification__empresa_certificacion_id",
 
+                                # Tema
                                 "certification__tema_certificacion__id",
                                 "certification__tema_certificacion__nombre",
                                 "certification__tema_certificacion__translate",
                                 "certification__tema_certificacion__tem_col",
 
+                                # Plataforma
                                 "certification__plataforma_certificacion__id",
                                 "certification__plataforma_certificacion__nombre",
                                 "certification__plataforma_certificacion__plat_img",
                                 "certification__plataforma_certificacion__plat_ico",
+
+                                # Universidad
+                                "certification__universidad_certificacion__id",
+                                "certification__universidad_certificacion__nombre",
+                                "certification__universidad_certificacion__univ_ico",
+                                "certification__universidad_certificacion__univ_img",
+
+                                # Empresa
+                                "certification__empresa_certificacion__id",
+                                "certification__empresa_certificacion__nombre",
+                                "certification__empresa_certificacion__empr_ico",
+                                "certification__empresa_certificacion__empr_img",
                             )
                             .prefetch_related(
                                 Prefetch(

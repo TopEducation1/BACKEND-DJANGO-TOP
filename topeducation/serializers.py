@@ -775,6 +775,10 @@ class SuggestedCertificationSerializer(serializers.ModelSerializer):
 class OriginalCertificationDetailMiniSerializer(serializers.ModelSerializer):
     plataforma_certificacion = serializers.SerializerMethodField()
     tema_certificacion = serializers.SerializerMethodField()
+
+    universidad_certificacion = serializers.SerializerMethodField()
+    empresa_certificacion = serializers.SerializerMethodField()
+
     skills = serializers.SerializerMethodField()
     primary_skill = serializers.SerializerMethodField()
 
@@ -785,41 +789,104 @@ class OriginalCertificationDetailMiniSerializer(serializers.ModelSerializer):
             "nombre",
             "slug",
             "imagen_final",
+
             "plataforma_certificacion",
             "tema_certificacion",
+
+            "universidad_certificacion",
+            "empresa_certificacion",
+
             "skills",
             "primary_skill",
         ]
 
     def get_plataforma_certificacion(self, obj):
-        plat = getattr(obj, "plataforma_certificacion", None)
+        platform = getattr(
+            obj,
+            "plataforma_certificacion",
+            None,
+        )
 
-        if not plat:
+        if not platform:
             return None
 
         return {
-            "id": plat.id,
-            "nombre": plat.nombre,
-            "slug": self._platform_slug(plat.nombre),
-            "plat_img": self._url(plat.plat_img),
-            "plat_ico": self._url(plat.plat_ico),
+            "id": platform.id,
+            "nombre": platform.nombre,
+            "slug": self._platform_slug(
+                platform.nombre
+            ),
+            "plat_img": self._url(
+                platform.plat_img
+            ),
+            "plat_ico": self._url(
+                platform.plat_ico
+            ),
         }
 
     def get_tema_certificacion(self, obj):
-        tema = getattr(obj, "tema_certificacion", None)
+        topic = getattr(
+            obj,
+            "tema_certificacion",
+            None,
+        )
 
-        if not tema:
+        if not topic:
             return None
 
         return {
-            "id": tema.id,
-            "nombre": tema.nombre,
-            "translate": tema.translate,
-            "tem_col": tema.tem_col,
+            "id": topic.id,
+            "nombre": topic.nombre,
+            "translate": topic.translate,
+            "tem_col": topic.tem_col,
+        }
+
+    def get_universidad_certificacion(self, obj):
+        university = getattr(
+            obj,
+            "universidad_certificacion",
+            None,
+        )
+
+        if not university:
+            return None
+
+        return {
+            "id": university.id,
+            "nombre": university.nombre,
+            "univ_ico": self._url(
+                university.univ_ico
+            ),
+            "univ_img": self._url(
+                university.univ_img
+            ),
+        }
+
+    def get_empresa_certificacion(self, obj):
+        company = getattr(
+            obj,
+            "empresa_certificacion",
+            None,
+        )
+
+        if not company:
+            return None
+
+        return {
+            "id": company.id,
+            "nombre": company.nombre,
+            "empr_ico": self._url(
+                company.empr_ico
+            ),
+            "empr_img": self._url(
+                company.empr_img
+            ),
         }
 
     def get_skills(self, obj):
-        links = list(obj.skills_rel.all())
+        links = list(
+            obj.skills_rel.all()
+        )
 
         return [
             {
@@ -828,7 +895,9 @@ class OriginalCertificationDetailMiniSerializer(serializers.ModelSerializer):
                 "translate": link.skill.translate,
                 "slug": link.skill.slug,
                 "skill_col": link.skill.skill_col,
-                "skill_ico": self._url(link.skill.skill_ico),
+                "skill_ico": self._url(
+                    link.skill.skill_ico
+                ),
             }
             for link in links
             if link.skill
@@ -836,10 +905,13 @@ class OriginalCertificationDetailMiniSerializer(serializers.ModelSerializer):
 
     def get_primary_skill(self, obj):
         skills = self.get_skills(obj)
+
         return skills[0] if skills else None
 
     def _platform_slug(self, name):
-        name = (name or "").strip().lower()
+        name = (
+            name or ""
+        ).strip().lower()
 
         mapping = {
             "coursera": "coursera",
@@ -849,20 +921,41 @@ class OriginalCertificationDetailMiniSerializer(serializers.ModelSerializer):
             "master class": "masterclass",
         }
 
-        return mapping.get(name, name.replace(" ", "-"))
+        return mapping.get(
+            name,
+            name.replace(" ", "-"),
+        )
 
     def _url(self, value):
         if not value:
             return None
 
-        request = self.context.get("request")
-        url = value.url if hasattr(value, "url") else str(value)
+        request = self.context.get(
+            "request"
+        )
 
-        if url.startswith("http://") or url.startswith("https://"):
+        try:
+            url = value.url
+        except (AttributeError, ValueError):
+            url = str(value).strip()
+
+        if not url:
+            return None
+
+        if url.startswith(
+            ("http://", "https://")
+        ):
             return url
 
-        return request.build_absolute_uri(url) if request else url
+        if request:
+            if not url.startswith("/"):
+                url = f"/{url}"
 
+            return request.build_absolute_uri(
+                url
+            )
+
+        return url
 
 class OriginalCertificationSerializer(serializers.ModelSerializer):
     certification_title = serializers.CharField(
