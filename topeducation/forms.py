@@ -4,6 +4,7 @@ from django_select2.forms import ModelSelect2Widget
 from django.core.exceptions import ValidationError
 from .models import Marca, MarcaPermisos
 from .models import *
+from django.db.models import Q
 
 class UniSelect2(ModelSelect2Widget):
     model = Universidades
@@ -151,16 +152,115 @@ class OriginalsForm(forms.ModelForm):
         model = Original
         fields = '__all__'
 
+
 class OriginalCertForm(forms.ModelForm):
+
     class Meta:
         model = OriginalCertification
-        fields = ['certification', 'title', 'posicion', 'hist', 'fondo']
+
+        fields = [
+            "certification",
+            "title",
+            "posicion",
+            "hist",
+            "fondo",
+        ]
+
         widgets = {
-            'fondo': forms.ClearableFileInput(attrs={
-                'class': 'w-full border border-white bg-white text-neutral-950 rounded-lg px-4 py-1',
-                'onchange': 'previewImage(event, this.id)'
-            }),
+            "title": forms.TextInput(
+                attrs={
+                    "class": (
+                        "w-full border border-white bg-white "
+                        "text-neutral-950 rounded-lg px-4 py-2"
+                    )
+                }
+            ),
+
+            "posicion": forms.NumberInput(
+                attrs={
+                    "class": (
+                        "w-full border border-white bg-white "
+                        "text-neutral-950 rounded-lg px-4 py-2"
+                    ),
+                    "min": 1,
+                }
+            ),
+
+            "hist": forms.Textarea(
+                attrs={
+                    "class": (
+                        "w-full border border-white bg-white "
+                        "text-neutral-950 rounded-lg px-4 py-2"
+                    ),
+                    "rows": 4,
+                }
+            ),
+
+            "fondo": forms.ClearableFileInput(
+                attrs={
+                    "class": (
+                        "w-full border border-white bg-white "
+                        "text-neutral-950 rounded-lg px-4 py-1"
+                    ),
+                    "onchange": "previewImage(event, this.id)",
+                }
+            ),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        current_certification_id = getattr(
+            self.instance,
+            "certification_id",
+            None,
+        )
+
+        queryset = (
+            Certificaciones.objects
+            .filter(vigente_certificacion=True)
+            .exclude(nombre__isnull=True)
+            .exclude(nombre="")
+            .only(
+                "id",
+                "nombre",
+                "slug",
+            )
+            .order_by("-id")
+        )
+
+        # Si la certificación actual no está vigente,
+        # igualmente debe aparecer seleccionada.
+        if current_certification_id:
+            queryset = (
+                Certificaciones.objects
+                .filter(
+                    Q(vigente_certificacion=True)
+                    | Q(id=current_certification_id)
+                )
+                .exclude(nombre__isnull=True)
+                .exclude(nombre="")
+                .only(
+                    "id",
+                    "nombre",
+                    "slug",
+                )
+                .order_by("-id")
+            )
+
+        self.fields["certification"].queryset = queryset
+
+        self.fields["certification"].widget.attrs.update({
+            "class": (
+                "w-full border border-white bg-white "
+                "text-neutral-950 rounded-lg px-4 py-2"
+            )
+        })
+
+        self.fields["certification"].label_from_instance = (
+            lambda obj: f"{obj.id} - {obj.nombre}"
+        )
+        
 class BaseOriginalCertFormSet(BaseInlineFormSet):
     def clean(self):
         super().clean()

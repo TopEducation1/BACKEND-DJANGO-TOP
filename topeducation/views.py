@@ -1135,31 +1135,150 @@ def createOriginal(request):
         'formset': formset,
     })
 
-def updateOriginal(request, original_id):
-    original = get_object_or_404(Original, id=original_id)
 
-    if request.method == 'POST':
-        original_form = OriginalsForm(request.POST,request.FILES, instance=original)
-        formset = OriginalCertFormSet(request.POST,request.FILES, instance=original, prefix='certifications')
+def updateOriginal(request, original_id):
+    original = get_object_or_404(
+        Original.objects.only(
+            "id",
+            "name",
+            "slug",
+            "extr",
+            "image",
+            "biog",
+            "esta",
+        ),
+        id=original_id,
+    )
+
+    # Solo carga las relaciones de este Original.
+    original_certifications_qs = (
+        OriginalCertification.objects
+        .filter(original_id=original.id)
+        .select_related(
+            "certification",
+            "certification__plataforma_certificacion",
+            "certification__universidad_certificacion",
+            "certification__empresa_certificacion",
+        )
+        .only(
+            # OriginalCertification
+            "id",
+            "original_id",
+            "certification_id",
+            "title",
+            "posicion",
+            "hist",
+            "fondo",
+
+            # Certificación
+            "certification__id",
+            "certification__nombre",
+            "certification__slug",
+            "certification__imagen_final",
+
+            # Plataforma
+            "certification__plataforma_certificacion_id",
+            "certification__plataforma_certificacion__id",
+            "certification__plataforma_certificacion__nombre",
+
+            # Universidad
+            "certification__universidad_certificacion_id",
+            "certification__universidad_certificacion__id",
+            "certification__universidad_certificacion__nombre",
+
+            # Empresa
+            "certification__empresa_certificacion_id",
+            "certification__empresa_certificacion__id",
+            "certification__empresa_certificacion__nombre",
+        )
+        .order_by("posicion", "id")
+    )
+
+    if request.method == "POST":
+        original_form = OriginalsForm(
+            request.POST,
+            request.FILES,
+            instance=original,
+        )
+
+        formset = OriginalCertFormSet(
+            request.POST,
+            request.FILES,
+            instance=original,
+            prefix="certifications",
+            queryset=original_certifications_qs,
+        )
 
         if original_form.is_valid() and formset.is_valid():
-            original_form.save()
-            formset.save()  # aplica altas, bajas y modificaciones
-            link = reverse("updateOriginal", args=[original.id])
-            messages.success(request, f'Original: <a class="font-bold" href="{link}">{original.name}</a> Actualizado correctamente')
-            return redirect('originals')
-        else:
-            print("Errores en form:", original_form.errors)
-            print("Errores en formset:", formset.errors)
-    else:
-        original_form = OriginalsForm(instance=original)
-        formset = OriginalCertFormSet(instance=original, prefix='certifications')
+            try:
+                with transaction.atomic():
+                    updated_original = original_form.save()
+                    formset.save()
 
-    return render(request, 'category/originals/update.html', {
-        'original_form': original_form,
-        'formset': formset,
-        'original': original,
-    })
+                link = reverse(
+                    "updateOriginal",
+                    args=[updated_original.id],
+                )
+
+                messages.success(
+                    request,
+                    (
+                        f'Original: <a class="font-bold" href="{link}">'
+                        f"{updated_original.name}</a> "
+                        "actualizado correctamente."
+                    ),
+                )
+
+                return redirect("originals")
+
+            except Exception:
+                logger.exception(
+                    "Error guardando Original %s y su formset",
+                    original.id,
+                )
+
+                messages.error(
+                    request,
+                    "No fue posible guardar el original. Revisa los registros del servidor.",
+                )
+
+        else:
+            logger.warning(
+                "Formulario inválido al actualizar Original %s. "
+                "Errores formulario: %s. "
+                "Errores formset: %s. "
+                "Errores generales formset: %s",
+                original.id,
+                original_form.errors.as_json(),
+                formset.errors,
+                formset.non_form_errors(),
+            )
+
+            messages.error(
+                request,
+                "Revisa los campos marcados antes de guardar.",
+            )
+
+    else:
+        original_form = OriginalsForm(
+            instance=original,
+        )
+
+        formset = OriginalCertFormSet(
+            instance=original,
+            prefix="certifications",
+            queryset=original_certifications_qs,
+        )
+
+    return render(
+        request,
+        "category/originals/update.html",
+        {
+            "original_form": original_form,
+            "formset": formset,
+            "original": original,
+        },
+    )
 
 def rankings(request):
     q = (request.GET.get("q") or "").strip()
