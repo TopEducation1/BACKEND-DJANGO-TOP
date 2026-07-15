@@ -154,10 +154,34 @@ class OriginalsForm(forms.ModelForm):
 
 
 class OriginalCertForm(forms.ModelForm):
+    certification_search = forms.CharField(
+        required=False,
+        label="Certificación",
+        widget=forms.TextInput(
+            attrs={
+                "class": (
+                    "original-certification-search "
+                    "w-full rounded-lg border border-white "
+                    "bg-white px-4 py-2 text-neutral-950"
+                ),
+                "placeholder": "Buscar certificación...",
+                "autocomplete": "off",
+            }
+        ),
+    )
+
+    certification = forms.ModelChoiceField(
+        queryset=Certificaciones.objects.none(),
+        required=True,
+        widget=forms.HiddenInput(
+            attrs={
+                "class": "original-certification-id",
+            }
+        ),
+    )
 
     class Meta:
         model = OriginalCertification
-
         fields = [
             "certification",
             "title",
@@ -170,37 +194,34 @@ class OriginalCertForm(forms.ModelForm):
             "title": forms.TextInput(
                 attrs={
                     "class": (
-                        "w-full border border-white bg-white "
-                        "text-neutral-950 rounded-lg px-4 py-2"
-                    )
+                        "w-full rounded-lg border border-white "
+                        "bg-white px-4 py-2 text-neutral-950"
+                    ),
                 }
             ),
-
             "posicion": forms.NumberInput(
                 attrs={
                     "class": (
-                        "w-full border border-white bg-white "
-                        "text-neutral-950 rounded-lg px-4 py-2"
+                        "w-full rounded-lg border border-white "
+                        "bg-white px-4 py-2 text-neutral-950"
                     ),
                     "min": 1,
                 }
             ),
-
             "hist": forms.Textarea(
                 attrs={
                     "class": (
-                        "w-full border border-white bg-white "
-                        "text-neutral-950 rounded-lg px-4 py-2"
+                        "w-full rounded-lg border border-white "
+                        "bg-white px-4 py-2 text-neutral-950"
                     ),
                     "rows": 4,
                 }
             ),
-
             "fondo": forms.ClearableFileInput(
                 attrs={
                     "class": (
-                        "w-full border border-white bg-white "
-                        "text-neutral-950 rounded-lg px-4 py-1"
+                        "w-full rounded-lg border border-white "
+                        "bg-white px-4 py-1 text-neutral-950"
                     ),
                     "onchange": "previewImage(event, this.id)",
                 }
@@ -216,50 +237,63 @@ class OriginalCertForm(forms.ModelForm):
             None,
         )
 
-        queryset = (
+        posted_certification_id = None
+
+        if self.is_bound:
+            field_name = self.add_prefix("certification")
+            posted_certification_id = self.data.get(field_name)
+
+        allowed_ids = []
+
+        if current_certification_id:
+            allowed_ids.append(current_certification_id)
+
+        if posted_certification_id:
+            try:
+                allowed_ids.append(
+                    int(posted_certification_id)
+                )
+            except (TypeError, ValueError):
+                pass
+
+        self.fields["certification"].queryset = (
             Certificaciones.objects
-            .filter(vigente_certificacion=True)
-            .exclude(nombre__isnull=True)
-            .exclude(nombre="")
+            .filter(id__in=allowed_ids)
             .only(
                 "id",
                 "nombre",
-                "slug",
             )
-            .order_by("-id")
         )
 
-        # Si la certificación actual no está vigente,
-        # igualmente debe aparecer seleccionada.
         if current_certification_id:
-            queryset = (
-                Certificaciones.objects
-                .filter(
-                    Q(vigente_certificacion=True)
-                    | Q(id=current_certification_id)
-                )
-                .exclude(nombre__isnull=True)
-                .exclude(nombre="")
-                .only(
-                    "id",
-                    "nombre",
-                    "slug",
-                )
-                .order_by("-id")
+            current_certification = getattr(
+                self.instance,
+                "certification",
+                None,
             )
 
-        self.fields["certification"].queryset = queryset
+            if current_certification:
+                self.fields[
+                    "certification_search"
+                ].initial = (
+                    f"{current_certification.id} - "
+                    f"{current_certification.nombre}"
+                )
 
-        self.fields["certification"].widget.attrs.update({
-            "class": (
-                "w-full border border-white bg-white "
-                "text-neutral-950 rounded-lg px-4 py-2"
-            )
-        })
+    def clean(self):
+        cleaned_data = super().clean()
 
-        self.fields["certification"].label_from_instance = (
-            lambda obj: f"{obj.id} - {obj.nombre}"
+        certification = cleaned_data.get(
+            "certification"
         )
+
+        if not certification:
+            self.add_error(
+                "certification_search",
+                "Debes seleccionar una certificación válida.",
+            )
+
+        return cleaned_data
         
 class BaseOriginalCertFormSet(BaseInlineFormSet):
     def clean(self):
