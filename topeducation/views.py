@@ -7367,13 +7367,12 @@ def _build_mx_headers(raw_body, event_id, occurred_at):
     }
 
 def get_mx_package_code(plan_value):
-    plan_value = str(plan_value or "free").strip().lower()
+    plan_value = str(
+        plan_value or ""
+    ).strip().lower()
 
-    mapping = {
+    package_codes = {
         "free": "TOP_EDUCATION_FREE",
-
-        "monthly_basic": "TOP_EDUCATION_BASIC_MONTHLY",
-        "yearly_basic": "TOP_EDUCATION_BASIC_ANNUAL",
 
         "monthly_x": "TOP_EDUCATION_X_MONTHLY",
         "yearly_x": "TOP_EDUCATION_X_ANNUAL",
@@ -7382,7 +7381,7 @@ def get_mx_package_code(plan_value):
         "yearly_plus": "TOP_EDUCATION_PLUS_ANNUAL",
     }
 
-    return mapping.get(plan_value)
+    return package_codes.get(plan_value)
 
 def send_stripe_event_to_mx(
     *,
@@ -7980,9 +7979,6 @@ def build_learning_route_mx_payload(
     # =========================================================
     plan_payload = {
         "packageCode": package_code,
-
-        # Importante para el contrato de MX.
-        "planCode": package_code,
 
         "tier": tier,
 
