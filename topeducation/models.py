@@ -308,15 +308,19 @@ class Certificaciones(models.Model):
 
         indexes = [
             models.Index(
-                fields=[
-                    "tipo_certificacion",
-                ],
+                fields=["tipo_certificacion"],
                 name="cert_tipo_idx",
             ),
             models.Index(
-                fields=[
-                    "plataforma_certificacion",
-                ],
+                fields=["nivel_certificacion"],
+                name="cert_nivel_idx",
+            ),
+            models.Index(
+                fields=["language_normalized"],
+                name="cert_language_idx",
+            ),
+            models.Index(
+                fields=["plataforma_certificacion"],
                 name="cert_plat_idx",
             ),
             models.Index(
