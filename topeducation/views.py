@@ -1062,6 +1062,61 @@ def createTag(request):
         except Exception as e:
             messages.warning(request,f"{str(e)}")
 
+
+def search_original_certifications(request):
+    query = str(
+        request.GET.get("q") or ""
+    ).strip()
+
+    if len(query) < 2:
+        return JsonResponse(
+            {
+                "results": [],
+            }
+        )
+
+    queryset = (
+        Certificaciones.objects
+        .filter(vigente_certificacion=True)
+        .exclude(nombre__isnull=True)
+        .exclude(nombre="")
+    )
+
+    if query.isdigit():
+        queryset = queryset.filter(
+            Q(id=int(query))
+            | Q(nombre__icontains=query)
+        )
+    else:
+        queryset = queryset.filter(
+            Q(nombre__icontains=query)
+            | Q(slug__icontains=query)
+        )
+
+    results = list(
+        queryset
+        .values(
+            "id",
+            "nombre",
+        )
+        .order_by("nombre")[:20]
+    )
+
+    return JsonResponse(
+        {
+            "results": [
+                {
+                    "id": item["id"],
+                    "text": (
+                        f'{item["id"]} - '
+                        f'{item["nombre"]}'
+                    ),
+                }
+                for item in results
+            ],
+        }
+    )
+
 def originals(request):
     q = (request.GET.get("q") or "").strip()
 

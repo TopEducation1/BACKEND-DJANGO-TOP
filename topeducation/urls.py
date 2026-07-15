@@ -60,6 +60,7 @@ urlpatterns = [
     path('category/originals/',login_required(views.originals,login_url='/signin/'), name='originals'),
     path('category/originals/<int:original_id>/update/',login_required(views.updateOriginal,login_url='/signin/'), name='updateOriginal'),
     path('category/originals/create/',login_required(views.createOriginal,login_url='/signin/'), name='createOriginal'),
+    path("category/originals/certifications/search/",search_original_certifications,name="search_original_certifications",),
     path('certificaciones/', CertificationList.as_view(), name='certifications_list'),
     path('skills/', SkillsList.as_view(), name='skills_list'),
     path('universities/', UniversitiesList.as_view(), name='universities_list'),

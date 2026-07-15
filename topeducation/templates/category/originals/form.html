@@ -1,4 +1,9 @@
-<form id="original-form" enctype="multipart/form-data" method="POST">
+<form
+  id="original-form"
+  enctype="multipart/form-data"
+  method="POST"
+  data-certification-search-url="{% url 'search_original_certifications' %}"
+>
   {% csrf_token %}
 
   <div class="relative rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
@@ -23,6 +28,7 @@
       </div>
     </div>
 
+    <!-- Header -->
     <div class="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
       <div>
         <p class="text-xs font-black uppercase tracking-[0.22em] text-[#034694]">
@@ -45,23 +51,29 @@
           form="original-form"
           class="inline-flex items-center gap-2 rounded-full bg-[#034694] px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-70"
         >
-          <i id="submit-original-spinner" class="fa-solid fa-spinner fa-spin hidden"></i>
-          <span id="submit-original-text">Guardar original</span>
+          <i
+            id="submit-original-spinner"
+            class="fa-solid fa-spinner fa-spin hidden"
+          ></i>
+
+          <span id="submit-original-text">
+            Guardar original
+          </span>
         </button>
 
         <a
           id="cancel-original-btn"
-          class="rounded-full bg-slate-100 px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
           href="{% url 'originals' %}"
+          class="rounded-full bg-slate-100 px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
         >
           Cancelar
         </a>
       </div>
     </div>
 
-    <div class="grid grid-cols-1 gap-6 xl:grid-cols-12 cont-form">
+    <div class="cont-form grid grid-cols-1 gap-6 xl:grid-cols-12">
 
-      <!-- Datos del original -->
+      <!-- Datos principales -->
       <aside class="xl:col-span-4">
         <div class="sticky top-24 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
           <div class="mb-5">
@@ -77,7 +89,10 @@
           <div class="grid grid-cols-1 gap-5">
             {% for field in original_form %}
               <div>
-                <label class="mb-2 block text-sm font-bold text-slate-700" for="{{ field.id_for_label }}">
+                <label
+                  for="{{ field.id_for_label }}"
+                  class="mb-2 block text-sm font-bold text-slate-700"
+                >
                   {{ field.label }}
                 </label>
 
@@ -85,16 +100,16 @@
                   {% if field.value %}
                     <img
                       id="preview-{{ field.name }}"
-                      class="mb-3 max-h-56 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
                       src="{{ field.value.url }}"
                       alt="{{ field.label }}"
+                      class="mb-3 max-h-56 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
                     />
                   {% else %}
                     <img
                       id="preview-{{ field.name }}"
                       src="#"
-                      class="mb-3 hidden max-h-56 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
                       alt="{{ field.label }}"
+                      class="mb-3 hidden max-h-56 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
                     />
                   {% endif %}
 
@@ -126,9 +141,10 @@
         </div>
       </aside>
 
-      <!-- Listado -->
+      <!-- Certificaciones -->
       <section class="xl:col-span-8">
         <div class="rounded-[1.5rem] border border-slate-200 bg-white p-5">
+
           <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p class="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
@@ -152,98 +168,166 @@
           {{ formset.management_form }}
 
           <div id="formset-container" class="space-y-5">
+
             {% for form in formset %}
-              <div class="relative rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
+              <div
+                class="original-certification-form relative rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5"
+              >
+                <!-- Campos técnicos -->
+                {{ form.id }}
+
+                {% if form.DELETE %}
+                  <label class="absolute -right-2 -top-2 z-10 inline-flex cursor-pointer items-center gap-2 rounded-full bg-[#D33B3E] px-3 py-1.5 text-xs font-bold text-white shadow-sm">
+                    Eliminar
+                    {{ form.DELETE }}
+                  </label>
+                {% endif %}
+
                 <div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
 
+                  <!-- Columna izquierda -->
                   <div>
                     <div class="grid grid-cols-12 gap-3">
-                      {% for field in form %}
-                        {% if field.label == "Titulo" %}
-                          <div class="col-span-9">
-                            <label class="mb-2 block text-sm font-bold text-slate-700">
-                              {{ field.label }}
-                            </label>
-                            {{ field }}
-                            {% if field.errors %}
-                              <div class="mt-2 text-sm font-bold text-[#D33B3E]">{{ field.errors }}</div>
-                            {% endif %}
-                          </div>
 
-                        {% elif field.label == "Posición" %}
-                          <div class="col-span-3">
-                            <label class="mb-2 block text-sm font-bold text-slate-700">
-                              {{ field.label }}
-                            </label>
-                            {{ field }}
-                            {% if field.errors %}
-                              <div class="mt-2 text-sm font-bold text-[#D33B3E]">{{ field.errors }}</div>
-                            {% endif %}
-                          </div>
+                      <!-- Título -->
+                      <div class="col-span-9">
+                        <label
+                          for="{{ form.title.id_for_label }}"
+                          class="mb-2 block text-sm font-bold text-slate-700"
+                        >
+                          {{ form.title.label }}
+                        </label>
 
-                        {% elif field.label == "Historia" %}
-                          <div class="col-span-12">
-                            <label class="mb-2 block text-sm font-bold text-slate-700">
-                              {{ field.label }}
-                            </label>
-                            {{ field }}
-                            {% if field.errors %}
-                              <div class="mt-2 text-sm font-bold text-[#D33B3E]">{{ field.errors }}</div>
-                            {% endif %}
+                        {{ form.title }}
+
+                        {% for error in form.title.errors %}
+                          <div class="mt-2 text-sm font-bold text-[#D33B3E]">
+                            {{ error }}
                           </div>
-                        {% endif %}
-                      {% endfor %}
+                        {% endfor %}
+                      </div>
+
+                      <!-- Posición -->
+                      <div class="col-span-3">
+                        <label
+                          for="{{ form.posicion.id_for_label }}"
+                          class="mb-2 block text-sm font-bold text-slate-700"
+                        >
+                          {{ form.posicion.label }}
+                        </label>
+
+                        {{ form.posicion }}
+
+                        {% for error in form.posicion.errors %}
+                          <div class="mt-2 text-sm font-bold text-[#D33B3E]">
+                            {{ error }}
+                          </div>
+                        {% endfor %}
+                      </div>
+
+                      <!-- Historia -->
+                      <div class="col-span-12">
+                        <label
+                          for="{{ form.hist.id_for_label }}"
+                          class="mb-2 block text-sm font-bold text-slate-700"
+                        >
+                          {{ form.hist.label }}
+                        </label>
+
+                        {{ form.hist }}
+
+                        {% for error in form.hist.errors %}
+                          <div class="mt-2 text-sm font-bold text-[#D33B3E]">
+                            {{ error }}
+                          </div>
+                        {% endfor %}
+                      </div>
+
                     </div>
                   </div>
 
+                  <!-- Columna derecha -->
                   <div>
                     <div class="grid grid-cols-1 gap-4">
-                      {% for field in form %}
-                        {% if field.label == "Fondo" %}
-                          <div>
-                            <label class="mb-2 block text-sm font-bold text-slate-700">
-                              {{ field.label }}
-                            </label>
 
-                            {% if field.value %}
-                              <img
-                                id="preview-{{ field.id_for_label }}"
-                                class="mb-3 max-h-40 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
-                                src="{{ field.value.url }}"
-                                alt="{{ field.label }}"
-                              />
-                            {% else %}
-                              <img
-                                id="preview-{{ field.id_for_label }}"
-                                src="#"
-                                class="mb-3 hidden max-h-40 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
-                                alt="{{ field.label }}"
-                              />
-                            {% endif %}
+                      <!-- Fondo -->
+                      <div>
+                        <label
+                          for="{{ form.fondo.id_for_label }}"
+                          class="mb-2 block text-sm font-bold text-slate-700"
+                        >
+                          {{ form.fondo.label }}
+                        </label>
 
-                            {{ field }}
-                          </div>
-
-                        {% elif field.label == "Certificación" %}
-                          <div>
-                            <label class="mb-2 block text-sm font-bold text-slate-700">
-                              {{ field.label }}
-                            </label>
-                            {{ field }}
-                            {% if field.errors %}
-                              <div class="mt-2 text-sm font-bold text-[#D33B3E]">{{ field.errors }}</div>
-                            {% endif %}
-                          </div>
-
-                        {% elif field.label == "Delete" %}
-                          <label class="absolute -right-2 -top-2 inline-flex items-center gap-2 rounded-full bg-[#D33B3E] px-3 py-1.5 text-xs font-bold text-white shadow-sm">
-                            Eliminar {{ field }}
-                          </label>
-
-                        {% elif field.label == "Id" %}
-                          {{ field }}
+                        {% if form.instance.fondo %}
+                          <img
+                            id="preview-{{ form.fondo.id_for_label }}"
+                            src="{{ form.instance.fondo.url }}"
+                            alt="Fondo"
+                            class="mb-3 max-h-40 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
+                          />
+                        {% else %}
+                          <img
+                            id="preview-{{ form.fondo.id_for_label }}"
+                            src="#"
+                            alt="Fondo"
+                            class="mb-3 hidden max-h-40 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
+                          />
                         {% endif %}
+
+                        {{ form.fondo }}
+
+                        {% for error in form.fondo.errors %}
+                          <div class="mt-2 text-sm font-bold text-[#D33B3E]">
+                            {{ error }}
+                          </div>
+                        {% endfor %}
+                      </div>
+
+                      <!-- Autocomplete de certificación -->
+                      <div
+                        class="original-certification-autocomplete relative"
+                      >
+                        <label
+                          for="{{ form.certification_search.id_for_label }}"
+                          class="mb-2 block text-sm font-bold text-slate-700"
+                        >
+                          Certificación
+                        </label>
+
+                        <!-- ID real enviado a Django -->
+                        {{ form.certification }}
+
+                        <!-- Buscador visible -->
+                        {{ form.certification_search }}
+
+                        <div
+                          class="original-certification-results absolute left-0 right-0 top-full z-[100] mt-1 hidden max-h-64 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.18)]"
+                        ></div>
+
+                        <p class="mt-2 text-xs text-slate-400">
+                          Escribe al menos dos caracteres y selecciona una certificación de la lista.
+                        </p>
+
+                        {% for error in form.certification.errors %}
+                          <div class="mt-2 text-sm font-bold text-[#D33B3E]">
+                            {{ error }}
+                          </div>
+                        {% endfor %}
+
+                        {% for error in form.certification_search.errors %}
+                          <div class="mt-2 text-sm font-bold text-[#D33B3E]">
+                            {{ error }}
+                          </div>
+                        {% endfor %}
+                      </div>
+
+                      {% for error in form.non_field_errors %}
+                        <div class="rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 px-3 py-2 text-sm font-bold text-[#D33B3E]">
+                          {{ error }}
+                        </div>
                       {% endfor %}
+
                     </div>
                   </div>
 
@@ -252,59 +336,104 @@
             {% endfor %}
           </div>
 
-          <!-- Plantilla oculta para nuevos formularios -->
+          <!-- Plantilla para formularios nuevos -->
           <div id="empty-form" class="hidden">
-            <div class="relative rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
+            <div
+              class="original-certification-form relative rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5"
+            >
+              {{ formset.empty_form.id }}
+
+              <label class="absolute -right-2 -top-2 z-10 inline-flex cursor-pointer items-center gap-2 rounded-full bg-[#D33B3E] px-3 py-1.5 text-xs font-bold text-white shadow-sm">
+                Eliminar
+                {{ formset.empty_form.DELETE }}
+              </label>
+
               <div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
 
+                <!-- Columna izquierda -->
                 <div>
                   <div class="grid grid-cols-12 gap-3">
+
                     <div class="col-span-9">
-                      <label for="id_certifications-__prefix__-title" class="mb-2 block text-sm font-bold text-slate-700">
-                        Titulo
+                      <label
+                        for="id_certifications-__prefix__-title"
+                        class="mb-2 block text-sm font-bold text-slate-700"
+                      >
+                        Título
                       </label>
+
                       {{ formset.empty_form.title }}
                     </div>
 
                     <div class="col-span-3">
-                      <label for="id_certifications-__prefix__-posicion" class="mb-2 block text-sm font-bold text-slate-700">
+                      <label
+                        for="id_certifications-__prefix__-posicion"
+                        class="mb-2 block text-sm font-bold text-slate-700"
+                      >
                         Posición
                       </label>
+
                       {{ formset.empty_form.posicion }}
                     </div>
 
                     <div class="col-span-12">
-                      <label for="id_certifications-__prefix__-hist" class="mb-2 block text-sm font-bold text-slate-700">
+                      <label
+                        for="id_certifications-__prefix__-hist"
+                        class="mb-2 block text-sm font-bold text-slate-700"
+                      >
                         Historia
                       </label>
+
                       {{ formset.empty_form.hist }}
                     </div>
+
                   </div>
                 </div>
 
+                <!-- Columna derecha -->
                 <div>
                   <div class="grid grid-cols-1 gap-4">
+
                     <div>
-                      <label for="id_certifications-__prefix__-fondo" class="mb-2 block text-sm font-bold text-slate-700">
+                      <label
+                        for="id_certifications-__prefix__-fondo"
+                        class="mb-2 block text-sm font-bold text-slate-700"
+                      >
                         Fondo
                       </label>
+
+                      <img
+                        id="preview-id_certifications-__prefix__-fondo"
+                        src="#"
+                        alt="Fondo"
+                        class="mb-3 hidden max-h-40 w-full rounded-2xl border border-slate-200 bg-white object-contain p-3"
+                      />
+
                       {{ formset.empty_form.fondo }}
                     </div>
 
-                    <div>
-                      <label for="id_certifications-__prefix__-certification" class="mb-2 block text-sm font-bold text-slate-700">
+                    <div
+                      class="original-certification-autocomplete relative"
+                    >
+                      <label
+                        for="id_certifications-__prefix__-certification_search"
+                        class="mb-2 block text-sm font-bold text-slate-700"
+                      >
                         Certificación
                       </label>
+
                       {{ formset.empty_form.certification }}
+                      {{ formset.empty_form.certification_search }}
+
+                      <div
+                        class="original-certification-results absolute left-0 right-0 top-full z-[100] mt-1 hidden max-h-64 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.18)]"
+                      ></div>
+
+                      <p class="mt-2 text-xs text-slate-400">
+                        Escribe al menos dos caracteres y selecciona una certificación.
+                      </p>
                     </div>
 
-                    <div class="hidden">
-                      {{ formset.empty_form.DELETE }}
-                    </div>
-
-                    <div class="hidden">
-                      {{ formset.empty_form.id }}
-                    </div>
                   </div>
                 </div>
 
@@ -333,92 +462,482 @@
 </form>
 
 <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const formsetContainer = document.getElementById('formset-container');
-    const addBtn = document.getElementById('add-form');
-    const emptyFormDiv = document.getElementById('empty-form');
-    const totalForms = document.getElementById('id_certifications-TOTAL_FORMS');
+document.addEventListener("DOMContentLoaded", function () {
+  const form = document.getElementById("original-form");
 
-    if (addBtn && formsetContainer && emptyFormDiv && totalForms) {
-      addBtn.addEventListener('click', () => {
-        let currentCount = parseInt(totalForms.value, 10);
+  const formsetContainer =
+    document.getElementById("formset-container");
 
-        let newFormHtml = emptyFormDiv.innerHTML.replace(/__prefix__/g, currentCount);
+  const addButton =
+    document.getElementById("add-form");
 
-        let tempDiv = document.createElement('div');
-        tempDiv.innerHTML = newFormHtml;
+  const emptyForm =
+    document.getElementById("empty-form");
 
-        tempDiv.querySelectorAll('input, select, textarea, label').forEach(el => {
-          if (el.name) el.name = el.name.replace('__prefix__', currentCount);
-          if (el.id) el.id = el.id.replace('__prefix__', currentCount);
-          if (el.htmlFor) el.htmlFor = el.htmlFor.replace('__prefix__', currentCount);
+  const totalForms =
+    document.getElementById(
+      "id_certifications-TOTAL_FORMS"
+    );
 
-          if (el.tagName.toLowerCase() === 'input' && el.type !== 'hidden' && el.type !== 'checkbox') {
-            el.value = '';
-          }
+  const searchUrl =
+    form?.dataset?.certificationSearchUrl || "";
 
-          if (el.type === 'checkbox') {
-            el.checked = false;
-          }
-        });
+  let activeRequestController = null;
 
-        formsetContainer.appendChild(tempDiv.firstElementChild);
-        totalForms.value = currentCount + 1;
-      });
-    }
+  function debounce(callback, delay = 350) {
+    let timeoutId = null;
 
-    initOriginalFormLoading();
-  });
+    return function (...args) {
+      window.clearTimeout(timeoutId);
 
-  function previewImage(event, fieldName) {
-    const input = event.target;
-    const imgPreview = document.getElementById('preview-' + fieldName);
-
-    if (!imgPreview) return;
-
-    if (input.files && input.files[0]) {
-      const reader = new FileReader();
-
-      reader.onload = function(e) {
-        imgPreview.src = e.target.result;
-        imgPreview.classList.remove('hidden');
-      };
-
-      reader.readAsDataURL(input.files[0]);
-    }
+      timeoutId = window.setTimeout(
+        () => callback(...args),
+        delay
+      );
+    };
   }
 
-  function initOriginalFormLoading() {
-    const form = document.getElementById('original-form');
-    const loading = document.getElementById('original-form-loading');
-    const submitBtn = document.getElementById('submit-original-btn');
-    const submitText = document.getElementById('submit-original-text');
-    const spinner = document.getElementById('submit-original-spinner');
-    const cancelBtn = document.getElementById('cancel-original-btn');
+  function escapeHtml(value) {
+    return String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
-    if (!form) return;
+  function initializeCertificationAutocomplete(
+    container = document
+  ) {
+    const wrappers = container.querySelectorAll(
+      ".original-certification-autocomplete"
+    );
 
-    form.addEventListener('submit', function () {
-      if (submitBtn) {
-        submitBtn.disabled = true;
+    wrappers.forEach((wrapper) => {
+      if (
+        wrapper.dataset.autocompleteReady === "1"
+      ) {
+        return;
+      }
+
+      wrapper.dataset.autocompleteReady = "1";
+
+      const searchInput = wrapper.querySelector(
+        ".original-certification-search"
+      );
+
+      const hiddenInput = wrapper.querySelector(
+        ".original-certification-id"
+      );
+
+      const resultsContainer = wrapper.querySelector(
+        ".original-certification-results"
+      );
+
+      if (
+        !searchInput ||
+        !hiddenInput ||
+        !resultsContainer
+      ) {
+        console.warn(
+          "Autocomplete sin campos requeridos:",
+          wrapper
+        );
+
+        return;
+      }
+
+      function hideResults() {
+        resultsContainer.classList.add("hidden");
+        resultsContainer.innerHTML = "";
+      }
+
+      function showMessage(message, isError = false) {
+        resultsContainer.innerHTML = `
+          <div class="px-4 py-3 text-sm ${
+            isError
+              ? "font-bold text-[#D33B3E]"
+              : "text-slate-500"
+          }">
+            ${escapeHtml(message)}
+          </div>
+        `;
+
+        resultsContainer.classList.remove(
+          "hidden"
+        );
+      }
+
+      function renderResults(items) {
+        resultsContainer.innerHTML = "";
+
+        if (!items.length) {
+          showMessage(
+            "No se encontraron certificaciones."
+          );
+
+          return;
+        }
+
+        items.forEach((item) => {
+          const button =
+            document.createElement("button");
+
+          button.type = "button";
+
+          button.className = [
+            "block",
+            "w-full",
+            "border-b",
+            "border-slate-100",
+            "px-4",
+            "py-3",
+            "text-left",
+            "text-sm",
+            "text-slate-800",
+            "transition",
+            "hover:bg-slate-100",
+            "last:border-b-0",
+          ].join(" ");
+
+          button.innerHTML = `
+            <span class="block font-bold text-slate-900">
+              ${escapeHtml(item.text)}
+            </span>
+          `;
+
+          button.addEventListener(
+            "click",
+            function () {
+              hiddenInput.value = item.id;
+              searchInput.value = item.text;
+
+              searchInput.dataset.selectedText =
+                item.text;
+
+              hideResults();
+            }
+          );
+
+          resultsContainer.appendChild(button);
+        });
+
+        resultsContainer.classList.remove(
+          "hidden"
+        );
+      }
+
+      const runSearch = debounce(
+        async function () {
+          const query =
+            searchInput.value.trim();
+
+          if (query.length < 2) {
+            hideResults();
+            return;
+          }
+
+          if (!searchUrl) {
+            showMessage(
+              "No está configurada la URL de búsqueda.",
+              true
+            );
+
+            return;
+          }
+
+          if (activeRequestController) {
+            activeRequestController.abort();
+          }
+
+          activeRequestController =
+            new AbortController();
+
+          showMessage("Buscando...");
+
+          try {
+            const response = await fetch(
+              `${searchUrl}?q=${encodeURIComponent(query)}`,
+              {
+                headers: {
+                  Accept: "application/json",
+                },
+                signal:
+                  activeRequestController.signal,
+              }
+            );
+
+            if (!response.ok) {
+              throw new Error(
+                `HTTP ${response.status}`
+              );
+            }
+
+            const data =
+              await response.json();
+
+            const results = Array.isArray(
+              data?.results
+            )
+              ? data.results
+              : [];
+
+            renderResults(results);
+          } catch (error) {
+            if (error?.name === "AbortError") {
+              return;
+            }
+
+            console.error(
+              "Error buscando certificaciones:",
+              error
+            );
+
+            showMessage(
+              "No fue posible buscar certificaciones.",
+              true
+            );
+          }
+        },
+        350
+      );
+
+      searchInput.addEventListener(
+        "input",
+        function () {
+          const selectedText =
+            searchInput.dataset.selectedText || "";
+
+          if (
+            searchInput.value.trim() !==
+            selectedText.trim()
+          ) {
+            hiddenInput.value = "";
+          }
+
+          runSearch();
+        }
+      );
+
+      searchInput.addEventListener(
+        "focus",
+        function () {
+          if (
+            resultsContainer.children.length
+          ) {
+            resultsContainer.classList.remove(
+              "hidden"
+            );
+          }
+        }
+      );
+
+      document.addEventListener(
+        "click",
+        function (event) {
+          if (!wrapper.contains(event.target)) {
+            hideResults();
+          }
+        }
+      );
+    });
+  }
+
+  function addFormsetRow() {
+    if (
+      !formsetContainer ||
+      !emptyForm ||
+      !totalForms
+    ) {
+      return;
+    }
+
+    const currentCount = Number.parseInt(
+      totalForms.value,
+      10
+    );
+
+    if (Number.isNaN(currentCount)) {
+      return;
+    }
+
+    const html = emptyForm.innerHTML.replace(
+      /__prefix__/g,
+      String(currentCount)
+    );
+
+    const temporaryContainer =
+      document.createElement("div");
+
+    temporaryContainer.innerHTML =
+      html.trim();
+
+    const newForm =
+      temporaryContainer.firstElementChild;
+
+    if (!newForm) {
+      return;
+    }
+
+    newForm
+      .querySelectorAll(
+        "input, select, textarea"
+      )
+      .forEach((field) => {
+        if (
+          field.type === "hidden"
+        ) {
+          if (
+            !field.name.endsWith("-id")
+          ) {
+            field.value = "";
+          }
+
+          return;
+        }
+
+        if (
+          field.type === "checkbox" ||
+          field.type === "radio"
+        ) {
+          field.checked = false;
+          return;
+        }
+
+        if (field.type === "file") {
+          field.value = "";
+          return;
+        }
+
+        field.value = "";
+      });
+
+    formsetContainer.appendChild(newForm);
+
+    totalForms.value =
+      currentCount + 1;
+
+    initializeCertificationAutocomplete(
+      newForm
+    );
+  }
+
+  if (addButton) {
+    addButton.addEventListener(
+      "click",
+      addFormsetRow
+    );
+  }
+
+  initializeCertificationAutocomplete(
+    document
+  );
+
+  initOriginalFormLoading();
+});
+
+function previewImage(event, fieldName) {
+  const input = event.target;
+
+  const imagePreview = document.getElementById(
+    "preview-" + fieldName
+  );
+
+  if (!imagePreview) {
+    return;
+  }
+
+  if (
+    input.files &&
+    input.files[0]
+  ) {
+    const reader = new FileReader();
+
+    reader.onload = function (loadEvent) {
+      imagePreview.src =
+        loadEvent.target.result;
+
+      imagePreview.classList.remove(
+        "hidden"
+      );
+    };
+
+    reader.readAsDataURL(
+      input.files[0]
+    );
+  }
+}
+
+function initOriginalFormLoading() {
+  const form =
+    document.getElementById(
+      "original-form"
+    );
+
+  const loading =
+    document.getElementById(
+      "original-form-loading"
+    );
+
+  const submitButton =
+    document.getElementById(
+      "submit-original-btn"
+    );
+
+  const submitText =
+    document.getElementById(
+      "submit-original-text"
+    );
+
+  const spinner =
+    document.getElementById(
+      "submit-original-spinner"
+    );
+
+  const cancelButton =
+    document.getElementById(
+      "cancel-original-btn"
+    );
+
+  if (!form) {
+    return;
+  }
+
+  form.addEventListener(
+    "submit",
+    function () {
+      if (submitButton) {
+        submitButton.disabled = true;
       }
 
       if (submitText) {
-        submitText.textContent = 'Guardando...';
+        submitText.textContent =
+          "Guardando...";
       }
 
       if (spinner) {
-        spinner.classList.remove('hidden');
+        spinner.classList.remove(
+          "hidden"
+        );
       }
 
-      if (cancelBtn) {
-        cancelBtn.classList.add('pointer-events-none', 'opacity-60');
+      if (cancelButton) {
+        cancelButton.classList.add(
+          "pointer-events-none",
+          "opacity-60"
+        );
       }
 
       if (loading) {
-        loading.classList.remove('hidden');
-        loading.classList.add('flex');
+        loading.classList.remove(
+          "hidden"
+        );
+
+        loading.classList.add(
+          "flex"
+        );
       }
-    });
-  }
+    }
+  );
+}
 </script>
