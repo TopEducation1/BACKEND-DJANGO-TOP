@@ -7855,7 +7855,6 @@ def send_b2c_access_event_to_mx(*, payload, user=None, route=None):
             "error": str(e),
         }
 
-MAX_PER_LEVEL = 3
 
 LEVEL_RULES = {
     "level_1": {
@@ -7892,62 +7891,6 @@ def normalize_text(value):
     return (value or "").strip().lower()
 
 
-def normalize_media_url(request, value):
-    if not value:
-        return ""
-
-    value = str(value).strip()
-
-    if not value or value.lower() in ["null", "none", "undefined"]:
-        return ""
-
-    if value.startswith("http://") or value.startswith("https://"):
-        return value
-
-    if value.startswith("/"):
-        return request.build_absolute_uri(value)
-
-    return request.build_absolute_uri(f"/media/{value}")
-
-
-def get_cert_image(request, cert):
-    image = cert.imagen_final or ""
-
-    if not image:
-        return ""
-
-    if image.startswith("http://") or image.startswith("https://"):
-        return image
-
-    return request.build_absolute_uri(image)
-
-def get_cert_institution(cert):
-    if cert.universidad_certificacion:
-        return cert.universidad_certificacion.nombre
-
-    if cert.empresa_certificacion:
-        return cert.empresa_certificacion.nombre
-
-    return "Top Education"
-
-def get_cert_provider(cert):
-    if cert.plataforma_certificacion:
-        return cert.plataforma_certificacion.nombre
-
-    return ""
-
-def get_cert_platform_logo(cert):
-    platform = getattr(cert, "plataforma_certificacion", None)
-
-    if not platform:
-        return ""
-
-    return (
-        getattr(platform, "plat_ico", None)
-        or getattr(platform, "icon", None)
-        or ""
-    )
-
 def annotate_skill_match(queryset, skill_ids):
     if not skill_ids:
         return queryset.annotate(
@@ -7971,33 +7914,19 @@ def annotate_skill_match(queryset, skill_ids):
         )
     )
 
-def apply_platform_level_filter(queryset, platform_id, level):
+def apply_platform_level_filter(
+    queryset,
+    platform_id,
+    level,
+):
     level = str(level or "").strip().upper()
 
-    if platform_id == 3:
-        # MasterClass puede tener ADVANCED, valores vacíos
-        # o textos no normalizados.
-        return queryset.filter(
-            Q(nivel_certificacion=level)
-            | Q(nivel_certificacion__isnull=True)
-            | Q(nivel_certificacion="")
-            | Q(nivel_certificacion__in=[
-                "NONE",
-                "None",
-                "none",
-                "UNCATEGORIZED",
-                "Uncategorized",
-                "uncategorized",
-                "ALL LEVELS",
-                "All Levels",
-                "all levels",
-                "MIXED",
-                "Mixed",
-                "mixed",
-            ])
-        )
+    # MasterClass no tiene niveles uniformes.
+    # No aplicamos filtro por nivel porque los OR degradan
+    # severamente la consulta en MySQL.
+    if int(platform_id) == 3:
+        return queryset
 
-    # Para edX y Coursera usamos igualdad exacta.
     return queryset.filter(
         nivel_certificacion=level,
     )
@@ -8010,7 +7939,11 @@ def select_recommendation_id(
     excluded_ids=None,
     require_skill_match=True,
 ):
-    excluded_ids = list(excluded_ids or [])
+    excluded_ids = [
+        int(item)
+        for item in (excluded_ids or [])
+        if item
+    ]
 
     queryset = (
         get_recommendation_base_queryset()
@@ -8020,9 +7953,9 @@ def select_recommendation_id(
     )
 
     queryset = apply_platform_level_filter(
-        queryset,
-        platform_id,
-        level,
+        queryset=queryset,
+        platform_id=platform_id,
+        level=level,
     )
 
     if excluded_ids:
@@ -8030,12 +7963,15 @@ def select_recommendation_id(
             id__in=excluded_ids,
         )
 
-    if require_skill_match:
-        queryset = annotate_skill_match(
-            queryset,
-            skill_ids,
-        ).filter(
-            has_skill_match=True,
+    if require_skill_match and skill_ids:
+        queryset = (
+            annotate_skill_match(
+                queryset,
+                skill_ids,
+            )
+            .filter(
+                has_skill_match=True,
+            )
         )
 
     return (
@@ -8117,40 +8053,6 @@ def get_recommendation_base_queryset():
         .exclude(nombre__exact="")
     )
     
-def get_cert_main_skill(cert):
-    skill = cert.skills.first()
-
-    if not skill:
-        return {
-            "name": "",
-            "icon": "",
-        }
-
-    return {
-        "name": skill.translate or skill.nombre or "",
-        "icon": skill.skill_ico or skill.skill_img or "",
-    }
-
-def serialize_recommended_cert(request, cert):
-    main_skill = get_cert_main_skill(cert)
-
-    return {
-        "id": cert.id,
-        "idInterno": cert.id_interno or "",
-        "colombiaCertificationId": cert.id,
-        "title": cert.nombre,
-        "level": cert.nivel_certificacion,
-        "hours": cert.tiempo_certificacion,
-        "institution": get_cert_institution(cert),
-        "provider": get_cert_provider(cert),
-        "platform_logo": get_cert_platform_logo(cert),
-        "main_skill": main_skill["name"],
-        "main_skill_icon": main_skill["icon"],
-        "image": get_cert_image(request, cert),
-        "slug": cert.slug,
-    }
-
-
 
 def get_topic_skill_ids(topics):
 
@@ -8280,28 +8182,6 @@ def get_valid_topic_skill_ids(topic_ids):
         .distinct()
     )
 
-def get_cert_ids_by_skills(skill_ids):
-    if not skill_ids:
-        return (
-            SkillsCertification.objects
-            .none()
-            .values_list(
-                "certificacion_id",
-                flat=True,
-            )
-        )
-
-    return (
-        SkillsCertification.objects
-        .filter(skill_id__in=skill_ids)
-        .values_list(
-            "certificacion_id",
-            flat=True,
-        )
-        .distinct()
-    )
-
-
 def build_level_recommendations(
     request,
     skill_ids,
@@ -8322,7 +8202,7 @@ def build_level_recommendations(
         int(rule.get("limit") or 3),
     )
 
-    one_per_platform = bool(
+    ensure_each_platform = bool(
         rule.get("one_per_platform")
     )
 
@@ -8332,11 +8212,10 @@ def build_level_recommendations(
     selected_ids = []
 
     # =========================================================
-    # NIVELES QUE DEBEN GARANTIZAR CADA PLATAFORMA
+    # NIVELES 2 Y 3
+    # Garantizar al menos una certificación por plataforma.
     # =========================================================
-    if one_per_platform:
-        # Paso 1:
-        # garantizar al menos una certificación por plataforma.
+    if ensure_each_platform:
         for platform_id in platform_ids:
             certification_id = select_recommendation_id(
                 platform_id=platform_id,
@@ -8346,9 +8225,6 @@ def build_level_recommendations(
                 require_skill_match=True,
             )
 
-            # Fallback:
-            # misma plataforma y nivel aunque no coincida
-            # directamente con el tema.
             if not certification_id:
                 certification_id = select_recommendation_id(
                     platform_id=platform_id,
@@ -8358,58 +8234,19 @@ def build_level_recommendations(
                     require_skill_match=False,
                 )
 
-            # Último fallback para MasterClass:
-            # cualquier certificación vigente de plataforma 3.
-            if not certification_id and platform_id == 3:
-                masterclass_queryset = (
-                    get_recommendation_base_queryset()
-                    .filter(
-                        plataforma_certificacion_id=3,
-                    )
-                )
-
-                if selected_ids:
-                    masterclass_queryset = (
-                        masterclass_queryset.exclude(
-                            id__in=selected_ids,
-                        )
-                    )
-
-                matched_masterclass = (
-                    annotate_skill_match(
-                        masterclass_queryset,
-                        skill_ids,
-                    )
-                    .filter(has_skill_match=True)
-                    .order_by("-id")
-                    .values_list("id", flat=True)
-                    .first()
-                )
-
-                certification_id = (
-                    matched_masterclass
-                    or masterclass_queryset
-                    .order_by("-id")
-                    .values_list("id", flat=True)
-                    .first()
-                )
-
             if certification_id:
-                selected_ids.append(
-                    certification_id
-                )
+                selected_ids.append(certification_id)
 
             if len(selected_ids) >= limit:
                 break
 
-        # Paso 2:
-        # nivel 2 tiene dos plataformas, pero requiere tres cards.
-        # Completamos priorizando coincidencias por habilidad.
+        # Nivel 2 tiene dos plataformas, pero requiere tres cards.
         while len(selected_ids) < limit:
-            candidates = []
+            selected_id = None
 
+            # Prioridad: coincidencia con habilidades.
             for platform_id in platform_ids:
-                candidate_id = select_recommendation_id(
+                selected_id = select_recommendation_id(
                     platform_id=platform_id,
                     level=level,
                     skill_ids=skill_ids,
@@ -8417,38 +8254,25 @@ def build_level_recommendations(
                     require_skill_match=True,
                 )
 
-                if candidate_id:
-                    candidates.append(candidate_id)
+                if selected_id:
+                    break
 
-            if candidates:
-                # Escogemos el ID más reciente entre las plataformas.
-                selected_id = max(candidates)
-
-                if selected_id not in selected_ids:
-                    selected_ids.append(selected_id)
-                    continue
-
-            # Fallback sin coincidencia por habilidad.
-            fallback_candidates = []
-
-            for platform_id in platform_ids:
-                candidate_id = select_recommendation_id(
-                    platform_id=platform_id,
-                    level=level,
-                    skill_ids=skill_ids,
-                    excluded_ids=selected_ids,
-                    require_skill_match=False,
-                )
-
-                if candidate_id:
-                    fallback_candidates.append(
-                        candidate_id
+            # Fallback: misma plataforma sin coincidencia por skill.
+            if not selected_id:
+                for platform_id in platform_ids:
+                    selected_id = select_recommendation_id(
+                        platform_id=platform_id,
+                        level=level,
+                        skill_ids=skill_ids,
+                        excluded_ids=selected_ids,
+                        require_skill_match=False,
                     )
 
-            if not fallback_candidates:
-                break
+                    if selected_id:
+                        break
 
-            selected_id = max(fallback_candidates)
+            if not selected_id:
+                break
 
             if selected_id in selected_ids:
                 break
@@ -8456,12 +8280,13 @@ def build_level_recommendations(
             selected_ids.append(selected_id)
 
     # =========================================================
-    # NIVEL 1: TRES DE COURSERA
+    # NIVEL 1
+    # Tres certificaciones de Coursera.
     # =========================================================
     else:
         platform_id = platform_ids[0]
 
-        matched_queryset = (
+        queryset = (
             get_recommendation_base_queryset()
             .filter(
                 plataforma_certificacion_id=platform_id,
@@ -8469,18 +8294,21 @@ def build_level_recommendations(
             )
         )
 
-        matched_queryset = (
-            annotate_skill_match(
-                matched_queryset,
-                skill_ids,
+        if skill_ids:
+            queryset = (
+                annotate_skill_match(
+                    queryset,
+                    skill_ids,
+                )
+                .filter(
+                    has_skill_match=True,
+                )
             )
-            .filter(has_skill_match=True)
-            .order_by("-id")
-            .values_list("id", flat=True)
-        )
 
         selected_ids = list(
-            matched_queryset[:limit]
+            queryset
+            .order_by("-id")
+            .values_list("id", flat=True)[:limit]
         )
 
         if len(selected_ids) < limit:
@@ -8495,10 +8323,8 @@ def build_level_recommendations(
             )
 
             if selected_ids:
-                fallback_queryset = (
-                    fallback_queryset.exclude(
-                        id__in=selected_ids,
-                    )
+                fallback_queryset = fallback_queryset.exclude(
+                    id__in=selected_ids,
                 )
 
             fallback_ids = list(
@@ -8511,8 +8337,8 @@ def build_level_recommendations(
 
     selected_ids = selected_ids[:limit]
 
-    recommendation_objects = (
-        load_recommendation_objects(selected_ids)
+    recommendation_objects = load_recommendation_objects(
+        selected_ids
     )
 
     return PersonalizedLeadRecommendationSerializer(
