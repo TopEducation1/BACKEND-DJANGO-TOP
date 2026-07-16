@@ -323,6 +323,8 @@ class Certificaciones(models.Model):
                 fields=["plataforma_certificacion"],
                 name="cert_plat_idx",
             ),
+
+            # Recomendaciones por plataforma y nivel.
             models.Index(
                 fields=[
                     "vigente_certificacion",
@@ -331,6 +333,16 @@ class Certificaciones(models.Model):
                     "id",
                 ],
                 name="idx_rec_platform_level",
+            ),
+
+            # Explora: filtra por estado e idioma y ordena/pagina por id.
+            models.Index(
+                fields=[
+                    "vigente_certificacion",
+                    "language_normalized",
+                    "id",
+                ],
+                name="idx_cert_active_lang",
             ),
         ]
 

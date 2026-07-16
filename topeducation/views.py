@@ -2893,16 +2893,296 @@ def build_certification_level_q(values):
             )
 
     return query
+
+def normalize_explore_filter_ids(raw_values):
+    normalized_ids = set()
+
+    for raw_value in raw_values or []:
+        try:
+            normalized_ids.add(int(raw_value))
+        except (TypeError, ValueError):
+            continue
+
+    return sorted(normalized_ids)
+
+
+def normalize_explore_filter_strings(
+    raw_values,
+    *,
+    lower=False,
+):
+    normalized_values = set()
+
+    for raw_value in raw_values or []:
+        clean_value = str(
+            raw_value or ""
+        ).strip()
+
+        if not clean_value:
+            continue
+
+        if lower:
+            clean_value = clean_value.lower()
+
+        normalized_values.add(clean_value)
+
+    return sorted(normalized_values)
+
+def apply_skills_domain_filter(
+    queryset,
+    *,
+    skill_ids=None,
+    skill_slugs=None,
+):
+    skill_ids = normalize_explore_filter_ids(
+        skill_ids
+    )
+
+    skill_slugs = (
+        normalize_explore_filter_strings(
+            skill_slugs
+        )
+    )
+
+    if not skill_ids and not skill_slugs:
+        return queryset
+
+    relation_queryset = (
+        SkillsCertification.objects
+        .order_by()
+    )
+
+    if skill_ids:
+        relation_queryset = (
+            relation_queryset.filter(
+                skill_id__in=skill_ids
+            )
+        )
+    else:
+        relation_queryset = (
+            relation_queryset.filter(
+                skill__slug__in=skill_slugs
+            )
+        )
+
+    certification_ids_subquery = (
+        relation_queryset
+        .values("certificacion_id")
+    )
+
+    return queryset.filter(
+        id__in=Subquery(
+            certification_ids_subquery
+        )
+    )
+
+def apply_single_skill_priority(
+    queryset,
+    *,
+    skill_id=None,
+    skill_slug=None,
+):
+    """
+    Conserva la prioridad anterior para una sola habilidad:
+    primero aparecen las certificaciones cuya habilidad
+    principal coincide con el filtro.
+
+    No se utiliza en dominios de varias habilidades.
+    """
+    if not skill_id and not skill_slug:
+        return queryset.order_by(
+            "-fecha_creado_cert",
+            "-id",
+        )
+
+    first_skill_relation = (
+        SkillsCertification.objects
+        .filter(
+            certificacion_id=OuterRef("pk")
+        )
+        .order_by(
+            "orden",
+            "id",
+        )
+    )
+
+    priority_condition = Q()
+
+    annotations = {}
+
+    if skill_id:
+        annotations["first_skill_id"] = (
+            Subquery(
+                first_skill_relation
+                .values("skill_id")[:1]
+            )
+        )
+
+        priority_condition |= Q(
+            first_skill_id=skill_id
+        )
+
+    else:
+        annotations["first_skill_slug"] = (
+            Subquery(
+                first_skill_relation
+                .values("skill__slug")[:1]
+            )
+        )
+
+        priority_condition |= Q(
+            first_skill_slug=skill_slug
+        )
+
+    queryset = queryset.annotate(
+        **annotations
+    )
+
+    return (
+        queryset
+        .annotate(
+            skill_priority=Case(
+                When(
+                    priority_condition,
+                    then=Value(0),
+                ),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by(
+            "skill_priority",
+            "-fecha_creado_cert",
+            "-id",
+        )
+    )
+
+def load_explore_certification_page(
+    certification_ids,
+):
+    original_order = []
+
+    for certification_id in (
+        certification_ids or []
+    ):
+        try:
+            certification_id = int(
+                certification_id
+            )
+        except (TypeError, ValueError):
+            continue
+
+        if certification_id not in original_order:
+            original_order.append(
+                certification_id
+            )
+
+    if not original_order:
+        return []
+
+    order_expression = Case(
+        *[
+            When(
+                id=certification_id,
+                then=Value(position),
+            )
+            for position, certification_id
+            in enumerate(original_order)
+        ],
+        default=Value(
+            len(original_order)
+        ),
+        output_field=IntegerField(),
+    )
+
+    skills_queryset = (
+        SkillsCertification.objects
+        .select_related("skill")
+        .only(
+            "id",
+            "certificacion_id",
+            "skill_id",
+            "orden",
+
+            "skill__id",
+            "skill__nombre",
+            "skill__translate",
+            "skill__slug",
+            "skill__skill_col",
+            "skill__skill_type",
+            "skill__skill_ico",
+            "skill__skill_img",
+        )
+        .order_by(
+            "orden",
+            "id",
+        )
+    )
+
+    return list(
+        Certificaciones.objects
+        .filter(
+            id__in=original_order
+        )
+        .select_related(
+            "plataforma_certificacion",
+            "universidad_certificacion",
+            "empresa_certificacion",
+        )
+        .prefetch_related(
+            Prefetch(
+                "skills_rel",
+                queryset=skills_queryset,
+                to_attr="skills_links_ordered",
+            )
+        )
+        .only(
+            "id",
+            "slug",
+            "nombre",
+            "imagen_final",
+            "tipo_certificacion",
+            "nivel_certificacion",
+            "tiempo_certificacion",
+            "language_normalized",
+            "fecha_creado_cert",
+            "vigente_certificacion",
+
+            "plataforma_certificacion_id",
+            "universidad_certificacion_id",
+            "empresa_certificacion_id",
+
+            "plataforma_certificacion__id",
+            "plataforma_certificacion__nombre",
+            "plataforma_certificacion__plat_ico",
+            "plataforma_certificacion__plat_img",
+
+            "universidad_certificacion__id",
+            "universidad_certificacion__nombre",
+            "universidad_certificacion__univ_ico",
+            "universidad_certificacion__univ_img",
+
+            "empresa_certificacion__id",
+            "empresa_certificacion__nombre",
+            "empresa_certificacion__empr_ico",
+            "empresa_certificacion__empr_img",
+        )
+        .order_by(order_expression)
+    )
+
 @method_decorator(
     cache_page(60 * 15),
     name="dispatch",
 )
+
 class filter_by_tags(APIView):
     pagination_class = FastCachedCountPagination
 
     def get(self, request):
         try:
-            params = request.query_params.copy()
+            params = (
+                request.query_params.copy()
+            )
 
             tema_slugs = []
             habilidad_slugs = []
@@ -2940,7 +3220,9 @@ class filter_by_tags(APIView):
                     "temas",
                 }:
                     tema_slugs.extend(
-                        clean_string_values(value_list)
+                        clean_string_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -2948,7 +3230,9 @@ class filter_by_tags(APIView):
                     "habilidades",
                 }:
                     habilidad_slugs.extend(
-                        clean_string_values(value_list)
+                        clean_string_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -2956,7 +3240,9 @@ class filter_by_tags(APIView):
                     "Tema_id",
                 }:
                     tema_ids.extend(
-                        clean_integer_values(value_list)
+                        clean_integer_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -2965,7 +3251,9 @@ class filter_by_tags(APIView):
                     "skill_id",
                 }:
                     habilidad_ids.extend(
-                        clean_integer_values(value_list)
+                        clean_integer_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -2975,7 +3263,9 @@ class filter_by_tags(APIView):
                     "aliados",
                 }:
                     plataforma_values.extend(
-                        clean_string_values(value_list)
+                        clean_string_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -2984,7 +3274,9 @@ class filter_by_tags(APIView):
                     "Empresas",
                 }:
                     empresa_values.extend(
-                        clean_string_values(value_list)
+                        clean_string_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -2993,7 +3285,9 @@ class filter_by_tags(APIView):
                     "Universidades",
                 }:
                     universidad_values.extend(
-                        clean_string_values(value_list)
+                        clean_string_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -3002,7 +3296,9 @@ class filter_by_tags(APIView):
                     "platform_id",
                 }:
                     plataforma_ids.extend(
-                        clean_integer_values(value_list)
+                        clean_integer_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -3011,7 +3307,9 @@ class filter_by_tags(APIView):
                     "company_id",
                 }:
                     empresa_ids.extend(
-                        clean_integer_values(value_list)
+                        clean_integer_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -3020,7 +3318,9 @@ class filter_by_tags(APIView):
                     "university_id",
                 }:
                     universidad_ids.extend(
-                        clean_integer_values(value_list)
+                        clean_integer_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -3040,7 +3340,9 @@ class filter_by_tags(APIView):
                     "TipoCertificacion",
                 }:
                     tipo_certificacion_values.extend(
-                        clean_string_values(value_list)
+                        clean_string_values(
+                            value_list
+                        )
                     )
 
                 elif key in {
@@ -3049,76 +3351,106 @@ class filter_by_tags(APIView):
                     "NivelCertificacion",
                 }:
                     nivel_certificacion_values.extend(
-                        clean_string_values(value_list)
+                        clean_string_values(
+                            value_list
+                        )
                     )
 
             # =================================================
-            # QUITAR DUPLICADOS
+            # NORMALIZAR Y QUITAR DUPLICADOS
             # =================================================
-            tema_slugs = list(
-                dict.fromkeys(tema_slugs)
-            )
-            habilidad_slugs = list(
-                dict.fromkeys(habilidad_slugs)
+            tema_ids = normalize_explore_filter_ids(
+                tema_ids
             )
 
-            tema_ids = list(
-                dict.fromkeys(tema_ids)
-            )
-            habilidad_ids = list(
-                dict.fromkeys(habilidad_ids)
+            habilidad_ids = normalize_explore_filter_ids(
+                habilidad_ids
             )
 
-            plataforma_values = list(
-                dict.fromkeys(plataforma_values)
-            )
-            empresa_values = list(
-                dict.fromkeys(empresa_values)
-            )
-            universidad_values = list(
-                dict.fromkeys(universidad_values)
+            plataforma_ids = normalize_explore_filter_ids(
+                plataforma_ids
             )
 
-            plataforma_ids = list(
-                dict.fromkeys(plataforma_ids)
-            )
-            empresa_ids = list(
-                dict.fromkeys(empresa_ids)
-            )
-            universidad_ids = list(
-                dict.fromkeys(universidad_ids)
+            empresa_ids = normalize_explore_filter_ids(
+                empresa_ids
             )
 
-            idioma_codes = list(
-                dict.fromkeys(idioma_codes)
+            universidad_ids = normalize_explore_filter_ids(
+                universidad_ids
             )
 
-            tipo_certificacion_values = list(
-                dict.fromkeys(
+            tema_slugs = normalize_explore_filter_strings(
+                tema_slugs
+            )
+
+            habilidad_slugs = normalize_explore_filter_strings(
+                habilidad_slugs
+            )
+
+            plataforma_values = (
+                normalize_explore_filter_strings(
+                    plataforma_values
+                )
+            )
+
+            empresa_values = (
+                normalize_explore_filter_strings(
+                    empresa_values
+                )
+            )
+
+            universidad_values = (
+                normalize_explore_filter_strings(
+                    universidad_values
+                )
+            )
+
+            idioma_codes = (
+                normalize_explore_filter_strings(
+                    idioma_codes,
+                    lower=True,
+                )
+            )
+
+            tipo_certificacion_values = (
+                normalize_explore_filter_strings(
                     tipo_certificacion_values
                 )
             )
 
-            nivel_certificacion_values = list(
-                dict.fromkeys(
+            nivel_certificacion_values = (
+                normalize_explore_filter_strings(
                     nivel_certificacion_values
                 )
             )
 
-            selected_skill_ids = list(
-                dict.fromkeys(
+            selected_skill_ids = (
+                normalize_explore_filter_ids(
                     tema_ids + habilidad_ids
                 )
             )
 
-            selected_skill_slugs = list(
-                dict.fromkeys(
+            selected_skill_slugs = (
+                normalize_explore_filter_strings(
                     tema_slugs + habilidad_slugs
                 )
             )
 
+            # Si tenemos IDs, los slugs son redundantes.
+            # Evita un OR entre skill_id y skill__slug.
+            if selected_skill_ids:
+                selected_skill_slugs = []
+
             # =================================================
-            # QUERYSET BASE
+            # QUERYSET BASE LIGERO
+            #
+            # En esta etapa NO usamos:
+            # - select_related
+            # - prefetch_related
+            # - only con relaciones
+            #
+            # El conteo y la paginación trabajan solo sobre
+            # Certificaciones y subconsultas indexadas.
             # =================================================
             queryset = (
                 Certificaciones.objects
@@ -3131,141 +3463,10 @@ class filter_by_tags(APIView):
                 .exclude(
                     nombre=""
                 )
-                .select_related(
-                    "plataforma_certificacion",
-                    "universidad_certificacion",
-                    "empresa_certificacion",
-                )
-                .prefetch_related(
-                    Prefetch(
-                        "skills_rel",
-                        queryset=(
-                            SkillsCertification.objects
-                            .select_related("skill")
-                            .only(
-                                "id",
-                                "certificacion_id",
-                                "skill_id",
-                                "orden",
-
-                                "skill__id",
-                                "skill__nombre",
-                                "skill__translate",
-                                "skill__slug",
-                                "skill__skill_col",
-                                "skill__skill_type",
-                                "skill__skill_ico",
-                                "skill__skill_img",
-                            )
-                            .order_by(
-                                "orden",
-                                "id",
-                            )
-                        ),
-                        to_attr=(
-                            "skills_links_ordered"
-                        ),
-                    )
-                )
-                .only(
-                    "id",
-                    "slug",
-                    "nombre",
-                    "imagen_final",
-                    "tipo_certificacion",
-                    "nivel_certificacion",
-                    "tiempo_certificacion",
-                    "language_normalized",
-                    "fecha_creado_cert",
-                    "vigente_certificacion",
-
-                    "plataforma_certificacion_id",
-                    "plataforma_certificacion__id",
-                    "plataforma_certificacion__nombre",
-                    "plataforma_certificacion__plat_ico",
-
-                    "universidad_certificacion_id",
-                    "universidad_certificacion__id",
-                    "universidad_certificacion__nombre",
-                    "universidad_certificacion__univ_ico",
-                    "universidad_certificacion__univ_img",
-
-                    "empresa_certificacion_id",
-                    "empresa_certificacion__id",
-                    "empresa_certificacion__nombre",
-                    "empresa_certificacion__empr_ico",
-                    "empresa_certificacion__empr_img",
-                )
             )
 
             # =================================================
-            # PLATAFORMAS
-            # =================================================
-            if plataforma_ids:
-                queryset = queryset.filter(
-                    plataforma_certificacion_id__in=
-                    plataforma_ids
-                )
-
-            elif plataforma_values:
-                plataforma_query = Q()
-
-                for value in plataforma_values:
-                    plataforma_query |= Q(
-                        plataforma_certificacion__nombre__iexact=
-                        value
-                    )
-
-                queryset = queryset.filter(
-                    plataforma_query
-                )
-
-            # =================================================
-            # EMPRESAS
-            # =================================================
-            if empresa_ids:
-                queryset = queryset.filter(
-                    empresa_certificacion_id__in=
-                    empresa_ids
-                )
-
-            elif empresa_values:
-                empresa_query = Q()
-
-                for value in empresa_values:
-                    empresa_query |= Q(
-                        empresa_certificacion__nombre__iexact=
-                        value
-                    )
-
-                queryset = queryset.filter(
-                    empresa_query
-                )
-
-            # =================================================
-            # UNIVERSIDADES
-            # =================================================
-            if universidad_ids:
-                queryset = queryset.filter(
-                    universidad_certificacion_id__in=
-                    universidad_ids
-                )
-
-            elif universidad_values:
-                universidad_query = Q()
-
-                for value in universidad_values:
-                    universidad_query |= Q(
-                        universidad_certificacion__nombre__iexact=
-                        value
-                    )
-
-                queryset = queryset.filter(
-                    universidad_query
-                )
-
-            # =================================================
-            # IDIOMAS
+            # IDIOMA
             # =================================================
             if idioma_codes:
                 queryset = queryset.filter(
@@ -3278,196 +3479,199 @@ class filter_by_tags(APIView):
                 )
 
             # =================================================
+            # PLATAFORMA
+            # =================================================
+            if plataforma_ids:
+                queryset = queryset.filter(
+                    plataforma_certificacion_id__in=
+                    plataforma_ids
+                )
+
+            elif plataforma_values:
+                platform_query = Q()
+
+                for value in plataforma_values:
+                    platform_query |= Q(
+                        plataforma_certificacion__nombre__iexact=
+                        value
+                    )
+
+                queryset = queryset.filter(
+                    platform_query
+                )
+
+            # =================================================
+            # EMPRESA
+            # =================================================
+            if empresa_ids:
+                queryset = queryset.filter(
+                    empresa_certificacion_id__in=
+                    empresa_ids
+                )
+
+            elif empresa_values:
+                company_query = Q()
+
+                for value in empresa_values:
+                    company_query |= Q(
+                        empresa_certificacion__nombre__iexact=
+                        value
+                    )
+
+                queryset = queryset.filter(
+                    company_query
+                )
+
+            # =================================================
+            # UNIVERSIDAD
+            # =================================================
+            if universidad_ids:
+                queryset = queryset.filter(
+                    universidad_certificacion_id__in=
+                    universidad_ids
+                )
+
+            elif universidad_values:
+                university_query = Q()
+
+                for value in universidad_values:
+                    university_query |= Q(
+                        universidad_certificacion__nombre__iexact=
+                        value
+                    )
+
+                queryset = queryset.filter(
+                    university_query
+                )
+
+            # =================================================
             # TIPO DE CERTIFICACIÓN
             # =================================================
             if tipo_certificacion_values:
-                type_query = (
+                queryset = queryset.filter(
                     build_certification_type_q(
                         tipo_certificacion_values
                     )
-                )
-
-                queryset = queryset.filter(
-                    type_query
                 )
 
             # =================================================
             # NIVEL
             # =================================================
             if nivel_certificacion_values:
-                level_query = (
+                queryset = queryset.filter(
                     build_certification_level_q(
                         nivel_certificacion_values
                     )
                 )
 
-                queryset = queryset.filter(
-                    level_query
-                )
-
             # =================================================
-            # TEMAS / HABILIDADES
+            # DOMINIO / TEMAS / HABILIDADES
             #
-            # Usamos EXISTS para evitar JOIN + DISTINCT sobre
-            # todo el queryset paginado.
+            # Usa:
+            #
+            # id IN (
+            #   SELECT certificacion_id
+            #   FROM SkillsCertification
+            #   WHERE skill_id IN (...)
+            # )
+            #
+            # Esto evita evaluar un EXISTS correlacionado por
+            # cada certificación.
             # =================================================
-            if (
-                selected_skill_ids
-                or selected_skill_slugs
-            ):
-                skill_match_queryset = (
-                    SkillsCertification.objects
-                    .filter(
-                        certificacion_id=
-                        OuterRef("pk")
-                    )
-                    .order_by()
+            queryset = apply_skills_domain_filter(
+                queryset,
+                skill_ids=selected_skill_ids,
+                skill_slugs=selected_skill_slugs,
+            )
+
+            # =================================================
+            # ORDEN
+            # =================================================
+            total_selected_skills = (
+                len(selected_skill_ids)
+                if selected_skill_ids
+                else len(
+                    selected_skill_slugs
                 )
+            )
 
-                skill_match_filter = Q()
-
-                if selected_skill_ids:
-                    skill_match_filter |= Q(
-                        skill_id__in=
-                        selected_skill_ids
-                    )
-
-                if selected_skill_slugs:
-                    skill_match_filter |= Q(
-                        skill__slug__in=
-                        selected_skill_slugs
-                    )
-
-                skill_match_queryset = (
-                    skill_match_queryset.filter(
-                        skill_match_filter
-                    )
-                )
-
+            if total_selected_skills == 1:
                 queryset = (
-                    queryset
-                    .annotate(
-                        matches_selected_skill=Exists(
-                            skill_match_queryset
-                        )
-                    )
-                    .filter(
-                        matches_selected_skill=True
-                    )
-                )
-
-                # Si solo hay una habilidad, priorizamos cuando
-                # esa habilidad es la principal.
-                total_selected_skills = (
-                    len(selected_skill_ids)
-                    + len(selected_skill_slugs)
-                )
-
-                if total_selected_skills == 1:
-                    first_skill_id_subquery = (
-                        SkillsCertification.objects
-                        .filter(
-                            certificacion_id=
-                            OuterRef("pk")
-                        )
-                        .order_by(
-                            "orden",
-                            "id",
-                        )
-                        .values("skill_id")[:1]
-                    )
-
-                    first_skill_slug_subquery = (
-                        SkillsCertification.objects
-                        .filter(
-                            certificacion_id=
-                            OuterRef("pk")
-                        )
-                        .order_by(
-                            "orden",
-                            "id",
-                        )
-                        .values(
-                            "skill__slug"
-                        )[:1]
-                    )
-
-                    queryset = queryset.annotate(
-                        first_skill_id=Subquery(
-                            first_skill_id_subquery
-                        ),
-                        first_skill_slug=Subquery(
-                            first_skill_slug_subquery
-                        ),
-                    )
-
-                    priority_condition = Q()
-
-                    if selected_skill_ids:
-                        priority_condition |= Q(
-                            first_skill_id=
+                    apply_single_skill_priority(
+                        queryset,
+                        skill_id=(
                             selected_skill_ids[0]
-                        )
-
-                    if selected_skill_slugs:
-                        priority_condition |= Q(
-                            first_skill_slug=
+                            if selected_skill_ids
+                            else None
+                        ),
+                        skill_slug=(
                             selected_skill_slugs[0]
-                        )
-
-                    queryset = queryset.annotate(
-                        skill_priority=Case(
-                            When(
-                                priority_condition,
-                                then=Value(0),
-                            ),
-                            default=Value(1),
-                            output_field=IntegerField(),
-                        )
+                            if selected_skill_slugs
+                            else None
+                        ),
                     )
-
-                    queryset = queryset.order_by(
-                        "skill_priority",
-                        "-fecha_creado_cert",
-                        "-id",
-                    )
-
-                else:
-                    queryset = queryset.order_by(
-                        "-fecha_creado_cert",
-                        "-id",
-                    )
+                )
 
             else:
+                # Para dominios de múltiples habilidades:
+                # no ejecutar subconsultas de prioridad.
                 queryset = queryset.order_by(
                     "-fecha_creado_cert",
                     "-id",
                 )
 
             # =================================================
-            # PAGINACIÓN Y SERIALIZACIÓN
+            # PAGINAR ÚNICAMENTE IDS
+            #
+            # El COUNT y la consulta LIMIT no cargan logos,
+            # entidades, imágenes ni skills.
             # =================================================
-            paginator = self.pagination_class()
+            ids_queryset = (
+                queryset.values_list(
+                    "id",
+                    flat=True,
+                )
+            )
 
-            paginated_queryset = (
+            paginator = (
+                self.pagination_class()
+            )
+
+            paginated_ids = (
                 paginator.paginate_queryset(
-                    queryset,
+                    ids_queryset,
                     request,
+                )
+            )
+
+            paginated_ids = list(
+                paginated_ids or []
+            )
+
+            # =================================================
+            # CARGAR SOLO LAS CARDS DE ESTA PÁGINA
+            # =================================================
+            certifications = (
+                load_explore_certification_page(
+                    paginated_ids
                 )
             )
 
             serializer = (
                 SuggestedCertificationSerializer(
-                    paginated_queryset,
+                    certifications,
                     many=True,
                     context={
-                        "request": request
+                        "request": request,
                     },
                 )
             )
 
-            return paginator.get_paginated_response(
-                serializer.data
+            return (
+                paginator
+                .get_paginated_response(
+                    serializer.data
+                )
             )
 
         except Exception as error:
@@ -3481,14 +3685,19 @@ class filter_by_tags(APIView):
                     "error": (
                         "Error al filtrar "
                         "certificaciones"
-                    )
+                    ),
+                    "detail": (
+                        str(error)
+                        if settings.DEBUG
+                        else None
+                    ),
                 },
                 status=(
                     status
                     .HTTP_500_INTERNAL_SERVER_ERROR
                 ),
             )
-
+        
 def get_filter_values(filters, *keys):
     values = []
 
