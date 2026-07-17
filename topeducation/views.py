@@ -8973,6 +8973,151 @@ def _get_plan_amount_cents(price_id=None, selected_plan=None, interval=None):
     }
 
     return fallback.get((selected_plan, interval), 0)
+
+def normalize_route_level(value):
+    """
+    Normaliza diferentes formatos del nivel de ruta:
+    1, "1", "level_1", "Nivel 1", etc.
+    """
+    clean_value = str(value or "").strip().lower()
+
+    mapping = {
+        "1": 1,
+        "level_1": 1,
+        "level-1": 1,
+        "nivel 1": 1,
+        "nivel_1": 1,
+
+        "2": 2,
+        "level_2": 2,
+        "level-2": 2,
+        "nivel 2": 2,
+        "nivel_2": 2,
+
+        "3": 3,
+        "level_3": 3,
+        "level-3": 3,
+        "nivel 3": 3,
+        "nivel_3": 3,
+    }
+
+    return mapping.get(clean_value)
+
+
+def get_recommended_course_internal_id(course):
+    return str(
+        course.get("idInterno")
+        or course.get("id_interno")
+        or course.get("idInternoMx")
+        or course.get("id_interno_mx")
+        or course.get("external_id")
+        or course.get("id")
+        or ""
+    ).strip()
+
+
+def get_unique_recommended_courses(courses):
+    """
+    Elimina duplicados conservando el orden original.
+
+    La identidad principal es idInterno. Si no existe,
+    utiliza el ID de Colombia como respaldo.
+    """
+    unique_courses = []
+    seen_ids = set()
+
+    for course in courses or []:
+        if not isinstance(course, dict):
+            continue
+
+        internal_id = get_recommended_course_internal_id(
+            course
+        )
+
+        if not internal_id:
+            continue
+
+        normalized_id = internal_id.lower()
+
+        if normalized_id in seen_ids:
+            continue
+
+        seen_ids.add(normalized_id)
+        unique_courses.append(course)
+
+    return unique_courses
+
+
+def select_courses_for_mx_plan(
+    courses,
+    *,
+    plan_value,
+):
+    """
+    Decide qué cursos recibe México según el plan.
+
+    Free:
+    - exactamente 3 cursos únicos;
+    - prioriza los cursos del Nivel 1;
+    - si faltan cursos de Nivel 1, completa con los
+      siguientes cursos únicos disponibles.
+
+    Pago:
+    - conserva la ruta completa;
+    - elimina duplicados por idInterno.
+    """
+    unique_courses = get_unique_recommended_courses(
+        courses
+    )
+
+    normalized_plan = str(
+        plan_value or "free"
+    ).strip().lower()
+
+    if normalized_plan != "free":
+        return unique_courses
+
+    level_one_courses = [
+        course
+        for course in unique_courses
+        if normalize_route_level(
+            course.get("routeLevel")
+            or course.get("route_level")
+            or course.get("level_route")
+        ) == 1
+    ]
+
+    selected_courses = level_one_courses[:3]
+
+    if len(selected_courses) < 3:
+        selected_ids = {
+            get_recommended_course_internal_id(
+                course
+            ).lower()
+            for course in selected_courses
+        }
+
+        for course in unique_courses:
+            internal_id = (
+                get_recommended_course_internal_id(
+                    course
+                ).lower()
+            )
+
+            if not internal_id:
+                continue
+
+            if internal_id in selected_ids:
+                continue
+
+            selected_courses.append(course)
+            selected_ids.add(internal_id)
+
+            if len(selected_courses) == 3:
+                break
+
+    return selected_courses[:3]
+
 def build_learning_route_mx_payload(
     *,
     event_id,
@@ -9014,16 +9159,21 @@ def build_learning_route_mx_payload(
 
     # =========================================================
     # CONFIGURACIÓN CONTRACTUAL POR PAQUETE
+    #
+    # Importante:
+    # FREE no tiene periodicidad mensual/anual en México.
+    # Debe enviarse billingPeriod: null.
     # =========================================================
     plan_contracts = {
         "TOP_EDUCATION_FREE": {
             "tier": "FREE",
-            "billing_period": "MONTHLY",
+            "billing_period": None,
             "default_lifecycle_status": "FREE",
             "default_access_status": "ALLOWED",
             "default_pending_action": "NONE",
             "is_paid": False,
         },
+
         "TOP_EDUCATION_X_MONTHLY": {
             "tier": "X",
             "billing_period": "MONTHLY",
@@ -9032,6 +9182,7 @@ def build_learning_route_mx_payload(
             "default_pending_action": "NONE",
             "is_paid": True,
         },
+
         "TOP_EDUCATION_X_ANNUAL": {
             "tier": "X",
             "billing_period": "ANNUAL",
@@ -9040,6 +9191,7 @@ def build_learning_route_mx_payload(
             "default_pending_action": "NONE",
             "is_paid": True,
         },
+
         "TOP_EDUCATION_PLUS_MONTHLY": {
             "tier": "PLUS",
             "billing_period": "MONTHLY",
@@ -9048,6 +9200,7 @@ def build_learning_route_mx_payload(
             "default_pending_action": "NONE",
             "is_paid": True,
         },
+
         "TOP_EDUCATION_PLUS_ANNUAL": {
             "tier": "PLUS",
             "billing_period": "ANNUAL",
@@ -9072,15 +9225,21 @@ def build_learning_route_mx_payload(
     is_paid_plan = plan_contract["is_paid"]
 
     lifecycle_status = (
-        plan_contract["default_lifecycle_status"]
+        plan_contract[
+            "default_lifecycle_status"
+        ]
     )
 
     access_status = (
-        plan_contract["default_access_status"]
+        plan_contract[
+            "default_access_status"
+        ]
     )
 
     pending_action = (
-        plan_contract["default_pending_action"]
+        plan_contract[
+            "default_pending_action"
+        ]
     )
 
     # =========================================================
@@ -9088,7 +9247,11 @@ def build_learning_route_mx_payload(
     # =========================================================
     if is_paid_plan:
         status_raw = str(
-            getattr(subscription, "status", None)
+            getattr(
+                subscription,
+                "status",
+                None,
+            )
             or ""
         ).strip().lower()
 
@@ -9118,8 +9281,16 @@ def build_learning_route_mx_payload(
 
         else:
             has_trial_dates = bool(
-                getattr(route, "trial_start", None)
-                and getattr(route, "trial_end", None)
+                getattr(
+                    route,
+                    "trial_start",
+                    None,
+                )
+                and getattr(
+                    route,
+                    "trial_end",
+                    None,
+                )
             )
 
             lifecycle_status = (
@@ -9130,7 +9301,8 @@ def build_learning_route_mx_payload(
 
         access_status = (
             "RESTRICTED"
-            if lifecycle_status in {
+            if lifecycle_status
+            in {
                 "PAST_DUE",
                 "CANCELLED",
                 "EXPIRED",
@@ -9205,9 +9377,16 @@ def build_learning_route_mx_payload(
 
     # =========================================================
     # RECOMENDACIONES
+    #
+    # FREE:
+    # - exactamente 3 cursos;
+    # - prioriza Nivel 1;
+    # - sin duplicados por idInterno.
+    #
+    # PAGOS:
+    # - conserva la ruta completa;
+    # - elimina duplicados por idInterno.
     # =========================================================
-    recommended_courses = []
-
     raw_recommendations = (
         getattr(
             route,
@@ -9217,44 +9396,72 @@ def build_learning_route_mx_payload(
         or []
     )
 
+    courses_for_mx = (
+        select_courses_for_mx_plan(
+            raw_recommendations,
+            plan_value=plan_value,
+        )
+    )
+
+    if package_code == "TOP_EDUCATION_FREE":
+        if len(courses_for_mx) != 3:
+            raise ValueError(
+                "free_plan_requires_exactly_3_unique_courses"
+            )
+
+    recommended_courses = []
+
     for index, course in enumerate(
-        raw_recommendations,
+        courses_for_mx,
         start=1,
     ):
         if not isinstance(course, dict):
             continue
 
         id_interno = (
-            course.get("idInterno")
-            or course.get("id_interno")
-            or course.get("idInternoMx")
-            or course.get("id_interno_mx")
-            or course.get("external_id")
-            or ""
+            get_recommended_course_internal_id(
+                course
+            )
         )
 
         colombia_certification_id = (
-            course.get("colombiaCertificationId")
+            course.get(
+                "colombiaCertificationId"
+            )
             or course.get("id")
-            or course.get("certification_id")
+            or course.get(
+                "certification_id"
+            )
+        )
+
+        route_level = (
+            normalize_route_level(
+                course.get("routeLevel")
+                or course.get(
+                    "route_level"
+                )
+                or course.get(
+                    "level_route"
+                )
+            )
+            or 1
         )
 
         recommended_courses.append(
             {
-                "idInterno": str(
-                    id_interno
-                    or colombia_certification_id
-                    or ""
-                ),
+                "idInterno": id_interno,
+
                 "colombiaCertificationId": (
                     colombia_certification_id
                 ),
+
                 "title": (
                     course.get("title")
                     or course.get("nombre")
                     or course.get("name")
                     or ""
                 ),
+
                 "level": (
                     course.get("level")
                     or course.get(
@@ -9263,23 +9470,34 @@ def build_learning_route_mx_payload(
                     or course.get("nivel")
                     or ""
                 ),
+
                 "provider": (
                     course.get("provider")
-                    or course.get("plataforma")
-                    or course.get("platform")
+                    or course.get(
+                        "plataforma"
+                    )
+                    or course.get(
+                        "platform"
+                    )
                     or ""
                 ),
-                "order": (
-                    course.get("order")
-                    or index
-                ),
-                "routeLevel": (
-                    course.get("routeLevel")
-                    or course.get("route_level")
-                    or course.get("level_route")
-                    or 1
-                ),
+
+                # Se reconstruye el orden después
+                # de seleccionar y deduplicar.
+                "order": index,
+
+                "routeLevel": route_level,
             }
+        )
+
+    # Validación final defensiva.
+    if (
+        package_code
+        == "TOP_EDUCATION_FREE"
+        and len(recommended_courses) != 3
+    ):
+        raise ValueError(
+            "free_plan_payload_does_not_contain_3_courses"
         )
 
     # =========================================================
@@ -9300,17 +9518,20 @@ def build_learning_route_mx_payload(
     )
 
     stripe_customer_id = (
-        getattr(
-            subscription,
+        (
+            getattr(
+                subscription,
+                "stripe_customer_id",
+                None,
+            )
+            if subscription
+            else None
+        )
+        or getattr(
+            route,
             "stripe_customer_id",
             None,
         )
-        if subscription
-        else None
-    ) or getattr(
-        route,
-        "stripe_customer_id",
-        None,
     )
 
     stripe_price_id = (
@@ -9324,15 +9545,17 @@ def build_learning_route_mx_payload(
     )
 
     stripe_payment_method_id = (
-        getattr(
-            subscription,
-            "stripe_payment_method_id",
-            None,
-        )
-        or getattr(
-            subscription,
-            "payment_method_id",
-            None,
+        (
+            getattr(
+                subscription,
+                "stripe_payment_method_id",
+                None,
+            )
+            or getattr(
+                subscription,
+                "payment_method_id",
+                None,
+            )
         )
         if subscription
         else None
@@ -9362,8 +9585,16 @@ def build_learning_route_mx_payload(
     # DATOS DEL USUARIO
     # =========================================================
     user_email = str(
-        getattr(user, "email", None)
-        or getattr(route, "email", None)
+        getattr(
+            user,
+            "email",
+            None,
+        )
+        or getattr(
+            route,
+            "email",
+            None,
+        )
         or ""
     ).strip().lower()
 
@@ -9373,26 +9604,41 @@ def build_learning_route_mx_payload(
         )
 
     first_name = str(
-        getattr(user, "first_name", None)
-        or getattr(route, "first_name", None)
+        getattr(
+            user,
+            "first_name",
+            None,
+        )
+        or getattr(
+            route,
+            "first_name",
+            None,
+        )
         or ""
     ).strip()
 
     last_name = str(
-        getattr(user, "last_name", None)
-        or getattr(route, "last_name", None)
+        getattr(
+            user,
+            "last_name",
+            None,
+        )
+        or getattr(
+            route,
+            "last_name",
+            None,
+        )
         or ""
     ).strip()
 
     # =========================================================
-    # PLAN
+    # PAYLOAD DEL PLAN
     # =========================================================
     plan_payload = {
         "packageCode": package_code,
-
         "tier": tier,
 
-        # FREE también debe enviarse como MONTHLY según la matriz.
+        # FREE => None => JSON null.
         "billingPeriod": billing_period,
 
         "accessStatus": access_status,
@@ -9401,16 +9647,19 @@ def build_learning_route_mx_payload(
 
         "trial": {
             "isTrial": is_trial,
+
             "trialStart": (
                 trial_start.isoformat()
                 if trial_start
                 else None
             ),
+
             "trialEnd": (
                 trial_end.isoformat()
                 if trial_end
                 else None
             ),
+
             "trialDays": (
                 7
                 if is_trial
@@ -9426,10 +9675,12 @@ def build_learning_route_mx_payload(
         "schemaVersion": "1.0",
         "eventId": event_id,
         "eventType": event_type,
+
         "traceId": (
             f"col-startnow-route-{route.id}"
             f"-user-{user.id}"
         ),
+
         "occurredAt": occurred_at,
 
         "customer": {
@@ -9437,31 +9688,37 @@ def build_learning_route_mx_payload(
             "emailNormalized": user_email,
             "name": first_name,
             "lastName": last_name,
+
             "phoneCountryCode": getattr(
                 route,
                 "phone_country_code",
                 None,
             ),
+
             "phoneNumber": getattr(
                 route,
                 "phone_number",
                 None,
             ),
+
             "phoneE164": getattr(
                 route,
                 "phone_e164",
                 None,
             ),
+
             "age": getattr(
                 route,
                 "age",
                 None,
             ),
+
             "gender": getattr(
                 route,
                 "gender",
                 None,
             ),
+
             "country": (
                 getattr(
                     route,
@@ -9481,6 +9738,7 @@ def build_learning_route_mx_payload(
                 )
                 or []
             ),
+
             "goal": (
                 getattr(
                     route,
@@ -9499,21 +9757,28 @@ def build_learning_route_mx_payload(
 
         "billing": {
             "source": "COLOMBIA",
+
             "stripeCustomerId": (
                 stripe_customer_id
             ),
+
             "stripeSubscriptionId": (
                 stripe_subscription_id
             ),
+
             "stripePaymentMethodId": (
                 stripe_payment_method_id
             ),
+
+            # Free no tiene suscripción Stripe,
+            # pero se identifica explícitamente.
             "status": (
                 "free"
                 if package_code
                 == "TOP_EDUCATION_FREE"
                 else subscription_status
             ),
+
             "currentPeriodEnd": (
                 current_period_end.isoformat()
                 if current_period_end
@@ -9526,6 +9791,7 @@ def build_learning_route_mx_payload(
                 settings
                 .MX_B2C_SUBSCRIPTION_MANAGEMENT_URL
             ),
+
             "colombiaAccountUrl": (
                 settings
                 .MX_B2C_COLOMBIA_ACCOUNT_URL
@@ -9539,6 +9805,11 @@ def build_learning_route_mx_payload(
             "createdFrom": "startNow",
             "stripePriceId": stripe_price_id,
             "colombiaUserId": user.id,
+
+            # Facilita auditoría en Colombia y MX.
+            "recommendedCoursesCount": len(
+                recommended_courses
+            ),
         },
     }
 
