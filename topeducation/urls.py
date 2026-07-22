@@ -1,5 +1,4 @@
-from django.contrib import sitemaps
-from django.contrib.sitemaps.views import sitemap
+from django.contrib.sitemaps import views as sitemap_views
 
 from django.urls import path, include
 from .views import *
@@ -10,14 +9,10 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.conf.urls.static import static
 
-from .sitemaps import CertificacionSitemap, BlogSitemap
+from .sitemaps import sitemaps
 from .views import api_run_courses_sync
 from .account_views import account_me, account_purchases
 
-sitemaps = {
-    "certificaciones": CertificacionSitemap,
-    "blog": BlogSitemap,
-}
 
 urlpatterns = [
     path('',login_required(views.dashboard,login_url='/signin/'), name='inicio'),
@@ -108,7 +103,8 @@ urlpatterns = [
     path("brand/<int:marca_id>/update/", views.brand_update, name="brand_update"),
     path("brand/<int:marca_id>/settings/", views.brand_settings, name="brand_settings"),
     path("api/brand/<slug:slug>/", MarcaPublicBySlugView.as_view(), name="brand_public_slug"),
-    path("sitemap.xml", sitemap, {"sitemaps": sitemaps}),
+    path("sitemap.xml", sitemap_views.index, {"sitemaps": sitemaps},name="sitemap-index",),
+    path("sitemap-<section>.xml", sitemap_views.sitemap, {"sitemaps": sitemaps},name="sitemap-section",),
     path("ckeditor/", include("ckeditor_uploader.urls")),
     path("inspector/catalog/", views.catalog_inspector, name="catalog_inspector"),
     path("bussines/purchases/", login_required(views.admin_purchases_page, login_url="/signin/"),name="admin_purchases_page"),
