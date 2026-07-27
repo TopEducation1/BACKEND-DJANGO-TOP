@@ -359,7 +359,7 @@ def build_plan_snapshot(
         None,
     ) or "NONE"
 
-    return compact_dict({
+    plan = compact_dict({
         "packageCode": package_code,
         "tier": tier,
         "billingPeriod": billing_period,
@@ -367,6 +367,14 @@ def build_plan_snapshot(
         "lifecycleStatus": lifecycle_status,
         "pendingAction": pending_action,
     })
+
+    # Contrato MX:
+    # TOP_EDUCATION_FREE no tiene periodo de facturación,
+    # pero la propiedad debe enviarse explícitamente como null.
+    if str(package_code or "").strip().upper() == "TOP_EDUCATION_FREE":
+        plan["billingPeriod"] = None
+
+    return plan
 
 
 # =========================================================
@@ -784,21 +792,29 @@ def build_mx_access_payload(
 
     payload = {
         "schemaVersion": DEFAULT_SCHEMA_VERSION,
-
         "eventId": event_id,
         "eventType": event_type,
         "occurredAt": occurred_at,
         "source": SOURCE_NAME,
-
         "customer": customer,
         "plan": plan,
         "billing": billing,
         "learningRoute": learning_route,
-
         "metadata": compact_dict(metadata),
     }
 
-    return compact_dict(payload)
+    payload = compact_dict(payload)
+
+    # Para FREE se debe preservar explícitamente el null.
+    if (
+        str(
+            payload.get("plan", {}).get("packageCode") or ""
+        ).strip().upper()
+        == "TOP_EDUCATION_FREE"
+    ):
+        payload.setdefault("plan", {})["billingPeriod"] = None
+
+    return payload
 
 
 # =========================================================
