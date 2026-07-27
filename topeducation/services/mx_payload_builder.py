@@ -783,14 +783,18 @@ def build_mx_access_payload(
         metadata.update(extra_metadata)
 
     payload = {
+        "schemaVersion": DEFAULT_SCHEMA_VERSION,
+
         "eventId": event_id,
         "eventType": event_type,
         "occurredAt": occurred_at,
         "source": SOURCE_NAME,
+
         "customer": customer,
         "plan": plan,
         "billing": billing,
         "learningRoute": learning_route,
+
         "metadata": compact_dict(metadata),
     }
 
