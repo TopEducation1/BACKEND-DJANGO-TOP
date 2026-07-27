@@ -75,8 +75,23 @@ from topeducation.services.import_courses import (
     ingest_specialization_detail_payload,
     ingest_specializations_payload,
 )
-from topeducation.services.mx_payload_builder import build_mx_payload_from_stripe_event
-from topeducation.services.mx_webhook_sender import send_b2c_access_event_to_mx
+from topeducation.services.learning_route_service import (
+    InvalidLearningRouteError,
+    LearningRouteServiceError,
+    create_initial_learning_route,
+    get_current_route_snapshot,
+    serialize_route_snapshot,
+    update_learning_route,
+)
+
+from topeducation.services.mx_payload_builder import (
+    build_mx_access_payload,
+    build_mx_payload_from_stripe_event,
+)
+
+from topeducation.services.mx_webhook_sender import (
+    send_b2c_access_event_to_mx,
+)
 
 
 @staff_member_required(login_url="/signin/")
@@ -7477,63 +7492,416 @@ def _get_or_create_user_from_onboarding(request):
 
     return user, route, None
 
+B2C_PLAN_CONFIG = {
+    "free": {
+        "selected_plan": "free",
+        "selected_paid_plan": "",
+        "package_code": "TOP_EDUCATION_FREE",
+        "tier": "FREE",
+        "billing_period": None,
+        "access_status": "ALLOWED",
+        "lifecycle_status": "FREE",
+        "pending_action": "NONE",
+    },
+
+    "monthly_x": {
+        "selected_plan": "pro",
+        "selected_paid_plan": "monthly_x",
+        "package_code": "TOP_EDUCATION_X_MONTHLY",
+        "tier": "X",
+        "billing_period": "MONTHLY",
+        "access_status": "ALLOWED",
+        "lifecycle_status": "TRIALING",
+        "pending_action": "NONE",
+    },
+
+    "yearly_x": {
+        "selected_plan": "pro",
+        "selected_paid_plan": "yearly_x",
+        "package_code": "TOP_EDUCATION_X_ANNUAL",
+        "tier": "X",
+        "billing_period": "ANNUAL",
+        "access_status": "ALLOWED",
+        "lifecycle_status": "TRIALING",
+        "pending_action": "NONE",
+    },
+
+    "monthly_plus": {
+        "selected_plan": "plus",
+        "selected_paid_plan": "monthly_plus",
+        "package_code": "TOP_EDUCATION_PLUS_MONTHLY",
+        "tier": "PLUS",
+        "billing_period": "MONTHLY",
+        "access_status": "ALLOWED",
+        "lifecycle_status": "TRIALING",
+        "pending_action": "NONE",
+    },
+
+    "yearly_plus": {
+        "selected_plan": "plus",
+        "selected_paid_plan": "yearly_plus",
+        "package_code": "TOP_EDUCATION_PLUS_ANNUAL",
+        "tier": "PLUS",
+        "billing_period": "ANNUAL",
+        "access_status": "ALLOWED",
+        "lifecycle_status": "TRIALING",
+        "pending_action": "NONE",
+    },
+}
+
+
+B2C_PLAN_ALIASES = {
+    "free": "free",
+
+    "x": "monthly_x",
+    "pro": "monthly_x",
+    "monthly": "monthly_x",
+    "monthly_pro": "monthly_x",
+    "pro_monthly": "monthly_x",
+    "monthly_x": "monthly_x",
+
+    "annual_x": "yearly_x",
+    "year_x": "yearly_x",
+    "yearly_x": "yearly_x",
+    "yearly_pro": "yearly_x",
+    "pro_yearly": "yearly_x",
+
+    "plus": "monthly_plus",
+    "monthly_plus": "monthly_plus",
+    "plus_monthly": "monthly_plus",
+
+    "annual_plus": "yearly_plus",
+    "year_plus": "yearly_plus",
+    "yearly_plus": "yearly_plus",
+    "plus_yearly": "yearly_plus",
+}
+
+
+def normalize_b2c_plan(
+    *,
+    selected_plan=None,
+    selected_paid_plan=None,
+):
+    selected_plan = str(
+        selected_plan or "free"
+    ).strip().lower()
+
+    selected_paid_plan = str(
+        selected_paid_plan or ""
+    ).strip().lower()
+
+    candidate = selected_paid_plan or selected_plan
+    normalized_key = B2C_PLAN_ALIASES.get(candidate)
+
+    if not normalized_key:
+        return None, "invalid_plan"
+
+    return B2C_PLAN_CONFIG[normalized_key].copy(), None
+
+
+def apply_b2c_plan_to_route(
+    route,
+    plan_config,
+):
+    route.selected_plan = plan_config["selected_plan"]
+    route.package_code = plan_config["package_code"]
+    route.tier = plan_config["tier"]
+    route.billing_period = plan_config["billing_period"]
+    route.access_status = plan_config["access_status"]
+    route.lifecycle_status = plan_config["lifecycle_status"]
+    route.pending_action = plan_config["pending_action"]
+
+    update_fields = [
+        "selected_plan",
+        "package_code",
+        "tier",
+        "billing_period",
+        "access_status",
+        "lifecycle_status",
+        "pending_action",
+        "updated_at",
+    ]
+
+    if hasattr(route, "selected_paid_plan"):
+        route.selected_paid_plan = (
+            plan_config["selected_paid_plan"] or None
+        )
+        update_fields.append("selected_paid_plan")
+
+    return update_fields
+
+
+def get_snapshot_courses(snapshot):
+    if not snapshot:
+        return []
+
+    return serialize_route_snapshot(snapshot).get(
+        "courses",
+        [],
+    )
+
+
+def get_free_route_courses(snapshot):
+    """
+    El paquete Free envía exactamente tres cursos.
+
+    Prioriza nivel 1 y conserva el orden actual.
+    """
+    courses = get_snapshot_courses(snapshot)
+
+    unique_courses = []
+    seen_ids = set()
+
+    for course in courses:
+        if not isinstance(course, dict):
+            continue
+
+        id_interno = str(
+            course.get("idInterno") or ""
+        ).strip()
+
+        if not id_interno:
+            continue
+
+        key = id_interno.lower()
+
+        if key in seen_ids:
+            continue
+
+        seen_ids.add(key)
+        unique_courses.append(course)
+
+    level_one = [
+        course
+        for course in unique_courses
+        if int(course.get("routeLevel") or 1) == 1
+    ]
+
+    selected = level_one[:3]
+    selected_ids = {
+        str(course["idInterno"]).lower()
+        for course in selected
+    }
+
+    if len(selected) < 3:
+        for course in unique_courses:
+            key = str(
+                course.get("idInterno") or ""
+            ).lower()
+
+            if not key or key in selected_ids:
+                continue
+
+            selected.append(course)
+            selected_ids.add(key)
+
+            if len(selected) == 3:
+                break
+
+    return selected[:3]
+
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteCreateView(APIView):
     authentication_classes = []
-    permission_classes = []
+    permission_classes = [AllowAny]
 
+    @transaction.atomic
     def post(self, request):
-        email = (request.data.get("email") or "").strip().lower()
-        existing_user = User.objects.filter(email__iexact=email).first()
+        email = str(
+            request.data.get("email") or ""
+        ).strip().lower()
+
+        first_name = str(
+            request.data.get("first_name") or ""
+        ).strip()
+
+        last_name = str(
+            request.data.get("last_name") or ""
+        ).strip()
+
+        phone_country_code = str(
+            request.data.get("phone_country_code") or ""
+        ).strip()
+
+        phone_number = str(
+            request.data.get("phone_number") or ""
+        ).strip()
+
+        phone_e164 = str(
+            request.data.get("phone_e164") or ""
+        ).strip()
+
+        age = request.data.get("age")
+
+        gender = str(
+            request.data.get("gender") or ""
+        ).strip()
+
+        country = str(
+            request.data.get("country") or ""
+        ).strip()
+
+        topics = request.data.get("topics") or []
+
+        goal = str(
+            request.data.get("goal") or ""
+        ).strip()
+
+        recommended_courses = (
+            request.data.get(
+                "recommended_certifications"
+            )
+            or request.data.get("recommended_courses")
+            or []
+        )
+
+        selected_plan = request.data.get(
+            "selected_plan"
+        )
+
+        selected_paid_plan = request.data.get(
+            "selected_paid_plan"
+        )
+
+        # =====================================================
+        # VALIDACIONES BÁSICAS
+        # =====================================================
+
+        if not email:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "email_required",
+                    "message": "El correo es obligatorio.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        existing_user = (
+            User.objects
+            .filter(email__iexact=email)
+            .first()
+        )
 
         if existing_user:
             return Response(
                 {
                     "ok": False,
                     "error": "email_already_registered",
-                    "message": "Ya existe una cuenta con este correo.",
+                    "message": (
+                        "Ya existe una cuenta con este correo."
+                    ),
                     "redirect": "/login",
                     "email": email,
                 },
-                status=409,
+                status=status.HTTP_409_CONFLICT,
             )
-        first_name = (request.data.get("first_name") or "").strip()
-        last_name = (request.data.get("last_name") or "").strip()
-
-        phone_country_code = (request.data.get("phone_country_code") or "").strip()
-        phone_number = (request.data.get("phone_number") or "").strip()
-        phone_e164 = (request.data.get("phone_e164") or "").strip()
-
-        age = request.data.get("age")
-        gender = (request.data.get("gender") or "").strip()
-        country = (request.data.get("country") or "").strip()
-
-        topics = request.data.get("topics") or []
-        goal = (request.data.get("goal") or "").strip()
-        recommended = request.data.get("recommended_certifications") or []
-
-        if not email:
-            return Response({"error": "email es obligatorio"}, status=400)
 
         if not first_name:
-            return Response({"error": "first_name es obligatorio"}, status=400)
+            return Response(
+                {
+                    "ok": False,
+                    "error": "first_name_required",
+                    "message": "El nombre es obligatorio.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not phone_country_code:
-            return Response({"error": "phone_country_code es obligatorio"}, status=400)
+            return Response(
+                {
+                    "ok": False,
+                    "error": "phone_country_code_required",
+                    "message": (
+                        "El indicativo telefónico es obligatorio."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not phone_number:
-            return Response({"error": "phone_number es obligatorio"}, status=400)
-
-        if not phone_e164:
-            phone_e164 = f"{phone_country_code}{''.join(filter(str.isdigit, phone_number))}"
+            return Response(
+                {
+                    "ok": False,
+                    "error": "phone_number_required",
+                    "message": (
+                        "El número telefónico es obligatorio."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not goal:
-            return Response({"error": "goal es obligatorio"}, status=400)
+            return Response(
+                {
+                    "ok": False,
+                    "error": "goal_required",
+                    "message": "El objetivo es obligatorio.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        user = User.objects.filter(email=email).first()
+        if not isinstance(topics, list):
+            return Response(
+                {
+                    "ok": False,
+                    "error": "invalid_topics",
+                    "message": (
+                        "topics debe ser una lista."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not isinstance(recommended_courses, list):
+            return Response(
+                {
+                    "ok": False,
+                    "error": "invalid_recommended_courses",
+                    "message": (
+                        "recommended_certifications "
+                        "debe ser una lista."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not recommended_courses:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "recommended_courses_required",
+                    "message": (
+                        "La ruta debe contener al menos un curso."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not phone_e164:
+            digits = "".join(
+                filter(str.isdigit, phone_number)
+            )
+
+            phone_e164 = (
+                f"{phone_country_code}{digits}"
+            )
+
+        plan_config, plan_error = normalize_b2c_plan(
+            selected_plan=selected_plan,
+            selected_paid_plan=selected_paid_plan,
+        )
+
+        # El plan puede no venir todavía desde este paso.
+        if plan_error:
+            plan_config = B2C_PLAN_CONFIG["free"].copy()
+
+        # =====================================================
+        # CREAR EL LEAD
+        # =====================================================
 
         route = LearningRouteLead.objects.create(
-            user=user,
+            user=None,
             email=email,
             first_name=first_name,
             last_name=last_name,
@@ -7545,24 +7913,95 @@ class LearningRouteCreateView(APIView):
             country=country,
             topics=topics,
             goal=goal,
-            recommended_certifications=recommended,
+
+            # Se conserva por compatibilidad, pero el servicio
+            # lo reemplaza con la versión normalizada.
+            recommended_certifications=[],
+
+            selected_plan=plan_config["selected_plan"],
+            package_code=plan_config["package_code"],
+            tier=plan_config["tier"],
+            billing_period=plan_config["billing_period"],
+            access_status=plan_config["access_status"],
+            lifecycle_status=plan_config["lifecycle_status"],
+            pending_action=plan_config["pending_action"],
+
+            route_version=1,
+            mx_route_version=None,
+            mx_entitlement_status=None,
+            mx_last_sync_at=None,
+
             status="route_created",
             mx_status="pending",
             mx_response=None,
         )
 
+        if hasattr(route, "selected_paid_plan"):
+            route.selected_paid_plan = (
+                plan_config["selected_paid_plan"] or None
+            )
+
+            route.save(
+                update_fields=[
+                    "selected_paid_plan",
+                    "updated_at",
+                ]
+            )
+
+        # =====================================================
+        # CREAR SNAPSHOT V1
+        # =====================================================
+
+        try:
+            snapshot = create_initial_learning_route(
+                lead=route,
+                courses=recommended_courses,
+                source="START_NOW",
+                change_reason="START_NOW_ROUTE_CREATED",
+                metadata={
+                    "goal": goal,
+                    "topics": topics,
+                    "country": country,
+                    "selectedPlan": (
+                        plan_config["selected_plan"]
+                    ),
+                    "selectedPaidPlan": (
+                        plan_config[
+                            "selected_paid_plan"
+                        ]
+                        or None
+                    ),
+                },
+                require_certification=False,
+            )
+
+        except LearningRouteServiceError as exc:
+            raise transaction.TransactionManagementError(
+                str(exc)
+            ) from exc
+
+        snapshot_data = serialize_route_snapshot(
+            snapshot
+        )
+
         return Response(
             {
+                "ok": True,
                 "id": route.id,
+                "route_id": route.id,
                 "email": route.email,
                 "first_name": route.first_name,
                 "last_name": route.last_name,
-                "phone_country_code": route.phone_country_code,
+                "phone_country_code": (
+                    route.phone_country_code
+                ),
                 "phone_number": route.phone_number,
                 "phone_e164": route.phone_e164,
                 "status": route.status,
+                "route_version": snapshot.version,
+                "learning_route": snapshot_data,
             },
-            status=201,
+            status=status.HTTP_201_CREATED,
         )
     
 class LearningRouteFreeSignupView(APIView):
@@ -7625,136 +8064,12 @@ class LearningRouteFreeSignupView(APIView):
         })
 
 
-MX_SUCCESS_STATUSES = {
-    "APPLIED",
-    "DUPLICATE",
-}
-
-MX_RETRYABLE_STATUS = "RETRYABLE_ERROR"
-MX_PERMANENT_STATUS = "PERMANENT_ERROR"
-
-
-def _as_dict(value):
-    return value if isinstance(value, dict) else {}
-
-
-def normalize_mx_result(mx_result):
-    """
-    Normaliza las distintas formas en las que el helper HTTP
-    puede envolver la respuesta contractual de MX.
-
-    Soporta, por ejemplo:
-
-    {
-        "status": "APPLIED"
-    }
-
-    {
-        "data": {
-            "status": "APPLIED"
-        }
-    }
-
-    {
-        "response": {
-            "status": "APPLIED"
-        }
-    }
-
-    {
-        "body": {
-            "status": "APPLIED"
-        }
-    }
-    """
-
-    root = _as_dict(mx_result)
-    data = _as_dict(root.get("data"))
-    body = _as_dict(root.get("body"))
-    response_data = _as_dict(root.get("response"))
-    result = _as_dict(root.get("result"))
-
-    containers = [
-        root,
-        data,
-        body,
-        response_data,
-        result,
-    ]
-
-    mx_status = ""
-
-    for container in containers:
-        candidate = (
-            container.get("status")
-            or container.get("mx_status")
-            or container.get("eventStatus")
-            or container.get("event_status")
-        )
-
-        if candidate:
-            mx_status = str(candidate).strip().upper()
-            break
-
-    magic_link = ""
-
-    for container in containers:
-        candidate = (
-            container.get("magicLink")
-            or container.get("magicLinkUrl")
-            or container.get("magic_link")
-            or container.get("magic_link_url")
-        )
-
-        if candidate:
-            magic_link = str(candidate).strip()
-            break
-
-    message = ""
-
-    for container in containers:
-        candidate = (
-            container.get("message")
-            or container.get("detail")
-            or container.get("errorMessage")
-            or container.get("error_message")
-        )
-
-        if candidate:
-            message = str(candidate).strip()
-            break
-
-        error_value = container.get("error")
-
-        if isinstance(error_value, str) and error_value.strip():
-            message = error_value.strip()
-            break
-
-        if isinstance(error_value, dict):
-            nested_message = (
-                error_value.get("message")
-                or error_value.get("detail")
-                or error_value.get("code")
-            )
-
-            if nested_message:
-                message = str(nested_message).strip()
-                break
-
-    return {
-        "status": mx_status,
-        "magic_link": magic_link,
-        "message": message,
-        "raw": root,
-    }
-
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteCompleteSignupView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
-    @transaction.atomic
     def post(self, request):
         route_id = request.data.get("route_id")
         password = request.data.get("password")
@@ -7787,86 +8102,580 @@ class LearningRouteCompleteSignupView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        route = (
-            LearningRouteLead.objects
-            .select_for_update()
-            .select_related("user")
-            .filter(id=route_id)
-            .first()
+        plan_config, plan_error = normalize_b2c_plan(
+            selected_plan=selected_plan,
+            selected_paid_plan=selected_paid_plan,
         )
 
-        if not route:
+        if plan_error:
             return Response(
                 {
                     "ok": False,
-                    "error": "route_not_found",
-                    "message": "Ruta no encontrada.",
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        user = route.user
-
-        if not user:
-            user, created, creation_error = (
-                get_or_create_user_from_learning_route(
-                    route=route,
-                    request=request,
-                )
-            )
-
-            if creation_error:
-                return Response(
-                    {
-                        "ok": False,
-                        "error": creation_error,
-                        "message": creation_error,
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            route.user = user
-
-        try:
-            validate_password(password, user)
-        except ValidationError as error:
-            return Response(
-                {
-                    "ok": False,
-                    "error": "password_invalido",
+                    "error": plan_error,
                     "message": (
-                        error.messages[0]
-                        if error.messages
-                        else "La contraseña no cumple los requisitos."
+                        "El plan seleccionado no es válido."
                     ),
-                    "messages": error.messages,
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        route_email = str(
-            getattr(route, "email", "") or ""
-        ).strip().lower()
+        # =====================================================
+        # TRANSACCIÓN LOCAL
+        # =====================================================
 
-        user.set_password(password)
-        user.is_active = True
+        try:
+            with transaction.atomic():
+                route = (
+                    LearningRouteLead.objects
+                    .select_for_update()
+                    .select_related("user")
+                    .filter(id=route_id)
+                    .first()
+                )
 
-        user_update_fields = [
-            "password",
-            "is_active",
-        ]
+                if not route:
+                    return Response(
+                        {
+                            "ok": False,
+                            "error": "route_not_found",
+                            "message": "Ruta no encontrada.",
+                        },
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
 
-        if route_email and not str(
-            getattr(user, "email", "") or ""
-        ).strip():
-            user.email = route_email
-            user_update_fields.append("email")
+                user = route.user
 
-        user.save(
-            update_fields=list(dict.fromkeys(user_update_fields))
+                if not user:
+                    user, created, creation_error = (
+                        get_or_create_user_from_learning_route(
+                            route=route,
+                            request=request,
+                        )
+                    )
+
+                    if creation_error:
+                        return Response(
+                            {
+                                "ok": False,
+                                "error": creation_error,
+                                "message": creation_error,
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    route.user = user
+
+                try:
+                    validate_password(
+                        password,
+                        user,
+                    )
+                except ValidationError as error:
+                    return Response(
+                        {
+                            "ok": False,
+                            "error": "password_invalido",
+                            "message": (
+                                error.messages[0]
+                                if error.messages
+                                else (
+                                    "La contraseña no cumple "
+                                    "los requisitos."
+                                )
+                            ),
+                            "messages": error.messages,
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                route_email = str(
+                    route.email or ""
+                ).strip().lower()
+
+                user.set_password(password)
+                user.is_active = True
+
+                user_update_fields = [
+                    "password",
+                    "is_active",
+                ]
+
+                if route_email and not str(
+                    user.email or ""
+                ).strip():
+                    user.email = route_email
+                    user_update_fields.append("email")
+
+                if not user.first_name:
+                    user.first_name = (
+                        route.first_name or ""
+                    )
+                    user_update_fields.append(
+                        "first_name"
+                    )
+
+                if not user.last_name:
+                    user.last_name = (
+                        route.last_name or ""
+                    )
+                    user_update_fields.append(
+                        "last_name"
+                    )
+
+                user.save(
+                    update_fields=list(
+                        dict.fromkeys(
+                            user_update_fields
+                        )
+                    )
+                )
+
+                subscription = None
+
+                if (
+                    plan_config["selected_plan"]
+                    != "free"
+                ):
+                    subscription = (
+                        StripeSubscription.objects
+                        .filter(user=user)
+                        .order_by(
+                            "-updated_at",
+                            "-id",
+                        )
+                        .first()
+                    )
+
+                update_fields = apply_b2c_plan_to_route(
+                    route,
+                    plan_config,
+                )
+
+                route.user = user
+                route.status = "account_pending_mx"
+
+                update_fields.extend([
+                    "user",
+                    "status",
+                ])
+
+                if subscription:
+                    route.stripe_subscription_id = (
+                        subscription
+                        .stripe_subscription_id
+                    )
+
+                    route.trial_end = (
+                        route.trial_end
+                        or subscription.current_period_end
+                    )
+
+                    update_fields.extend([
+                        "stripe_subscription_id",
+                        "trial_end",
+                    ])
+
+                    if hasattr(
+                        subscription,
+                        "package_code",
+                    ):
+                        subscription.package_code = (
+                            plan_config["package_code"]
+                        )
+                        subscription.tier = (
+                            plan_config["tier"]
+                        )
+                        subscription.billing_period = (
+                            plan_config[
+                                "billing_period"
+                            ]
+                        )
+                        subscription.access_status = (
+                            plan_config[
+                                "access_status"
+                            ]
+                        )
+                        subscription.lifecycle_status = (
+                            plan_config[
+                                "lifecycle_status"
+                            ]
+                        )
+                        subscription.pending_action = (
+                            plan_config[
+                                "pending_action"
+                            ]
+                        )
+
+                        subscription.save(
+                            update_fields=[
+                                "package_code",
+                                "tier",
+                                "billing_period",
+                                "access_status",
+                                "lifecycle_status",
+                                "pending_action",
+                                "updated_at",
+                            ]
+                        )
+
+                route.save(
+                    update_fields=list(
+                        dict.fromkeys(
+                            update_fields
+                        )
+                    )
+                )
+
+                snapshot = get_current_route_snapshot(
+                    route,
+                    for_update=True,
+                )
+
+                if snapshot is None:
+                    legacy_courses = (
+                        route.recommended_certifications
+                        if isinstance(
+                            route.recommended_certifications,
+                            list,
+                        )
+                        else []
+                    )
+
+                    if not legacy_courses:
+                        return Response(
+                            {
+                                "ok": False,
+                                "error": (
+                                    "learning_route_not_found"
+                                ),
+                                "message": (
+                                    "No existe una ruta de "
+                                    "aprendizaje para el usuario."
+                                ),
+                            },
+                            status=(
+                                status.HTTP_400_BAD_REQUEST
+                            ),
+                        )
+
+                    snapshot = (
+                        create_initial_learning_route(
+                            lead=route,
+                            courses=legacy_courses,
+                            source="LEGACY_START_NOW",
+                            change_reason=(
+                                "LEGACY_ROUTE_RECOVERED"
+                            ),
+                            require_certification=False,
+                        )
+                    )
+
+                # Free recibe exactamente tres cursos.
+                if (
+                    plan_config["package_code"]
+                    == "TOP_EDUCATION_FREE"
+                ):
+                    free_courses = (
+                        get_free_route_courses(
+                            snapshot
+                        )
+                    )
+
+                    if len(free_courses) != 3:
+                        return Response(
+                            {
+                                "ok": False,
+                                "error": (
+                                    "free_route_requires_"
+                                    "three_courses"
+                                ),
+                                "message": (
+                                    "El plan Free requiere "
+                                    "exactamente tres cursos "
+                                    "válidos."
+                                ),
+                            },
+                            status=(
+                                status.HTTP_400_BAD_REQUEST
+                            ),
+                        )
+
+                    current_courses = (
+                        get_snapshot_courses(
+                            snapshot
+                        )
+                    )
+
+                    current_ids = [
+                        str(
+                            course.get(
+                                "idInterno"
+                            )
+                            or ""
+                        )
+                        for course in current_courses
+                    ]
+
+                    free_ids = [
+                        str(
+                            course.get(
+                                "idInterno"
+                            )
+                            or ""
+                        )
+                        for course in free_courses
+                    ]
+
+                    if current_ids != free_ids:
+                        snapshot = update_learning_route(
+                            lead=route,
+                            courses=free_courses,
+                            source="START_NOW",
+                            change_reason=(
+                                "FREE_ROUTE_REDUCED_TO_"
+                                "THREE_COURSES"
+                            ),
+                            metadata={
+                                "packageCode": (
+                                    plan_config[
+                                        "package_code"
+                                    ]
+                                ),
+                                "previousVersion": (
+                                    snapshot.version
+                                ),
+                            },
+                            require_certification=False,
+                        )
+
+                event_id = str(
+                    route.mx_event_id or ""
+                ).strip()
+
+                if not event_id:
+                    event_id = (
+                        f"colombia-b2c:"
+                        f"USER_ACCESS_PROVISION:"
+                        f"route-{route.id}:"
+                        f"user-{user.id}:"
+                        f"{uuid.uuid4()}"
+                    )
+
+                    route.mx_event_id = event_id
+                    route.save(
+                        update_fields=[
+                            "mx_event_id",
+                            "updated_at",
+                        ]
+                    )
+
+                # Guardamos IDs para utilizarlos después de
+                # cerrar la transacción.
+                user_id = user.id
+                route_pk = route.id
+                snapshot_pk = snapshot.id
+
+        except LearningRouteServiceError as exc:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "learning_route_error",
+                    "message": str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "Error completando signup para route=%s",
+                route_id,
+            )
+
+            return Response(
+                {
+                    "ok": False,
+                    "error": "complete_signup_failed",
+                    "message": str(exc),
+                },
+                status=(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR
+                ),
+            )
+
+        # =====================================================
+        # RECARGAR DESPUÉS DE LA TRANSACCIÓN
+        # =====================================================
+
+        user = User.objects.get(pk=user_id)
+
+        route = (
+            LearningRouteLead.objects
+            .select_related("user")
+            .get(pk=route_pk)
+        )
+
+        snapshot = (
+            LearningRouteSnapshot.objects
+            .prefetch_related("courses")
+            .get(pk=snapshot_pk)
+        )
+
+        subscription = (
+            StripeSubscription.objects
+            .filter(user=user)
+            .order_by(
+                "-updated_at",
+                "-id",
+            )
+            .first()
+            if plan_config["selected_plan"] != "free"
+            else None
+        )
+
+        # =====================================================
+        # CONSTRUIR EVENTO CANÓNICO
+        # =====================================================
+
+        try:
+            payload = build_mx_access_payload(
+                event_id=event_id,
+                event_type="USER_ACCESS_PROVISION",
+                user=user,
+                route=route,
+                route_snapshot=snapshot,
+                extra_metadata={
+                    "trigger": "complete-signup",
+                    "selectedPlan": (
+                        plan_config["selected_plan"]
+                    ),
+                    "selectedPaidPlan": (
+                        plan_config[
+                            "selected_paid_plan"
+                        ]
+                        or None
+                    ),
+                    "packageCode": (
+                        plan_config["package_code"]
+                    ),
+                    "changeReason": (
+                        snapshot.change_reason
+                    ),
+                },
+            )
+
+            mx_result = send_b2c_access_event_to_mx(
+                payload=payload,
+                route=route,
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "Error enviando aprovisionamiento MX "
+                "para route=%s",
+                route.id,
+            )
+
+            route.status = "mx_retry_pending"
+            route.mx_status = "RETRYABLE_ERROR"
+            route.mx_response = {
+                "ok": False,
+                "error": str(exc),
+            }
+
+            route.save(
+                update_fields=[
+                    "status",
+                    "mx_status",
+                    "mx_response",
+                    "updated_at",
+                ]
+            )
+
+            return Response(
+                {
+                    "ok": False,
+                    "error": "mx_send_failed",
+                    "message": str(exc),
+                    "retryable": True,
+                    "route_id": route.id,
+                },
+                status=(
+                    status.HTTP_503_SERVICE_UNAVAILABLE
+                ),
+            )
+
+        mx_status = str(
+            mx_result.get("status") or ""
+        ).strip().upper()
+
+        accepted = bool(
+            mx_result.get("accepted")
+            or mx_result.get("ok")
+        )
+
+        retryable = bool(
+            mx_result.get("retry")
+        )
+
+        permanent = bool(
+            mx_result.get("permanent")
+        )
+
+        pending = bool(
+            mx_result.get("pending")
+        )
+
+        magic_link = mx_result.get(
+            "magicLink"
+        )
+
+        mx_user_id = mx_result.get(
+            "mxUserId"
+        )
+
+        if accepted:
+            route.status = (
+                "mx_processing"
+                if pending
+                else "account_created"
+            )
+
+        elif retryable:
+            route.status = "mx_retry_pending"
+
+        elif permanent:
+            route.status = "mx_permanent_error"
+
+        else:
+            route.status = "mx_unknown_error"
+
+        route.mx_status = (
+            mx_status or "UNKNOWN"
+        )
+
+        route.mx_response = mx_result
+
+        if magic_link:
+            route.mx_magic_link = magic_link
+
+        if mx_user_id:
+            route.mx_user_id = str(
+                mx_user_id
+            )
+
+        route.save(
+            update_fields=[
+                "status",
+                "mx_status",
+                "mx_response",
+                "mx_magic_link",
+                "mx_user_id",
+                "updated_at",
+            ]
         )
 
         backend = get_backends()[0]
+
         user.backend = (
             f"{backend.__module__}."
             f"{backend.__class__.__name__}"
@@ -7874,219 +8683,94 @@ class LearningRouteCompleteSignupView(APIView):
 
         login(request, user)
 
-        subscription = None
-
-        if selected_plan != "free":
-            subscription = (
-                StripeSubscription.objects
-                .filter(user=user)
-                .order_by("-id")
-                .first()
-            )
-
-        route.selected_plan = selected_plan
-        route.status = "account_pending_mx"
-
-        if subscription:
-            route.stripe_subscription_id = (
-                subscription.stripe_subscription_id
-            )
-
-            route.trial_end = (
-                route.trial_end
-                or subscription.current_period_end
-            )
-
-        route.save(
-            update_fields=[
-                "user",
-                "selected_plan",
-                "status",
-                "stripe_subscription_id",
-                "trial_end",
-                "updated_at",
-            ]
-        )
-
-        event_type = "USER_ACCESS_PROVISION"
-
-        plan_value = (
-            "free"
-            if selected_plan == "free"
-            else selected_paid_plan or selected_plan
-        )
-
-        # IMPORTANTE:
-        # Para cumplir el contrato de reintentos, este valor debería
-        # persistirse en route.mx_event_id.
-        event_id = str(
-            getattr(route, "mx_event_id", "") or ""
-        ).strip()
-
-        if not event_id:
-            event_id = (
-                f"evt_col_provision_route_{route.id}"
-                f"_user_{user.id}_{uuid.uuid4()}"
-            )
-
-            # Conserva este bloque solo si ya agregaste mx_event_id
-            # al modelo LearningRouteLead.
-            if hasattr(route, "mx_event_id"):
-                route.mx_event_id = event_id
-                route.save(
-                    update_fields=[
-                        "mx_event_id",
-                        "updated_at",
-                    ]
-                )
-
-        payload = build_learning_route_mx_payload(
-            event_id=event_id,
-            event_type=event_type,
-            user=user,
-            route=route,
-            subscription=subscription,
-            plan_value=plan_value,
-        )
-
-        mx_result = send_b2c_access_event_to_mx(
-            payload=payload,
-            user=user,
-            route=route,
-        )
-
-        print("=" * 90)
-        print("MX COMPLETE SIGNUP RESULT:")
-        print(mx_result)
-        print("=" * 90)
-
-        normalized_mx = normalize_mx_result(mx_result)
-
-        mx_status = normalized_mx["status"]
-        magic_link = normalized_mx["magic_link"]
-        mx_message = normalized_mx["message"]
-        raw_mx_result = normalized_mx["raw"]
-
-        print(
-            "MX NORMALIZED RESULT:",
-            {
-                "status": mx_status,
-                "message": mx_message,
-                "has_magic_link": bool(magic_link),
-            },
-        )
-
-        route.mx_status = mx_status or "UNKNOWN"
-        route.mx_response = raw_mx_result
-
-        if magic_link:
-            route.mx_magic_link = magic_link
-
-        if mx_status in MX_SUCCESS_STATUSES:
-            route.status = "account_created"
-
-        elif mx_status == MX_RETRYABLE_STATUS:
-            route.status = "mx_retry_pending"
-
-        elif mx_status == MX_PERMANENT_STATUS:
-            route.status = "mx_permanent_error"
-
-        else:
-            route.status = "mx_unknown_error"
-
-        route.save(
-            update_fields=[
-                "mx_status",
-                "mx_response",
-                "mx_magic_link",
-                "status",
-                "updated_at",
-            ]
-        )
-
         redirect_url = (
             "/account?tab=cv"
-            if selected_plan == "free"
+            if plan_config["selected_plan"] == "free"
             else "/account?tab=license"
         )
 
-        if mx_status in MX_SUCCESS_STATUSES:
+        if accepted:
             return Response(
                 {
                     "ok": True,
                     "user_id": user.id,
                     "route_id": route.id,
-                    "selected_plan": selected_plan,
+                    "route_version": snapshot.version,
+                    "selected_plan": (
+                        plan_config["selected_plan"]
+                    ),
+                    "selected_paid_plan": (
+                        plan_config[
+                            "selected_paid_plan"
+                        ]
+                        or None
+                    ),
+                    "package_code": (
+                        plan_config["package_code"]
+                    ),
                     "mx_sent": True,
-                    "mx_status": mx_status,
-                    "mx_response": raw_mx_result,
-                    "magic_link": magic_link or None,
+                    "mx_pending": pending,
+                    "mx_status": route.mx_status,
+                    "mx_user_id": (
+                        route.mx_user_id or None
+                    ),
+                    "magic_link": (
+                        route.mx_magic_link or None
+                    ),
                     "redirect": redirect_url,
                 },
                 status=status.HTTP_200_OK,
             )
 
-        if mx_status == MX_RETRYABLE_STATUS:
+        if retryable:
             return Response(
                 {
                     "ok": False,
                     "error": "mx_retryable_error",
                     "message": (
-                        mx_message
-                        or (
-                            "MX presentó un error temporal. "
-                            "El evento debe reintentarse con el mismo eventId."
-                        )
+                        "México presentó un error temporal. "
+                        "El evento quedó registrado para "
+                        "reintentarse con el mismo eventId."
                     ),
                     "retryable": True,
                     "route_id": route.id,
-                    "mx_status": mx_status,
-                    "mx_response": raw_mx_result,
-                    "redirect": redirect_url,
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        if mx_status == MX_PERMANENT_STATUS:
-            return Response(
-                {
-                    "ok": False,
-                    "error": "mx_permanent_error",
-                    "message": (
-                        mx_message
-                        or (
-                            "MX rechazó el evento por un error permanente "
-                            "en el contrato o los datos enviados."
-                        )
+                    "event_id": event_id,
+                    "mx_status": route.mx_status,
+                    "next_retry_at": mx_result.get(
+                        "nextRetryAt"
                     ),
-                    "retryable": False,
-                    "route_id": route.id,
-                    "mx_status": mx_status,
-                    "mx_response": raw_mx_result,
                     "redirect": redirect_url,
                 },
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status=(
+                    status.HTTP_503_SERVICE_UNAVAILABLE
+                ),
             )
 
         return Response(
             {
                 "ok": False,
-                "error": "mx_unknown_status",
+                "error": (
+                    "mx_permanent_error"
+                    if permanent
+                    else "mx_unknown_status"
+                ),
                 "message": (
-                    mx_message
-                    or (
-                        "MX devolvió una respuesta sin un estado "
-                        "contractual reconocido."
-                    )
+                    "México rechazó el evento "
+                    "de aprovisionamiento."
                 ),
                 "retryable": False,
                 "route_id": route.id,
-                "mx_status": mx_status or "UNKNOWN",
-                "mx_response": raw_mx_result,
+                "event_id": event_id,
+                "mx_status": route.mx_status,
+                "mx_response": mx_result,
                 "redirect": redirect_url,
             },
-            status=status.HTTP_502_BAD_GATEWAY,
-        ) 
+            status=(
+                status.HTTP_422_UNPROCESSABLE_ENTITY
+                if permanent
+                else status.HTTP_502_BAD_GATEWAY
+            ),
+        )
     
 def _json_body(request):
     try:
@@ -9815,7 +10499,14 @@ def build_learning_route_mx_payload(
 
     return payload
 
-def send_b2c_access_event_to_mx(*, payload, user=None, route=None):
+def send_b2c_access_event_to_mx(
+    *,
+    payload,
+    user=None,
+    route=None,
+    route_snapshot=None,
+    force=False,
+):
     event_id = payload["eventId"]
     event_type = payload["eventType"]
     occurred_at = payload["occurredAt"]
@@ -9988,13 +10679,42 @@ def select_recommendation_id(
     level,
     skill_ids,
     excluded_ids=None,
+    excluded_internal_ids=None,
     require_skill_match=True,
 ):
-    excluded_ids = [
-        int(item)
-        for item in (excluded_ids or [])
-        if item
-    ]
+    """
+    Selecciona una certificación candidata sin repetir:
+
+    1. El ID del registro de Colombia.
+    2. El id_interno utilizado por México.
+
+    excluded_ids:
+        IDs PK de Certificaciones que ya fueron usados.
+
+    excluded_internal_ids:
+        IDs internos de México que ya fueron usados.
+    """
+
+    clean_excluded_ids = []
+
+    for item in excluded_ids or []:
+        try:
+            numeric_id = int(item)
+        except (TypeError, ValueError):
+            continue
+
+        if numeric_id > 0:
+            clean_excluded_ids.append(numeric_id)
+
+    clean_excluded_ids = list(
+        dict.fromkeys(clean_excluded_ids)
+    )
+
+    clean_excluded_internal_ids = {
+        str(item).strip().lower()
+        for item in (excluded_internal_ids or set())
+        if str(item or "").strip()
+    }
 
     queryset = (
         get_recommendation_base_queryset()
@@ -10009,9 +10729,19 @@ def select_recommendation_id(
         level=level,
     )
 
-    if excluded_ids:
+    # Excluir registros concretos de Colombia.
+    if clean_excluded_ids:
         queryset = queryset.exclude(
-            id__in=excluded_ids,
+            id__in=clean_excluded_ids,
+        )
+
+    # Excluir cualquier otro registro que represente
+    # el mismo curso en México.
+    if clean_excluded_internal_ids:
+        queryset = queryset.exclude(
+            id_interno__in=list(
+                clean_excluded_internal_ids
+            )
         )
 
     if require_skill_match and skill_ids:
@@ -10031,6 +10761,53 @@ def select_recommendation_id(
         .values_list("id", flat=True)
         .first()
     )
+
+def get_recommendation_identity(certification_id):
+    """
+    Obtiene la identidad del curso seleccionado.
+
+    Devuelve:
+        {
+            "id": int | None,
+            "id_interno": str,
+        }
+
+    El id_interno se normaliza para poder compararlo
+    consistentemente entre niveles y plataformas.
+    """
+
+    try:
+        certification_id = int(certification_id)
+    except (TypeError, ValueError):
+        return {
+            "id": None,
+            "id_interno": "",
+        }
+
+    certification = (
+        Certificaciones.objects
+        .filter(id=certification_id)
+        .values(
+            "id",
+            "id_interno",
+        )
+        .first()
+    )
+
+    if not certification:
+        return {
+            "id": None,
+            "id_interno": "",
+        }
+
+    internal_id = str(
+        certification.get("id_interno") or ""
+    ).strip().lower()
+
+    return {
+        "id": certification["id"],
+        "id_interno": internal_id,
+    }
 
 def load_recommendation_objects(selected_ids):
     selected_ids = [
@@ -10234,23 +11011,68 @@ def get_valid_topic_skill_ids(topic_ids):
     )
 
 def build_level_recommendations(
+    *,
     request,
     skill_ids,
     rule,
+    limit=3,
+    excluded_internal_ids=None,
+    excluded_certification_ids=None,
 ):
-    platform_ids = [
-        int(platform_id)
-        for platform_id in rule.get("platform_ids", [])
-        if platform_id
-    ]
+    """
+    Construye las recomendaciones de un nivel evitando duplicados
+    por ID de Colombia y por id_interno de México.
+
+    La función intenta completar el límite solicitado, buscando un
+    reemplazo cuando encuentra un curso ya utilizado.
+    """
+
+    used_internal_ids = {
+        str(value).strip().lower()
+        for value in (excluded_internal_ids or set())
+        if str(value or "").strip()
+    }
+
+    used_certification_ids = set()
+
+    for value in excluded_certification_ids or set():
+        try:
+            numeric_id = int(value)
+        except (TypeError, ValueError):
+            continue
+
+        if numeric_id > 0:
+            used_certification_ids.add(numeric_id)
+
+    platform_ids = []
+
+    for platform_id in rule.get("platform_ids", []):
+        try:
+            numeric_platform_id = int(platform_id)
+        except (TypeError, ValueError):
+            continue
+
+        if numeric_platform_id > 0:
+            platform_ids.append(numeric_platform_id)
+
+    platform_ids = list(
+        dict.fromkeys(platform_ids)
+    )
 
     level = str(
         rule.get("nivel") or ""
     ).strip().upper()
 
-    limit = max(
+    try:
+        requested_limit = int(limit)
+    except (TypeError, ValueError):
+        requested_limit = int(
+            rule.get("limit") or 3
+        )
+
+    requested_limit = max(
         1,
-        int(rule.get("limit") or 3),
+        min(requested_limit, 10),
     )
 
     ensure_each_platform = bool(
@@ -10262,141 +11084,247 @@ def build_level_recommendations(
 
     selected_ids = []
 
-    # =========================================================
-    # NIVELES 2 Y 3
-    # Garantizar al menos una certificación por plataforma.
-    # =========================================================
-    if ensure_each_platform:
-        for platform_id in platform_ids:
-            certification_id = select_recommendation_id(
+    def register_selected_certification(
+        certification_id,
+    ):
+        """
+        Registra una selección tanto por PK Colombia
+        como por id_interno México.
+        """
+
+        identity = get_recommendation_identity(
+            certification_id
+        )
+
+        selected_id = identity.get("id")
+        internal_id = identity.get("id_interno")
+
+        if not selected_id:
+            return False
+
+        if selected_id in used_certification_ids:
+            return False
+
+        if (
+            internal_id
+            and internal_id in used_internal_ids
+        ):
+            return False
+
+        selected_ids.append(selected_id)
+        used_certification_ids.add(selected_id)
+
+        if internal_id:
+            used_internal_ids.add(internal_id)
+
+        return True
+
+    def select_from_platform(
+        platform_id,
+        require_skill_match,
+    ):
+        """
+        Busca un candidato válido para la plataforma.
+
+        Si por alguna inconsistencia la consulta devuelve un curso
+        repetido, continúa buscando otro candidato.
+        """
+
+        max_attempts = 30
+        attempts = 0
+
+        while attempts < max_attempts:
+            attempts += 1
+
+            candidate_id = select_recommendation_id(
                 platform_id=platform_id,
                 level=level,
                 skill_ids=skill_ids,
-                excluded_ids=selected_ids,
+                excluded_ids=used_certification_ids,
+                excluded_internal_ids=used_internal_ids,
+                require_skill_match=require_skill_match,
+            )
+
+            if not candidate_id:
+                return None
+
+            if register_selected_certification(
+                candidate_id
+            ):
+                return candidate_id
+
+            # Protección defensiva:
+            # si el candidato fue rechazado, también excluimos
+            # su PK para que la siguiente iteración avance.
+            try:
+                used_certification_ids.add(
+                    int(candidate_id)
+                )
+            except (TypeError, ValueError):
+                pass
+
+        return None
+
+    # =========================================================
+    # NIVELES CON COBERTURA POR PLATAFORMA
+    # Nivel 2: edX y MasterClass.
+    # Nivel 3: edX, Coursera y MasterClass.
+    # =========================================================
+    if ensure_each_platform:
+        # Primera pasada:
+        # intentar una recomendación por cada plataforma.
+        for platform_id in platform_ids:
+            if len(selected_ids) >= requested_limit:
+                break
+
+            selected_id = select_from_platform(
+                platform_id=platform_id,
                 require_skill_match=True,
             )
 
-            if not certification_id:
-                certification_id = select_recommendation_id(
+            if not selected_id:
+                select_from_platform(
                     platform_id=platform_id,
-                    level=level,
-                    skill_ids=skill_ids,
-                    excluded_ids=selected_ids,
                     require_skill_match=False,
                 )
 
-            if certification_id:
-                selected_ids.append(certification_id)
+        # Segunda pasada:
+        # completar el límite manteniendo prioridad por skill.
+        while len(selected_ids) < requested_limit:
+            selected_in_round = False
 
-            if len(selected_ids) >= limit:
-                break
-
-        # Nivel 2 tiene dos plataformas, pero requiere tres cards.
-        while len(selected_ids) < limit:
-            selected_id = None
-
-            # Prioridad: coincidencia con habilidades.
             for platform_id in platform_ids:
-                selected_id = select_recommendation_id(
+                if len(selected_ids) >= requested_limit:
+                    break
+
+                selected_id = select_from_platform(
                     platform_id=platform_id,
-                    level=level,
-                    skill_ids=skill_ids,
-                    excluded_ids=selected_ids,
                     require_skill_match=True,
                 )
 
                 if selected_id:
+                    selected_in_round = True
+
+            if selected_in_round:
+                continue
+
+            # Fallback sin coincidencia obligatoria por skill.
+            for platform_id in platform_ids:
+                if len(selected_ids) >= requested_limit:
                     break
 
-            # Fallback: misma plataforma sin coincidencia por skill.
-            if not selected_id:
-                for platform_id in platform_ids:
-                    selected_id = select_recommendation_id(
-                        platform_id=platform_id,
-                        level=level,
-                        skill_ids=skill_ids,
-                        excluded_ids=selected_ids,
-                        require_skill_match=False,
-                    )
+                selected_id = select_from_platform(
+                    platform_id=platform_id,
+                    require_skill_match=False,
+                )
 
-                    if selected_id:
-                        break
+                if selected_id:
+                    selected_in_round = True
 
-            if not selected_id:
+            # No quedan candidatos únicos disponibles.
+            if not selected_in_round:
                 break
-
-            if selected_id in selected_ids:
-                break
-
-            selected_ids.append(selected_id)
 
     # =========================================================
-    # NIVEL 1
-    # Tres certificaciones de Coursera.
+    # NIVEL DE UNA SOLA PLATAFORMA
+    # Nivel 1: Coursera.
     # =========================================================
     else:
         platform_id = platform_ids[0]
 
-        queryset = (
-            get_recommendation_base_queryset()
-            .filter(
-                plataforma_certificacion_id=platform_id,
-                nivel_certificacion=level,
+        # Primero intentar completar con coincidencia por skill.
+        while len(selected_ids) < requested_limit:
+            selected_id = select_from_platform(
+                platform_id=platform_id,
+                require_skill_match=True,
             )
+
+            if not selected_id:
+                break
+
+        # Completar con fallback de la misma plataforma.
+        while len(selected_ids) < requested_limit:
+            selected_id = select_from_platform(
+                platform_id=platform_id,
+                require_skill_match=False,
+            )
+
+            if not selected_id:
+                break
+
+    recommendation_objects = (
+        load_recommendation_objects(
+            selected_ids
         )
-
-        if skill_ids:
-            queryset = (
-                annotate_skill_match(
-                    queryset,
-                    skill_ids,
-                )
-                .filter(
-                    has_skill_match=True,
-                )
-            )
-
-        selected_ids = list(
-            queryset
-            .order_by("-id")
-            .values_list("id", flat=True)[:limit]
-        )
-
-        if len(selected_ids) < limit:
-            missing = limit - len(selected_ids)
-
-            fallback_queryset = (
-                get_recommendation_base_queryset()
-                .filter(
-                    plataforma_certificacion_id=platform_id,
-                    nivel_certificacion=level,
-                )
-            )
-
-            if selected_ids:
-                fallback_queryset = fallback_queryset.exclude(
-                    id__in=selected_ids,
-                )
-
-            fallback_ids = list(
-                fallback_queryset
-                .order_by("-id")
-                .values_list("id", flat=True)[:missing]
-            )
-
-            selected_ids.extend(fallback_ids)
-
-    selected_ids = selected_ids[:limit]
-
-    recommendation_objects = load_recommendation_objects(
-        selected_ids
     )
 
-    return PersonalizedLeadRecommendationSerializer(
-        recommendation_objects,
-        many=True,
-        context={"request": request},
-    ).data
+    serialized_items = (
+        PersonalizedLeadRecommendationSerializer(
+            recommendation_objects,
+            many=True,
+            context={"request": request},
+        ).data
+    )
+
+    # Validación defensiva final dentro del nivel.
+    clean_items = []
+    local_internal_ids = set()
+    local_certification_ids = set()
+
+    for item in serialized_items:
+        if not isinstance(item, dict):
+            continue
+
+        internal_id = str(
+            item.get("id_interno")
+            or item.get("idInterno")
+            or item.get("id_interno_mx")
+            or item.get("idInternoMx")
+            or ""
+        ).strip().lower()
+
+        certification_id = str(
+            item.get("id")
+            or item.get("certification_id")
+            or item.get("colombiaCertificationId")
+            or ""
+        ).strip()
+
+        if (
+            internal_id
+            and internal_id in local_internal_ids
+        ):
+            logger.warning(
+                "Recomendación duplicada descartada dentro "
+                "del nivel. id_interno=%s",
+                internal_id,
+            )
+            continue
+
+        if (
+            not internal_id
+            and certification_id
+            and certification_id
+            in local_certification_ids
+        ):
+            logger.warning(
+                "Recomendación duplicada descartada dentro "
+                "del nivel. certification_id=%s",
+                certification_id,
+            )
+            continue
+
+        clean_items.append(item)
+
+        if internal_id:
+            local_internal_ids.add(internal_id)
+
+        if certification_id:
+            local_certification_ids.add(
+                certification_id
+            )
+
+    return clean_items
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteRecommendationsAPIView(APIView):
@@ -10405,16 +11333,37 @@ class LearningRouteRecommendationsAPIView(APIView):
 
     def post(self, request, *args, **kwargs):
         topics = request.data.get("topics") or []
-        topic_ids = request.data.get("topic_ids") or []
+        topic_ids = (
+            request.data.get("topic_ids") or []
+        )
+
         goal = str(
             request.data.get("goal") or ""
         ).strip()
+
+        try:
+            limit_per_level = int(
+                request.data.get(
+                    "limit_per_level"
+                )
+                or 3
+            )
+        except (TypeError, ValueError):
+            limit_per_level = 3
+
+        limit_per_level = max(
+            1,
+            min(limit_per_level, 10),
+        )
 
         if not isinstance(topics, list):
             return Response(
                 {
                     "ok": False,
-                    "error": "topics debe ser una lista.",
+                    "error": "invalid_topics",
+                    "message": (
+                        "topics debe ser una lista."
+                    ),
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -10423,7 +11372,10 @@ class LearningRouteRecommendationsAPIView(APIView):
             return Response(
                 {
                     "ok": False,
-                    "error": "topic_ids debe ser una lista.",
+                    "error": "invalid_topic_ids",
+                    "message": (
+                        "topic_ids debe ser una lista."
+                    ),
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -10439,19 +11391,118 @@ class LearningRouteRecommendationsAPIView(APIView):
 
         data = {}
 
+        # Estos conjuntos viven durante toda la construcción
+        # de la ruta, no solamente dentro de un nivel.
+        used_internal_ids = set()
+        used_certification_ids = set()
+
         for level_key, rule in LEVEL_RULES.items():
+            items = build_level_recommendations(
+                request=request,
+                skill_ids=skill_ids,
+                rule=rule,
+                limit=limit_per_level,
+                excluded_internal_ids=(
+                    used_internal_ids
+                ),
+                excluded_certification_ids=(
+                    used_certification_ids
+                ),
+            )
+
+            clean_items = []
+
+            for item in items or []:
+                if not isinstance(item, dict):
+                    continue
+
+                internal_id = str(
+                    item.get("id_interno")
+                    or item.get("idInterno")
+                    or item.get("id_interno_mx")
+                    or item.get("idInternoMx")
+                    or ""
+                ).strip().lower()
+
+                certification_id = str(
+                    item.get("id")
+                    or item.get("certification_id")
+                    or item.get(
+                        "colombiaCertificationId"
+                    )
+                    or ""
+                ).strip()
+
+                # Validación global por identidad México.
+                if (
+                    internal_id
+                    and internal_id
+                    in used_internal_ids
+                ):
+                    logger.warning(
+                        "Curso omitido porque ya fue usado "
+                        "en otro nivel. "
+                        "level=%s id_interno=%s",
+                        level_key,
+                        internal_id,
+                    )
+                    continue
+
+                # Si no existe id_interno, usamos la PK de
+                # Colombia como respaldo.
+                if (
+                    not internal_id
+                    and certification_id
+                    and certification_id
+                    in used_certification_ids
+                ):
+                    logger.warning(
+                        "Curso omitido porque ya fue usado "
+                        "en otro nivel. "
+                        "level=%s certification_id=%s",
+                        level_key,
+                        certification_id,
+                    )
+                    continue
+
+                clean_items.append(item)
+
+                if internal_id:
+                    used_internal_ids.add(
+                        internal_id
+                    )
+
+                if certification_id:
+                    used_certification_ids.add(
+                        certification_id
+                    )
+
+                if (
+                    len(clean_items)
+                    >= limit_per_level
+                ):
+                    break
+
             data[level_key] = {
                 "label": rule["label"],
                 "subtitle": rule["subtitle"],
                 "badge": rule["badge"],
-                "platform_ids": rule["platform_ids"],
-                "nivel": rule["nivel"],
-                "items": build_level_recommendations(
-                    request=request,
-                    skill_ids=skill_ids,
-                    rule=rule,
+                "platform_ids": (
+                    rule["platform_ids"]
                 ),
+                "nivel": rule["nivel"],
+                "items": clean_items,
             }
+
+        total_items = sum(
+            len(level_data["items"])
+            for level_data in data.values()
+        )
+
+        total_expected = (
+            len(LEVEL_RULES)
+            * limit_per_level
+        )
 
         return Response(
             {
@@ -10462,6 +11513,25 @@ class LearningRouteRecommendationsAPIView(APIView):
                     "topic_ids": topic_ids,
                     "goal": goal,
                     "skill_ids": skill_ids,
+                    "limit_per_level": (
+                        limit_per_level
+                    ),
+                    "total_recommendations": (
+                        total_items
+                    ),
+                    "total_expected": (
+                        total_expected
+                    ),
+                    "route_complete": (
+                        total_items
+                        == total_expected
+                    ),
+                    "unique_internal_ids": len(
+                        used_internal_ids
+                    ),
+                    "unique_certification_ids": len(
+                        used_certification_ids
+                    ),
                 },
             },
             status=status.HTTP_200_OK,

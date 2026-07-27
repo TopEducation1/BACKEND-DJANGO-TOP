@@ -614,19 +614,108 @@ class StripeSubscription(models.Model):
         ("paused", "paused"),
     )
 
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="stripe_subscriptions")
-    stripe_subscription_id = models.CharField(max_length=255, unique=True, db_index=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="stripe_subscriptions",
+    )
 
-    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default="incomplete")
-    price_id = models.CharField(max_length=255, blank=True, null=True)
-    interval = models.CharField(max_length=20, blank=True, null=True)  # month/year
-    current_period_end = models.DateTimeField(blank=True, null=True)
+    stripe_subscription_id = models.CharField(
+        max_length=255,
+        unique=True,
+        db_index=True,
+    )
+
+    status = models.CharField(
+        max_length=50,
+        choices=STATUS_CHOICES,
+        default="incomplete",
+    )
+
+    price_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+    )
+
+    interval = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+    )
+
+    current_period_end = models.DateTimeField(
+        blank=True,
+        null=True,
+    )
 
     cancel_at_period_end = models.BooleanField(default=False)
+
+    package_code = models.CharField(
+        max_length=60,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
+    tier = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+    )
+
+    billing_period = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+    )
+
+    access_status = models.CharField(
+        max_length=30,
+        default="PENDING",
+    )
+
+    lifecycle_status = models.CharField(
+        max_length=30,
+        default="ACTIVE",
+    )
+
+    pending_action = models.CharField(
+        max_length=40,
+        default="NONE",
+    )
+
+    trial_start = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    trial_end = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["user", "status"],
+                name="idx_stripe_sub_user_status",
+            ),
+            models.Index(
+                fields=["package_code", "status"],
+                name="idx_stripe_sub_package",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.user_id} - "
+            f"{self.stripe_subscription_id} - "
+            f"{self.status}"
+        )
 
 class StripePurchase(models.Model):
     """Historial de compras / cobros (invoices / payment_intents / checkout)"""
@@ -746,66 +835,621 @@ class ExternalSyncLog(models.Model):
         return f"[{self.key}] page={self.page} ok={self.ok} at={self.created_at}"
 
 class LearningRouteLead(models.Model):
-    user = models.ForeignKey( settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="learning_routes")
+    PACKAGE_CHOICES = [
+        ("TOP_EDUCATION_FREE", "Top Education Free"),
+        ("TOP_EDUCATION_BASIC_MONTHLY", "Top Education Basic mensual"),
+        ("TOP_EDUCATION_BASIC_ANNUAL", "Top Education Basic anual"),
+        ("TOP_EDUCATION_X_MONTHLY", "Top Education X mensual"),
+        ("TOP_EDUCATION_X_ANNUAL", "Top Education X anual"),
+        ("TOP_EDUCATION_PLUS_MONTHLY", "Top Education Plus mensual"),
+        ("TOP_EDUCATION_PLUS_ANNUAL", "Top Education Plus anual"),
+    ]
+
+    TIER_CHOICES = [
+        ("FREE", "Free"),
+        ("BASIC", "Basic"),
+        ("X", "X"),
+        ("PLUS", "Plus"),
+    ]
+
+    BILLING_PERIOD_CHOICES = [
+        ("MONTHLY", "Mensual"),
+        ("ANNUAL", "Anual"),
+    ]
+
+    ACCESS_STATUS_CHOICES = [
+        ("ALLOWED", "Permitido"),
+        ("PENDING", "Pendiente"),
+        ("BLOCKED", "Bloqueado"),
+    ]
+
+    LIFECYCLE_STATUS_CHOICES = [
+        ("FREE", "Free"),
+        ("TRIALING", "Trial"),
+        ("ACTIVE", "Activo"),
+        ("PAST_DUE", "Pago vencido"),
+        ("CANCELED", "Cancelado"),
+        ("EXPIRED", "Expirado"),
+        ("REVOKED", "Revocado"),
+    ]
+
+    PENDING_ACTION_CHOICES = [
+        ("NONE", "Ninguna"),
+        ("CANCEL_AT_PERIOD_END", "Cancelar al final del periodo"),
+        ("UPGRADE_PENDING", "Upgrade pendiente"),
+        ("DOWNGRADE_PENDING", "Downgrade pendiente"),
+        ("PAYMENT_RETRY", "Reintento de pago"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="learning_routes",
+    )
+
     email = models.EmailField(db_index=True)
     first_name = models.CharField(max_length=120)
     last_name = models.CharField(max_length=120, blank=True, null=True)
-    phone_country_code = models.CharField(max_length=10, blank=True, null=True)
-    phone_number = models.CharField(max_length=30, blank=True, null=True)
-    phone_e164 = models.CharField(max_length=40, blank=True, null=True)
-    mx_user_id = models.CharField(max_length=255, null=True, blank=True)
-    
+
+    phone_country_code = models.CharField(
+        max_length=10,
+        blank=True,
+        null=True,
+    )
+    phone_number = models.CharField(
+        max_length=30,
+        blank=True,
+        null=True,
+    )
+    phone_e164 = models.CharField(
+        max_length=40,
+        blank=True,
+        null=True,
+    )
+
     topics = models.JSONField(default=list)
     goal = models.CharField(max_length=150)
-    age = models.IntegerField( null=True, blank=True,)
-    gender = models.CharField( max_length=50, blank=True, default="",)
-    country = models.CharField( max_length=120, blank=True, default="",)
-    mx_status = models.CharField( max_length=50, default="pending",)
-    mx_response = models.JSONField( null=True, blank=True,)
-    mx_magic_link = models.TextField(null=True, blank=True)
-    mx_event_id = models.CharField(
-        max_length=255,
-        null=True,
-        blank=True,
-        db_index=True,
-    )
+    age = models.IntegerField(null=True, blank=True)
+    gender = models.CharField(max_length=50, blank=True, default="")
+    country = models.CharField(max_length=120, blank=True, default="")
+
+    # =========================================================
+    # Compatibilidad con el flujo anterior
+    # =========================================================
+
     selected_plan = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=[
             ("free", "Free"),
             ("pro", "Pro"),
+            ("monthly_basic", "Basic mensual"),
+            ("yearly_basic", "Basic anual"),
+            ("monthly_x", "X mensual"),
+            ("yearly_x", "X anual"),
+            ("monthly_plus", "Plus mensual"),
+            ("yearly_plus", "Plus anual"),
         ],
         blank=True,
         null=True,
     )
 
     status = models.CharField(
-        max_length=30,
+        max_length=40,
         default="route_created",
         choices=[
             ("route_created", "Ruta creada"),
             ("free_pending_password", "Gratis pendiente contraseña"),
             ("free_active", "Gratis activo"),
-            ("pro_checkout_started", "Pro checkout iniciado"),
-            ("pro_trialing", "Pro trial activo"),
-            ("pro_active", "Pro activo"),
+            ("pro_checkout_started", "Checkout iniciado"),
+            ("pro_trialing", "Trial activo"),
+            ("pro_active", "Plan activo"),
             ("pro_payment_failed", "Pago fallido"),
+            ("subscription_cancel_pending", "Cancelación pendiente"),
+            ("subscription_expired", "Suscripción expirada"),
+            ("access_revoked", "Acceso revocado"),
         ],
     )
 
-    recommended_certifications = models.JSONField(default=list)
+    recommended_certifications = models.JSONField(
+        default=list,
+        blank=True,
+    )
 
-    stripe_customer_id = models.CharField(max_length=255, blank=True, null=True)
-    stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True)
+    # =========================================================
+    # Estado canónico B2C 1.1
+    # =========================================================
 
-    trial_start = models.DateTimeField(blank=True, null=True)
-    trial_end = models.DateTimeField(blank=True, null=True)
+    package_code = models.CharField(
+        max_length=60,
+        choices=PACKAGE_CHOICES,
+        default="TOP_EDUCATION_FREE",
+        db_index=True,
+    )
+
+    tier = models.CharField(
+        max_length=20,
+        choices=TIER_CHOICES,
+        default="FREE",
+        db_index=True,
+    )
+
+    billing_period = models.CharField(
+        max_length=20,
+        choices=BILLING_PERIOD_CHOICES,
+        null=True,
+        blank=True,
+    )
+
+    access_status = models.CharField(
+        max_length=30,
+        choices=ACCESS_STATUS_CHOICES,
+        default="ALLOWED",
+        db_index=True,
+    )
+
+    lifecycle_status = models.CharField(
+        max_length=30,
+        choices=LIFECYCLE_STATUS_CHOICES,
+        default="FREE",
+        db_index=True,
+    )
+
+    pending_action = models.CharField(
+        max_length=40,
+        choices=PENDING_ACTION_CHOICES,
+        default="NONE",
+    )
+
+    route_version = models.PositiveIntegerField(default=1)
+
+    # =========================================================
+    # México
+    # =========================================================
+
+    mx_user_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+    )
+
+    mx_status = models.CharField(
+        max_length=50,
+        default="pending",
+    )
+
+    mx_response = models.JSONField(
+        null=True,
+        blank=True,
+    )
+
+    mx_magic_link = models.TextField(
+        null=True,
+        blank=True,
+    )
+
+    mx_event_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
+    mx_route_version = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+    )
+
+    mx_entitlement_status = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
+    mx_last_sync_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    # =========================================================
+    # Stripe
+    # =========================================================
+
+    stripe_customer_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+    )
+
+    stripe_subscription_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+    )
+
+    trial_start = models.DateTimeField(
+        blank=True,
+        null=True,
+    )
+
+    trial_end = models.DateTimeField(
+        blank=True,
+        null=True,
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = "LearningRouteLead"
+        indexes = [
+            models.Index(
+                fields=["email", "created_at"],
+                name="idx_route_lead_email_created",
+            ),
+            models.Index(
+                fields=["package_code", "lifecycle_status"],
+                name="idx_route_lead_package_status",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.id} - {self.email} - "
+            f"{self.package_code} - ruta v{self.route_version}"
+        )
+
+class LearningRouteSnapshot(models.Model):
+    MODE_CHOICES = [
+        ("SNAPSHOT", "Snapshot"),
+    ]
+
+    lead = models.ForeignKey(
+        LearningRouteLead,
+        on_delete=models.CASCADE,
+        related_name="route_snapshots",
+    )
+
+    version = models.PositiveIntegerField()
+    mode = models.CharField(
+        max_length=20,
+        choices=MODE_CHOICES,
+        default="SNAPSHOT",
+    )
+
+    is_current = models.BooleanField(
+        default=True,
+        db_index=True,
+    )
+
+    source = models.CharField(
+        max_length=50,
+        default="COLOMBIA",
+    )
+
+    change_reason = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+    )
+
+    created_by_event_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "learning_route_snapshot"
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["lead", "version"],
+                name="uq_learning_route_lead_version",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["lead", "is_current"],
+                name="idx_route_snapshot_current",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"Ruta {self.lead_id} "
+            f"v{self.version} - {self.mode}"
+        )
+
+class LearningRouteItem(models.Model):
+    route = models.ForeignKey(
+        LearningRouteSnapshot,
+        on_delete=models.CASCADE,
+        related_name="courses",
+    )
+
+    certification = models.ForeignKey(
+        Certificaciones,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="learning_route_items",
+    )
+
+    id_interno = models.CharField(
+        max_length=255,
+    )
+
+    title = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+    )
+
+    provider = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+
+    language = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+    )
+
+    order = models.PositiveIntegerField(default=1)
+    route_level = models.PositiveIntegerField(default=1)
+
+    preview_type = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+    )
+
+    preview_url = models.TextField(
+        null=True,
+        blank=True,
+    )
+
+    preview_validated_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    preview_country_code = models.CharField(
+        max_length=2,
+        null=True,
+        blank=True,
+    )
+
+    is_available = models.BooleanField(
+        default=True,
+        db_index=True,
+    )
+
+    raw_payload = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "learning_route_item"
+        ordering = ["route_level", "order", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["route", "id_interno"],
+                name="uq_route_item_id_interno",
+            ),
+            models.UniqueConstraint(
+                fields=["route", "route_level", "order"],
+                name="uq_route_level_order",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["route", "route_level", "order"],
+                name="idx_route_item_order",
+            ),
+            models.Index(
+                fields=["id_interno"],
+                name="idx_route_item_internal_id",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.route_id} - "
+            f"{self.route_level}.{self.order} - "
+            f"{self.id_interno}"
+        )
+
+class FreePreviewCourse(models.Model):
+    source_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
+    id_interno = models.CharField(
+        max_length=255,
+        unique=True,
+    )
+
+    title = models.CharField(max_length=500)
+
+    provider = models.CharField(
+        max_length=50,
+        db_index=True,
+    )
+
+    language = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+
+    country_code = models.CharField(
+        max_length=2,
+        default="CO",
+        db_index=True,
+    )
+
+    preview_type = models.CharField(
+        max_length=50,
+        default="AUDIT",
+    )
+
+    preview_url = models.TextField()
+
+    preview_validated_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+    )
+
+    first_seen_at = models.DateTimeField(auto_now_add=True)
+
+    last_seen_at = models.DateTimeField(
+        default=timezone.now,
+    )
+
+    last_sync_at = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+    )
+
+    raw_payload = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "free_preview_course"
+        ordering = ["provider", "title"]
+        indexes = [
+            models.Index(
+                fields=[
+                    "is_active",
+                    "provider",
+                    "country_code",
+                ],
+                name="idx_free_course_selection",
+            ),
+            models.Index(
+                fields=["language", "is_active"],
+                name="idx_free_course_language",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.provider} - {self.title}"
+
+class B2CTrialHistory(models.Model):
+    STATUS_CHOICES = [
+        ("STARTED", "Iniciado"),
+        ("COMPLETED", "Completado"),
+        ("CANCELED", "Cancelado"),
+        ("REVOKED", "Revocado"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="b2c_trial_history",
+    )
+
+    email_normalized = models.EmailField(
+        unique=True,
+    )
+
+    package_code = models.CharField(
+        max_length=60,
+    )
+
+    tier = models.CharField(
+        max_length=20,
+    )
+
+    stripe_customer_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+    )
+
+    stripe_subscription_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+    )
+
+    status = models.CharField(
+        max_length=30,
+        choices=STATUS_CHOICES,
+        default="STARTED",
+    )
+
+    trial_days = models.PositiveSmallIntegerField(default=7)
+
+    trial_start = models.DateTimeField()
+    trial_end = models.DateTimeField()
+
+    consumed_at = models.DateTimeField(
+        default=timezone.now,
+    )
+
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "b2c_trial_history"
+        indexes = [
+            models.Index(
+                fields=["tier", "status"],
+                name="idx_b2c_trial_tier_status",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.email_normalized = (
+            str(self.email_normalized)
+            .strip()
+            .lower()
+        )
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return (
+            f"{self.email_normalized} - "
+            f"{self.package_code}"
+        )
 
 class CVAnalysis(models.Model):
     user_email = models.EmailField(db_index=True)
@@ -840,6 +1484,18 @@ class MxAccessEventLog(models.Model):
         editable=False,
     )
 
+    event_id = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        blank=True,
+    )
+
+    schema_version = models.CharField(
+        max_length=20,
+        default="1.1",
+    )
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -852,6 +1508,19 @@ class MxAccessEventLog(models.Model):
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
+    )
+
+    route_snapshot = models.ForeignKey(
+        LearningRouteSnapshot,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="mx_events",
+    )
+
+    route_version = models.PositiveIntegerField(
+        null=True,
+        blank=True,
     )
 
     stripe_customer_id = models.CharField(
@@ -872,6 +1541,7 @@ class MxAccessEventLog(models.Model):
         null=True,
     )
 
+    # Se conserva por compatibilidad con eventos anteriores.
     stripe_event_id = models.CharField(
         max_length=255,
         unique=True,
@@ -883,12 +1553,25 @@ class MxAccessEventLog(models.Model):
 
     event_source = models.CharField(
         max_length=50,
-        default="stripe",
+        default="colombia_b2c",
     )
 
     payload_json = models.JSONField()
+    raw_body = models.TextField(null=True, blank=True)
+
+    payload_hash = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
 
     response_json = models.JSONField(
+        null=True,
+        blank=True,
+    )
+
+    http_status = models.PositiveIntegerField(
         null=True,
         blank=True,
     )
@@ -910,10 +1593,19 @@ class MxAccessEventLog(models.Model):
         blank=True,
     )
 
-    send_status = models.CharField(
-        max_length=20,
-        default="pending",
+    entitlement_status = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
     )
+
+    send_status = models.CharField(
+        max_length=30,
+        default="pending",
+        db_index=True,
+    )
+
+    is_retryable = models.BooleanField(default=False)
 
     attempts = models.PositiveIntegerField(default=0)
 
@@ -922,14 +1614,44 @@ class MxAccessEventLog(models.Model):
         null=True,
     )
 
+    next_retry_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        db_index=True,
+    )
+
     sent_at = models.DateTimeField(
         blank=True,
         null=True,
     )
 
-    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(
+        blank=True,
+        null=True,
+    )
 
+    created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "mx_access_event_log"
+        indexes = [
+            models.Index(
+                fields=["send_status", "next_retry_at"],
+                name="idx_mx_event_retry",
+            ),
+            models.Index(
+                fields=["learning_route", "route_version"],
+                name="idx_mx_event_route_version",
+            ),
+            models.Index(
+                fields=["event_type", "created_at"],
+                name="idx_mx_event_type_created",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.event_id or self.stripe_event_id} - "
+            f"{self.event_type} - {self.send_status}"
+        )
