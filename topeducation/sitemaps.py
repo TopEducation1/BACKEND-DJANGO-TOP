@@ -18,7 +18,7 @@ SITE_PROTOCOL = "https"
 # Cantidad máxima de URLs por archivo.
 # Django generará las páginas necesarias cuando se utilice
 # un índice de sitemaps.
-SITEMAP_LIMIT = 1000
+SITEMAP_LIMIT = 50000
 
 
 class TopEducationSitemap(Sitemap):
