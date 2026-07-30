@@ -79,6 +79,7 @@ from topeducation.services.learning_route_service import (
     InvalidLearningRouteError,
     LearningRouteServiceError,
     create_initial_learning_route,
+    ensure_free_learning_route,
     get_current_route_snapshot,
     serialize_route_snapshot,
     update_learning_route,
@@ -5256,10 +5257,20 @@ def _send_current_stripe_event_to_mx(event, event_type, obj, user=None):
 @require_POST
 @csrf_exempt
 def stripe_webhook(request):
-    print("✅ WEBHOOK HIT")
+    """
+    Webhook canónico de Stripe.
 
+    Reglas principales:
+    - Stripe es la única fuente para cambios de suscripción.
+    - Una cancelación programada no retira el acceso.
+    - Cuando la suscripción termina, el usuario vuelve a Free.
+    - El cambio a Free crea o reutiliza un snapshot con 3 previews.
+    """
     payload = request.body
-    sig_header = request.META.get("HTTP_STRIPE_SIGNATURE", "")
+    sig_header = request.META.get(
+        "HTTP_STRIPE_SIGNATURE",
+        "",
+    )
 
     try:
         event = stripe.Webhook.construct_event(
@@ -5267,13 +5278,25 @@ def stripe_webhook(request):
             sig_header=sig_header,
             secret=settings.STRIPE_WEBHOOK_SECRET,
         )
-    except Exception as e:
-        print("❌ Stripe signature error:", str(e))
+    except Exception as exc:
+        logger.warning(
+            "Firma inválida en webhook Stripe: %s",
+            exc,
+        )
         return HttpResponse(status=400)
 
-    stripe_event_id = event.get("id")
-    stripe_event_type = event.get("type")
-    obj = (event.get("data") or {}).get("object") or {}
+    stripe_event_id = str(
+        event.get("id") or ""
+    ).strip()
+
+    stripe_event_type = str(
+        event.get("type") or ""
+    ).strip()
+
+    obj = (
+        (event.get("data") or {}).get("object")
+        or {}
+    )
 
     def get_user_from_customer(customer_id):
         if not customer_id:
@@ -5299,26 +5322,117 @@ def stripe_webhook(request):
             .first()
         )
 
-    def get_subscription_for_user(user, subscription_id=None):
-        qs = StripeSubscription.objects.filter(user=user)
+    def get_subscription_for_user(
+        user,
+        subscription_id=None,
+    ):
+        if not user:
+            return None
+
+        queryset = StripeSubscription.objects.filter(
+            user=user
+        )
 
         if subscription_id:
-            found = qs.filter(stripe_subscription_id=subscription_id).first()
+            found = queryset.filter(
+                stripe_subscription_id=subscription_id
+            ).first()
+
             if found:
                 return found
 
-        return qs.order_by("-updated_at", "-id").first()
+        return queryset.order_by(
+            "-updated_at",
+            "-id",
+        ).first()
 
-    def build_plan_value(route, subscription):
-        if route and getattr(route, "selected_paid_plan", None):
-            return route.selected_paid_plan
+    def save_route_state(
+        *,
+        route,
+        legacy_status,
+        lifecycle_status,
+        access_status,
+        pending_action,
+        package_code=None,
+        tier=None,
+        billing_period="__KEEP__",
+    ):
+        if not route:
+            return
 
-        if route and route.selected_plan and subscription and subscription.interval:
-            if route.selected_plan == "free":
-                return "free"
-            return f"{subscription.interval}_{route.selected_plan}"
+        update_fields = [
+            "status",
+            "lifecycle_status",
+            "access_status",
+            "pending_action",
+            "updated_at",
+        ]
 
-        return "free"
+        route.status = legacy_status
+        route.lifecycle_status = lifecycle_status
+        route.access_status = access_status
+        route.pending_action = pending_action
+
+        if package_code is not None:
+            route.package_code = package_code
+            update_fields.append("package_code")
+
+        if tier is not None:
+            route.tier = tier
+            update_fields.append("tier")
+
+        if billing_period != "__KEEP__":
+            route.billing_period = billing_period
+            update_fields.append("billing_period")
+
+        route.save(
+            update_fields=list(
+                dict.fromkeys(update_fields)
+            )
+        )
+
+    def save_subscription_state(
+        *,
+        subscription,
+        lifecycle_status,
+        access_status,
+        pending_action,
+        cancel_at_period_end=None,
+        status_value=None,
+    ):
+        if not subscription:
+            return
+
+        update_fields = [
+            "lifecycle_status",
+            "access_status",
+            "pending_action",
+            "updated_at",
+        ]
+
+        subscription.lifecycle_status = (
+            lifecycle_status
+        )
+        subscription.access_status = access_status
+        subscription.pending_action = pending_action
+
+        if cancel_at_period_end is not None:
+            subscription.cancel_at_period_end = (
+                cancel_at_period_end
+            )
+            update_fields.append(
+                "cancel_at_period_end"
+            )
+
+        if status_value:
+            subscription.status = status_value
+            update_fields.append("status")
+
+        subscription.save(
+            update_fields=list(
+                dict.fromkeys(update_fields)
+            )
+        )
 
     def send_access_event_to_mx_safe(
         *,
@@ -5329,82 +5443,286 @@ def stripe_webhook(request):
         lifecycle_status,
         access_status,
         pending_action="NONE",
+        route_snapshot=None,
+        package_code_override=None,
+        tier_override=None,
+        billing_period_override="__KEEP__",
     ):
+        """
+        Construye y envía el evento canónico a México.
+
+        APPLIED y DUPLICATE se consideran exitosos.
+        El Magic Link existente solo se reemplaza si México
+        devuelve uno nuevo.
+        """
         if not user or not route:
-            print("⚠️ No se envía a MX: falta user o route")
-            return None
+            logger.warning(
+                "Evento MX omitido por falta de user o route. "
+                "stripe_event=%s type=%s user=%s route=%s",
+                stripe_event_id,
+                mx_event_type,
+                getattr(user, "id", None),
+                getattr(route, "id", None),
+            )
+
+            return {
+                "ok": False,
+                "accepted": False,
+                "status": "SKIPPED",
+                "error": "missing_user_or_route",
+            }
 
         try:
-            event_id = (
-                f"evt_col_stripe_{mx_event_type.lower()}_"
-                f"route_{route.id}_user_{user.id}_{stripe_event_id or uuid.uuid4()}"
+            builder_kwargs = {
+                "event": event,
+                "event_type": mx_event_type,
+                "stripe_object": dict(obj or {}),
+                "user": user,
+                "route": route,
+                "route_snapshot": route_snapshot,
+                "lifecycle_status_override": (
+                    lifecycle_status
+                ),
+                "access_status_override": (
+                    access_status
+                ),
+                "pending_action_override": (
+                    pending_action
+                ),
+            }
+
+            if package_code_override is not None:
+                builder_kwargs[
+                    "package_code_override"
+                ] = package_code_override
+
+            if tier_override is not None:
+                builder_kwargs[
+                    "tier_override"
+                ] = tier_override
+
+            if billing_period_override != "__KEEP__":
+                builder_kwargs[
+                    "billing_period_override"
+                ] = billing_period_override
+
+            payload_mx = (
+                build_mx_payload_from_stripe_event(
+                    **builder_kwargs
+                )
             )
 
-            plan_value = build_plan_value(route, subscription)
+            event_id = str(
+                payload_mx.get("eventId") or ""
+            ).strip()
 
-            payload = build_learning_route_mx_payload(
-                event_id=event_id,
-                event_type=mx_event_type,
-                user=user,
-                route=route,
-                subscription=subscription,
-                plan_value=plan_value,
-                lifecycle_status_override=lifecycle_status,
-                access_status_override=access_status,
-                pending_action_override=pending_action,
-            )
+            if not event_id:
+                raise ValueError(
+                    "mx_payload_missing_event_id"
+                )
 
             mx_result = send_b2c_access_event_to_mx(
-                payload=payload,
+                payload=payload_mx,
                 user=user,
                 route=route,
             )
 
-            route.mx_status = mx_result.get("status") or route.mx_status
-            route.mx_response = mx_result
+            if not isinstance(mx_result, dict):
+                raise ValueError(
+                    "invalid_mx_sender_response"
+                )
+
+            nested_response = mx_result.get(
+                "response"
+            )
+
+            if not isinstance(
+                nested_response,
+                dict,
+            ):
+                nested_response = {}
+
+            mx_status = str(
+                mx_result.get("status")
+                or mx_result.get("mxStatus")
+                or nested_response.get("status")
+                or ""
+            ).strip().upper()
+
+            accepted = bool(
+                mx_result.get("ok")
+                or mx_result.get("accepted")
+                or mx_status in {
+                    "APPLIED",
+                    "DUPLICATE",
+                }
+            )
+
+            retryable = bool(
+                mx_result.get("retry")
+                or mx_result.get("retryable")
+                or mx_status == "RETRYABLE_ERROR"
+            )
+
+            permanent = bool(
+                mx_result.get("permanent")
+                or mx_status == "PERMANENT_ERROR"
+            )
 
             magic_link = (
                 mx_result.get("magicLink")
-                or mx_result.get("response", {}).get("magicLink")
+                or nested_response.get("magicLink")
             )
 
             mx_user_id = (
                 mx_result.get("mxUserId")
-                or mx_result.get("response", {}).get("mxUserId")
+                or nested_response.get("mxUserId")
             )
 
+            route_version = (
+                mx_result.get("routeVersion")
+                or nested_response.get(
+                    "routeVersion"
+                )
+            )
+
+            entitlement_status = (
+                mx_result.get("entitlementStatus")
+                or nested_response.get(
+                    "entitlementStatus"
+                )
+            )
+
+            update_fields = [
+                "mx_status",
+                "mx_response",
+                "mx_last_sync_at",
+                "updated_at",
+            ]
+
+            route.mx_status = (
+                mx_status
+                or (
+                    "APPLIED"
+                    if accepted
+                    else "UNKNOWN"
+                )
+            )
+
+            route.mx_response = {
+                **mx_result,
+                "eventId": event_id,
+                "eventType": mx_event_type,
+                "accepted": accepted,
+                "retryable": retryable,
+                "permanent": permanent,
+                "routeVersion": route_version,
+                "entitlementStatus": (
+                    entitlement_status
+                ),
+            }
+
+            route.mx_last_sync_at = timezone.now()
+
             if magic_link:
-                route.mx_magic_link = magic_link
+                route.mx_magic_link = str(
+                    magic_link
+                ).strip()
+                update_fields.append(
+                    "mx_magic_link"
+                )
 
             if mx_user_id:
-                route.mx_user_id = mx_user_id
+                route.mx_user_id = str(
+                    mx_user_id
+                ).strip()
+                update_fields.append("mx_user_id")
+
+            if route_version is not None:
+                try:
+                    route.mx_route_version = int(
+                        route_version
+                    )
+                    update_fields.append(
+                        "mx_route_version"
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    pass
+
+            if entitlement_status:
+                route.mx_entitlement_status = str(
+                    entitlement_status
+                ).strip()
+                update_fields.append(
+                    "mx_entitlement_status"
+                )
+
+            route.save(
+                update_fields=list(
+                    dict.fromkeys(update_fields)
+                )
+            )
+
+            return {
+                **mx_result,
+                "ok": accepted,
+                "accepted": accepted,
+                "retry": retryable,
+                "retryable": retryable,
+                "permanent": permanent,
+                "status": route.mx_status,
+                "eventId": event_id,
+            }
+
+        except Exception as exc:
+            logger.exception(
+                "Error enviando evento Stripe a México. "
+                "stripe_event=%s event_type=%s "
+                "user=%s route=%s",
+                stripe_event_id,
+                mx_event_type,
+                getattr(user, "id", None),
+                getattr(route, "id", None),
+            )
+
+            route.mx_status = "RETRYABLE_ERROR"
+            route.mx_response = {
+                "ok": False,
+                "status": "RETRYABLE_ERROR",
+                "retryable": True,
+                "error": str(exc),
+                "stripeEventId": stripe_event_id,
+                "eventType": mx_event_type,
+            }
 
             route.save(
                 update_fields=[
                     "mx_status",
                     "mx_response",
-                    "mx_magic_link",
-                    "mx_user_id",
                     "updated_at",
                 ]
             )
 
-            print("✅ Evento enviado a MX:", mx_event_type, mx_result.get("status"))
-            return mx_result
-
-        except Exception as e:
-            print("⚠️ Error enviando evento de acceso a MX:", str(e))
             return {
                 "ok": False,
-                "error": str(e),
+                "accepted": False,
+                "retry": True,
+                "retryable": True,
+                "permanent": False,
                 "status": "RETRYABLE_ERROR",
+                "error": str(exc),
             }
 
-    # --------------------------------------------
-    # A) checkout.session.completed
-    # Mantener por compatibilidad si aún llega algún checkout viejo.
-    # --------------------------------------------
-    if stripe_event_type == "checkout.session.completed":
+    # ---------------------------------------------------------
+    # checkout.session.completed
+    # Compatibilidad con Checkout anterior.
+    # ---------------------------------------------------------
+    if stripe_event_type == (
+        "checkout.session.completed"
+    ):
         session = obj
         session_id = session.get("id")
 
@@ -5414,13 +5732,18 @@ def stripe_webhook(request):
             return HttpResponse(status=200)
 
         customer_id = session.get("customer")
-        subscription_id = session.get("subscription")
+        subscription_id = session.get(
+            "subscription"
+        )
 
-        _ensure_billing_profile(user, customer_id=customer_id)
+        _ensure_billing_profile(
+            user,
+            customer_id=customer_id,
+        )
 
         already_exists = (
-            session_id and
-            StripePurchase.objects.filter(
+            session_id
+            and StripePurchase.objects.filter(
                 stripe_checkout_session_id=session_id
             ).exists()
         )
@@ -5429,212 +5752,532 @@ def stripe_webhook(request):
             StripePurchase.objects.create(
                 user=user,
                 stripe_checkout_session_id=session_id,
-                stripe_payment_intent_id=session.get("payment_intent"),
-                amount_total=session.get("amount_total") or 0,
-                currency=session.get("currency") or "usd",
-                status=session.get("payment_status") or "unknown",
+                stripe_payment_intent_id=session.get(
+                    "payment_intent"
+                ),
+                amount_total=(
+                    session.get("amount_total") or 0
+                ),
+                currency=(
+                    session.get("currency") or "usd"
+                ),
+                status=(
+                    session.get("payment_status")
+                    or "unknown"
+                ),
                 description="Checkout completed",
             )
 
         if subscription_id:
-            _upsert_subscription(user, subscription_id)
+            _upsert_subscription(
+                user,
+                subscription_id,
+            )
 
         return HttpResponse(status=200)
 
-    # --------------------------------------------
-    # B) invoice.paid / invoice.payment_succeeded
-    # Pago exitoso o renovación exitosa.
-    # MX: USER_ACCESS_UPDATED / ACTIVE / ALLOWED / NONE
-    # --------------------------------------------
-    if stripe_event_type in ("invoice.paid", "invoice.payment_succeeded"):
+    # ---------------------------------------------------------
+    # invoice.paid / invoice.payment_succeeded
+    # ---------------------------------------------------------
+    if stripe_event_type in {
+        "invoice.paid",
+        "invoice.payment_succeeded",
+    }:
         invoice = obj
         invoice_id = invoice.get("id")
         customer_id = invoice.get("customer")
-        subscription_id = invoice.get("subscription")
+        subscription_id = invoice.get(
+            "subscription"
+        )
 
-        user = get_user_from_customer(customer_id)
+        user = get_user_from_customer(
+            customer_id
+        )
 
         if not user:
             return HttpResponse(status=200)
 
-        already_exists = (
-            invoice_id and
-            StripePurchase.objects.filter(
-                stripe_invoice_id=invoice_id
-            ).exists()
-        )
-
-        if not already_exists:
+        if invoice_id:
             StripePurchase.objects.update_or_create(
                 user=user,
                 stripe_invoice_id=invoice_id,
                 defaults={
-                    "stripe_payment_intent_id": invoice.get("payment_intent"),
-                    "amount_total": invoice.get("amount_paid") or invoice.get("total") or 0,
-                    "currency": invoice.get("currency") or "usd",
-                    "status": invoice.get("status") or "unknown",
-                    "description": (invoice.get("description") or "Invoice paid")[:500],
-                    "hosted_invoice_url": invoice.get("hosted_invoice_url"),
-                    "invoice_pdf": invoice.get("invoice_pdf"),
+                    "stripe_payment_intent_id": (
+                        invoice.get(
+                            "payment_intent"
+                        )
+                    ),
+                    "amount_total": (
+                        invoice.get("amount_paid")
+                        or invoice.get("total")
+                        or 0
+                    ),
+                    "currency": (
+                        invoice.get("currency")
+                        or "usd"
+                    ),
+                    "status": (
+                        invoice.get("status")
+                        or "paid"
+                    ),
+                    "description": str(
+                        invoice.get("description")
+                        or "Invoice paid"
+                    )[:500],
+                    "hosted_invoice_url": (
+                        invoice.get(
+                            "hosted_invoice_url"
+                        )
+                    ),
+                    "invoice_pdf": invoice.get(
+                        "invoice_pdf"
+                    ),
                 },
             )
 
         if subscription_id:
-            _upsert_subscription(user, subscription_id)
+            _upsert_subscription(
+                user,
+                subscription_id,
+            )
 
         route = get_route_for_user(user)
-        subscription = get_subscription_for_user(user, subscription_id)
+        subscription = (
+            get_subscription_for_user(
+                user,
+                subscription_id,
+            )
+        )
 
-        if route:
-            route.status = "active"
-            route.save(update_fields=["status", "updated_at"])
+        lifecycle_status = (
+            "TRIALING"
+            if (
+                subscription
+                and subscription.status == "trialing"
+            )
+            else "ACTIVE"
+        )
+
+        legacy_status = (
+            "pro_trialing"
+            if lifecycle_status == "TRIALING"
+            else "pro_active"
+        )
+
+        save_route_state(
+            route=route,
+            legacy_status=legacy_status,
+            lifecycle_status=lifecycle_status,
+            access_status="ALLOWED",
+            pending_action="NONE",
+        )
+
+        save_subscription_state(
+            subscription=subscription,
+            lifecycle_status=lifecycle_status,
+            access_status="ALLOWED",
+            pending_action="NONE",
+        )
 
         send_access_event_to_mx_safe(
             user=user,
             route=route,
             subscription=subscription,
-            mx_event_type="USER_ACCESS_UPDATED",
-            lifecycle_status="ACTIVE",
+            mx_event_type=(
+                "USER_ACCESS_UPDATED"
+            ),
+            lifecycle_status=lifecycle_status,
             access_status="ALLOWED",
             pending_action="NONE",
         )
 
         return HttpResponse(status=200)
 
-    # --------------------------------------------
-    # C) invoice.payment_failed
-    # Pago fallido.
-    # MX: USER_ACCESS_UPDATED / PAST_DUE / RESTRICTED / NONE
-    # --------------------------------------------
-    if stripe_event_type == "invoice.payment_failed":
+    # ---------------------------------------------------------
+    # invoice.payment_failed
+    # ---------------------------------------------------------
+    if stripe_event_type == (
+        "invoice.payment_failed"
+    ):
         invoice = obj
         customer_id = invoice.get("customer")
-        subscription_id = invoice.get("subscription")
+        subscription_id = invoice.get(
+            "subscription"
+        )
 
-        user = get_user_from_customer(customer_id)
+        user = get_user_from_customer(
+            customer_id
+        )
 
         if not user:
             return HttpResponse(status=200)
 
         if subscription_id:
-            _upsert_subscription(user, subscription_id)
+            _upsert_subscription(
+                user,
+                subscription_id,
+            )
 
         route = get_route_for_user(user)
-        subscription = get_subscription_for_user(user, subscription_id)
+        subscription = (
+            get_subscription_for_user(
+                user,
+                subscription_id,
+            )
+        )
 
-        if route:
-            route.status = "past_due"
-            route.save(update_fields=["status", "updated_at"])
+        save_route_state(
+            route=route,
+            legacy_status="pro_payment_failed",
+            lifecycle_status="PAST_DUE",
+            access_status="BLOCKED",
+            pending_action="PAYMENT_RETRY",
+        )
+
+        save_subscription_state(
+            subscription=subscription,
+            lifecycle_status="PAST_DUE",
+            access_status="BLOCKED",
+            pending_action="PAYMENT_RETRY",
+        )
 
         send_access_event_to_mx_safe(
             user=user,
             route=route,
             subscription=subscription,
-            mx_event_type="USER_ACCESS_UPDATED",
+            mx_event_type=(
+                "USER_ACCESS_UPDATED"
+            ),
             lifecycle_status="PAST_DUE",
-            access_status="RESTRICTED",
-            pending_action="NONE",
+            access_status="BLOCKED",
+            pending_action="PAYMENT_RETRY",
         )
 
         return HttpResponse(status=200)
 
-    # --------------------------------------------
-    # D) customer.subscription.updated
-    # Si cancel_at_period_end=True, NO se revoca.
-    # MX: USER_ACCESS_UPDATED / ACTIVE|TRIALING / ALLOWED / CANCEL_AT_PERIOD_END
-    # --------------------------------------------
-    if stripe_event_type == "customer.subscription.updated":
+    # ---------------------------------------------------------
+    # customer.subscription.updated
+    # ---------------------------------------------------------
+    if stripe_event_type == (
+        "customer.subscription.updated"
+    ):
         sub_obj = obj
+
         subscription_id = sub_obj.get("id")
         customer_id = sub_obj.get("customer")
-        status_raw = str(sub_obj.get("status") or "").lower()
-        cancel_at_period_end = bool(sub_obj.get("cancel_at_period_end", False))
 
-        user = get_user_from_customer(customer_id)
+        status_raw = str(
+            sub_obj.get("status") or ""
+        ).strip().lower()
+
+        cancel_at_period_end = bool(
+            sub_obj.get(
+                "cancel_at_period_end",
+                False,
+            )
+        )
+
+        user = get_user_from_customer(
+            customer_id
+        )
 
         if not user:
             return HttpResponse(status=200)
 
         if subscription_id:
-            _upsert_subscription(user, subscription_id)
+            _upsert_subscription(
+                user,
+                subscription_id,
+            )
 
         route = get_route_for_user(user)
-        subscription = get_subscription_for_user(user, subscription_id)
-
-        if route:
-            route.status = (
-                "cancel_at_period_end"
-                if cancel_at_period_end
-                else status_raw or route.status
+        subscription = (
+            get_subscription_for_user(
+                user,
+                subscription_id,
             )
-            route.save(update_fields=["status", "updated_at"])
+        )
 
         if status_raw == "trialing":
             lifecycle_status = "TRIALING"
             access_status = "ALLOWED"
-        elif status_raw in ["active"]:
+            legacy_status = "pro_trialing"
+
+        elif status_raw == "active":
             lifecycle_status = "ACTIVE"
             access_status = "ALLOWED"
-        elif status_raw in ["past_due", "unpaid"]:
+            legacy_status = "pro_active"
+
+        elif status_raw in {
+            "past_due",
+            "unpaid",
+        }:
             lifecycle_status = "PAST_DUE"
-            access_status = "RESTRICTED"
-        elif status_raw in ["canceled", "cancelled"]:
+            access_status = "BLOCKED"
+            legacy_status = (
+                "pro_payment_failed"
+            )
+
+        elif status_raw in {
+            "canceled",
+            "cancelled",
+        }:
             lifecycle_status = "EXPIRED"
-            access_status = "RESTRICTED"
+            access_status = "BLOCKED"
+            legacy_status = (
+                "subscription_expired"
+            )
+
         else:
-            lifecycle_status = "ACTIVE"
-            access_status = "ALLOWED"
+            lifecycle_status = (
+                getattr(
+                    route,
+                    "lifecycle_status",
+                    None,
+                )
+                or "ACTIVE"
+            )
+
+            access_status = (
+                getattr(
+                    route,
+                    "access_status",
+                    None,
+                )
+                or "ALLOWED"
+            )
+
+            legacy_status = (
+                getattr(route, "status", None)
+                or "pro_active"
+            )
+
+        pending_action = (
+            "CANCEL_AT_PERIOD_END"
+            if (
+                cancel_at_period_end
+                and access_status == "ALLOWED"
+            )
+            else (
+                "PAYMENT_RETRY"
+                if lifecycle_status == "PAST_DUE"
+                else "NONE"
+            )
+        )
+
+        if (
+            cancel_at_period_end
+            and access_status == "ALLOWED"
+        ):
+            legacy_status = (
+                "subscription_cancel_pending"
+            )
+
+        save_route_state(
+            route=route,
+            legacy_status=legacy_status,
+            lifecycle_status=lifecycle_status,
+            access_status=access_status,
+            pending_action=pending_action,
+        )
+
+        save_subscription_state(
+            subscription=subscription,
+            lifecycle_status=lifecycle_status,
+            access_status=access_status,
+            pending_action=pending_action,
+            cancel_at_period_end=(
+                cancel_at_period_end
+            ),
+            status_value=status_raw or None,
+        )
 
         send_access_event_to_mx_safe(
             user=user,
             route=route,
             subscription=subscription,
-            mx_event_type="USER_ACCESS_UPDATED",
+            mx_event_type=(
+                "USER_ACCESS_UPDATED"
+            ),
             lifecycle_status=lifecycle_status,
             access_status=access_status,
-            pending_action=(
-                "CANCEL_AT_PERIOD_END"
-                if cancel_at_period_end and access_status == "ALLOWED"
-                else "NONE"
-            ),
+            pending_action=pending_action,
         )
 
         return HttpResponse(status=200)
 
-    # --------------------------------------------
-    # E) customer.subscription.deleted
-    # La suscripción ya terminó realmente.
-    # MX: USER_ACCESS_EXPIRED / EXPIRED / RESTRICTED / NONE
-    # --------------------------------------------
-    if stripe_event_type == "customer.subscription.deleted":
+    # ---------------------------------------------------------
+    # customer.subscription.deleted
+    # La suscripción paga terminó y el usuario vuelve a Free.
+    # ---------------------------------------------------------
+    if stripe_event_type == (
+        "customer.subscription.deleted"
+    ):
         sub_obj = obj
         subscription_id = sub_obj.get("id")
         customer_id = sub_obj.get("customer")
 
-        user = get_user_from_customer(customer_id)
+        user = get_user_from_customer(
+            customer_id
+        )
 
         if not user:
             return HttpResponse(status=200)
 
         if subscription_id:
-            _upsert_subscription(user, subscription_id)
+            _upsert_subscription(
+                user,
+                subscription_id,
+            )
 
         route = get_route_for_user(user)
-        subscription = get_subscription_for_user(user, subscription_id)
 
-        if route:
-            route.status = "expired"
-            route.save(update_fields=["status", "updated_at"])
+        subscription = (
+            get_subscription_for_user(
+                user,
+                subscription_id,
+            )
+        )
 
-        send_access_event_to_mx_safe(
+        if not route:
+            logger.warning(
+                "No existe ruta para subscription.deleted. "
+                "stripe_event=%s user=%s",
+                stripe_event_id,
+                user.id,
+            )
+            return HttpResponse(status=200)
+
+        previous_package_code = (
+            route.package_code
+        )
+
+        try:
+            with transaction.atomic():
+                route = (
+                    LearningRouteLead.objects
+                    .select_for_update()
+                    .get(pk=route.pk)
+                )
+
+                route.selected_plan = "free"
+                route.package_code = (
+                    "TOP_EDUCATION_FREE"
+                )
+                route.tier = "FREE"
+                route.billing_period = None
+                route.lifecycle_status = "FREE"
+                route.access_status = "ALLOWED"
+                route.pending_action = "NONE"
+                route.status = "free_active"
+                route.stripe_subscription_id = None
+                route.trial_start = None
+                route.trial_end = None
+
+                route.save(
+                    update_fields=[
+                        "selected_plan",
+                        "package_code",
+                        "tier",
+                        "billing_period",
+                        "lifecycle_status",
+                        "access_status",
+                        "pending_action",
+                        "status",
+                        "stripe_subscription_id",
+                        "trial_start",
+                        "trial_end",
+                        "updated_at",
+                    ]
+                )
+
+                free_snapshot = (
+                    ensure_free_learning_route(
+                        lead=route,
+                        change_reason=(
+                            "STRIPE_SUBSCRIPTION_"
+                            "EXPIRED_TO_FREE"
+                        ),
+                        created_by_event_id=(
+                            stripe_event_id or None
+                        ),
+                        metadata={
+                            "trigger": (
+                                "customer.subscription."
+                                "deleted"
+                            ),
+                            "stripeEventId": (
+                                stripe_event_id
+                            ),
+                            "stripeSubscriptionId": (
+                                subscription_id
+                            ),
+                            "previousPackageCode": (
+                                previous_package_code
+                            ),
+                        },
+                    )
+                )
+
+                save_subscription_state(
+                    subscription=subscription,
+                    lifecycle_status="EXPIRED",
+                    access_status="BLOCKED",
+                    pending_action="NONE",
+                    cancel_at_period_end=False,
+                    status_value="canceled",
+                )
+
+        except LearningRouteServiceError as exc:
+            logger.exception(
+                "No fue posible crear la ruta Free. "
+                "stripe_event=%s user=%s route=%s",
+                stripe_event_id,
+                user.id,
+                route.id,
+            )
+
+            route.mx_status = "RETRYABLE_ERROR"
+            route.mx_response = {
+                "ok": False,
+                "retryable": True,
+                "error": str(exc),
+                "stripeEventId": stripe_event_id,
+                "eventType": (
+                    "USER_ACCESS_UPDATED"
+                ),
+            }
+
+            route.save(
+                update_fields=[
+                    "mx_status",
+                    "mx_response",
+                    "updated_at",
+                ]
+            )
+
+            return HttpResponse(status=500)
+
+        mx_result = send_access_event_to_mx_safe(
             user=user,
             route=route,
             subscription=subscription,
-            mx_event_type="USER_ACCESS_EXPIRED",
-            lifecycle_status="EXPIRED",
-            access_status="RESTRICTED",
+            mx_event_type=(
+                "USER_ACCESS_UPDATED"
+            ),
+            lifecycle_status="FREE",
+            access_status="ALLOWED",
             pending_action="NONE",
+            route_snapshot=free_snapshot,
+            package_code_override=(
+                "TOP_EDUCATION_FREE"
+            ),
+            tier_override="FREE",
+            billing_period_override=None,
         )
+
+        if mx_result.get("retryable"):
+            return HttpResponse(status=500)
 
         return HttpResponse(status=200)
 
@@ -6039,19 +6682,53 @@ def billing_portal_session(request):
 @csrf_exempt
 @login_required
 def mx_magic_link_refresh(request):
+    """
+    Devuelve el Magic Link persistente entregado por México durante
+    el aprovisionamiento inicial del usuario.
+
+    Importante:
+    - No genera un nuevo evento para México.
+    - No utiliza USER_ACCESS_UPDATED.
+    - No reconstruye el payload de acceso.
+    - No solicita un nuevo Magic Link.
+    - No registra el Magic Link en logs.
+    - El enlace se trata como una credencial privada y reutilizable.
+
+    Se conserva el nombre `mx_magic_link_refresh` por compatibilidad
+    con la URL y con el frontend existente.
+    """
+
+    # =========================================================
+    # CORS / PREFLIGHT
+    # =========================================================
     if request.method == "OPTIONS":
         response = HttpResponse(status=204)
         response["Access-Control-Allow-Origin"] = "https://top.education"
         response["Access-Control-Allow-Credentials"] = "true"
         response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        response["Access-Control-Allow-Headers"] = "Content-Type, X-CSRFToken"
+        response["Access-Control-Allow-Headers"] = (
+            "Content-Type, X-CSRFToken"
+        )
         return response
 
+    # =========================================================
+    # MÉTODO PERMITIDO
+    # =========================================================
     if request.method != "POST":
-        return JsonResponse({"ok": False, "error": "method_not_allowed"}, status=405)
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "method_not_allowed",
+                "message": "Este endpoint solo acepta solicitudes POST.",
+            },
+            status=405,
+        )
 
     user = request.user
 
+    # =========================================================
+    # OBTENER ÚLTIMA RUTA DEL USUARIO
+    # =========================================================
     route = (
         LearningRouteLead.objects
         .filter(user=user)
@@ -6059,80 +6736,166 @@ def mx_magic_link_refresh(request):
         .first()
     )
 
-    subscription = (
-        StripeSubscription.objects
-        .filter(user=user)
-        .order_by("-updated_at", "-id")
-        .first()
-    )
-
     if not route:
-        return JsonResponse({"ok": False, "error": "learning_route_not_found"}, status=404)
-
-    status = str(getattr(subscription, "status", "") or "").lower()
-
-    if status in ["past_due", "unpaid", "canceled", "cancelled"]:
-        return JsonResponse({
-            "ok": False,
-            "error": "access_inactive",
-            "message": "Tu acceso está inactivo o suspendido.",
-        }, status=403)
-
-    plan_value = (
-        getattr(route, "selected_paid_plan", None)
-        or (
-            f"{subscription.interval}_{route.selected_plan}"
-            if subscription and route.selected_plan != "free"
-            else "free"
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "learning_route_not_found",
+                "message": (
+                    "No encontramos una ruta de aprendizaje "
+                    "asociada a tu cuenta."
+                ),
+            },
+            status=404,
         )
-    )
 
-    event_id = f"evt_col_magic_refresh_route_{route.id}_user_{user.id}_{uuid.uuid4()}"
+    # =========================================================
+    # RECUPERAR MAGIC LINK
+    # =========================================================
+    # Fuente principal: columna persistida en LearningRouteLead.
+    magic_link = str(
+        getattr(route, "mx_magic_link", None) or ""
+    ).strip()
 
-    payload = build_learning_route_mx_payload(
-        event_id=event_id,
-        event_type="USER_ACCESS_UPDATED",
-        user=user,
-        route=route,
-        subscription=subscription,
-        plan_value=plan_value,
-    )
+    # Compatibilidad con respuestas antiguas guardadas en JSON.
+    # Esto permite recuperar el enlace si alguna provisión anterior
+    # lo almacenó únicamente dentro de mx_response.
+    if not magic_link:
+        mx_response = getattr(route, "mx_response", None)
 
-    result = send_b2c_access_event_to_mx(
-        payload=payload,
-        user=user,
-        route=route,
-    )
+        if isinstance(mx_response, dict):
+            nested_response = mx_response.get("response")
 
-    if not result.get("ok"):
-        return JsonResponse(result, status=400)
+            if not isinstance(nested_response, dict):
+                nested_response = {}
 
-    magic_link = result.get("magicLink") or result.get("response", {}).get("magicLink")
-    mx_user_id = result.get("mxUserId") or result.get("response", {}).get("mxUserId")
+            magic_link = str(
+                mx_response.get("magicLink")
+                or mx_response.get("magic_link")
+                or nested_response.get("magicLink")
+                or nested_response.get("magic_link")
+                or ""
+            ).strip()
 
-    route.mx_magic_link = magic_link
-    route.mx_status = result.get("status") or "APPLIED"
-    route.mx_response = {
-        **result,
-        "mxUserId": mx_user_id,
-        "magicLink": magic_link,
-    }
+            # Si fue recuperado desde mx_response, persistirlo en
+            # la columna correspondiente para las próximas consultas.
+            if magic_link:
+                route.mx_magic_link = magic_link
+                route.save(
+                    update_fields=[
+                        "mx_magic_link",
+                        "updated_at",
+                    ]
+                )
 
-    route.save(update_fields=[
-        "mx_magic_link",
-        "mx_status",
-        "mx_response",
-        "updated_at",
-    ])
+    # =========================================================
+    # VALIDAR QUE EXISTA EL ENLACE
+    # =========================================================
+    if not magic_link:
+        logger.warning(
+            "Magic Link no encontrado para route=%s user=%s",
+            route.id,
+            user.id,
+        )
 
-    return JsonResponse({
-        "ok": True,
-        "data": {
-            "magic_link": magic_link,
-            "mx_user_id": mx_user_id,
-            "mx_status": route.mx_status,
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "mx_magic_link_not_found",
+                "message": (
+                    "Tu cuenta de Top Education México todavía "
+                    "no tiene un enlace de acceso disponible."
+                ),
+                "retryable": False,
+                "requires_provisioning_review": True,
+            },
+            status=404,
+        )
+
+    # =========================================================
+    # DATOS COMPLEMENTARIOS
+    # =========================================================
+    mx_user_id = str(
+        getattr(route, "mx_user_id", None) or ""
+    ).strip() or None
+
+    mx_status = str(
+        getattr(route, "mx_status", None) or ""
+    ).strip() or None
+
+    entitlement_status = None
+    route_version = None
+
+    mx_response = getattr(route, "mx_response", None)
+
+    if isinstance(mx_response, dict):
+        nested_response = mx_response.get("response")
+
+        if not isinstance(nested_response, dict):
+            nested_response = {}
+
+        entitlement_status = (
+            mx_response.get("entitlementStatus")
+            or mx_response.get("entitlement_status")
+            or nested_response.get("entitlementStatus")
+            or nested_response.get("entitlement_status")
+        )
+
+        route_version = (
+            mx_response.get("routeVersion")
+            or mx_response.get("route_version")
+            or nested_response.get("routeVersion")
+            or nested_response.get("route_version")
+        )
+
+        if not mx_user_id:
+            recovered_mx_user_id = (
+                mx_response.get("mxUserId")
+                or mx_response.get("mx_user_id")
+                or nested_response.get("mxUserId")
+                or nested_response.get("mx_user_id")
+            )
+
+            if recovered_mx_user_id:
+                mx_user_id = str(recovered_mx_user_id)
+
+    # =========================================================
+    # RESPUESTA
+    # =========================================================
+    response = JsonResponse(
+        {
+            "ok": True,
+            "data": {
+                # Compatibilidad con diferentes nombres usados
+                # por el frontend.
+                "magicLink": magic_link,
+                "magic_link": magic_link,
+
+                "mxUserId": mx_user_id,
+                "mx_user_id": mx_user_id,
+
+                "mxStatus": mx_status,
+                "mx_status": mx_status,
+
+                "entitlementStatus": entitlement_status,
+                "entitlement_status": entitlement_status,
+
+                "routeVersion": route_version,
+                "route_version": route_version,
+
+                "reused": True,
+            },
         },
-    })
+        status=200,
+    )
+
+    response["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, max-age=0"
+    )
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+
+    return response
 
 @require_GET
 @csrf_exempt
@@ -8326,123 +9089,77 @@ class LearningRouteCompleteSignupView(APIView):
                     )
                 )
 
-                snapshot = get_current_route_snapshot(
-                    route,
-                    for_update=True,
-                )
+                # =====================================================
+                # CREAR O RECUPERAR SNAPSHOT DE RUTA
+                # =====================================================
 
-                if snapshot is None:
-                    legacy_courses = (
-                        route.recommended_certifications
-                        if isinstance(
-                            route.recommended_certifications,
-                            list,
-                        )
-                        else []
+                if (
+                    plan_config["package_code"]
+                    == "TOP_EDUCATION_FREE"
+                ):
+                    # El plan Free usa exclusivamente el catálogo
+                    # /v1/b2c/free-preview-courses mediante el service.
+                    snapshot = ensure_free_learning_route(
+                        lead=route,
+                        change_reason="FREE_SIGNUP",
+                        metadata={
+                            "trigger": "complete-signup",
+                            "packageCode": (
+                                plan_config["package_code"]
+                            ),
+                            "selectedPlan": (
+                                plan_config["selected_plan"]
+                            ),
+                            "selectedPaidPlan": None,
+                        },
                     )
 
-                    if not legacy_courses:
-                        return Response(
-                            {
-                                "ok": False,
-                                "error": (
-                                    "learning_route_not_found"
-                                ),
-                                "message": (
-                                    "No existe una ruta de "
-                                    "aprendizaje para el usuario."
-                                ),
-                            },
-                            status=(
-                                status.HTTP_400_BAD_REQUEST
-                            ),
+                else:
+                    # Los planes pagos conservan la ruta personalizada
+                    # generada previamente durante Start Now.
+                    snapshot = get_current_route_snapshot(
+                        route,
+                        for_update=True,
+                    )
+
+                    if snapshot is None:
+                        legacy_courses = (
+                            route.recommended_certifications
+                            if isinstance(
+                                route.recommended_certifications,
+                                list,
+                            )
+                            else []
                         )
 
-                    snapshot = (
-                        create_initial_learning_route(
+                        if not legacy_courses:
+                            return Response(
+                                {
+                                    "ok": False,
+                                    "error": (
+                                        "learning_route_not_found"
+                                    ),
+                                    "message": (
+                                        "No existe una ruta de "
+                                        "aprendizaje para el usuario."
+                                    ),
+                                },
+                                status=(
+                                    status.HTTP_400_BAD_REQUEST
+                                ),
+                            )
+
+                        snapshot = create_initial_learning_route(
                             lead=route,
                             courses=legacy_courses,
                             source="LEGACY_START_NOW",
                             change_reason=(
                                 "LEGACY_ROUTE_RECOVERED"
                             ),
-                            require_certification=False,
-                        )
-                    )
-
-                # Free recibe exactamente tres cursos.
-                if (
-                    plan_config["package_code"]
-                    == "TOP_EDUCATION_FREE"
-                ):
-                    free_courses = (
-                        get_free_route_courses(
-                            snapshot
-                        )
-                    )
-
-                    if len(free_courses) != 3:
-                        return Response(
-                            {
-                                "ok": False,
-                                "error": (
-                                    "free_route_requires_"
-                                    "three_courses"
-                                ),
-                                "message": (
-                                    "El plan Free requiere "
-                                    "exactamente tres cursos "
-                                    "válidos."
-                                ),
-                            },
-                            status=(
-                                status.HTTP_400_BAD_REQUEST
-                            ),
-                        )
-
-                    current_courses = (
-                        get_snapshot_courses(
-                            snapshot
-                        )
-                    )
-
-                    current_ids = [
-                        str(
-                            course.get(
-                                "idInterno"
-                            )
-                            or ""
-                        )
-                        for course in current_courses
-                    ]
-
-                    free_ids = [
-                        str(
-                            course.get(
-                                "idInterno"
-                            )
-                            or ""
-                        )
-                        for course in free_courses
-                    ]
-
-                    if current_ids != free_ids:
-                        snapshot = update_learning_route(
-                            lead=route,
-                            courses=free_courses,
-                            source="START_NOW",
-                            change_reason=(
-                                "FREE_ROUTE_REDUCED_TO_"
-                                "THREE_COURSES"
-                            ),
                             metadata={
+                                "trigger": "complete-signup",
                                 "packageCode": (
-                                    plan_config[
-                                        "package_code"
-                                    ]
-                                ),
-                                "previousVersion": (
-                                    snapshot.version
+                                    plan_config["package_code"]
                                 ),
                             },
                             require_certification=False,
@@ -8565,6 +9282,7 @@ class LearningRouteCompleteSignupView(APIView):
 
             mx_result = send_b2c_access_event_to_mx(
                 payload=payload,
+                user=user,
                 route=route,
             )
 
@@ -8634,20 +9352,39 @@ class LearningRouteCompleteSignupView(APIView):
         )
 
         if accepted:
+            # Conservamos un estado válido del modelo según el plan.
             route.status = (
-                "mx_processing"
-                if pending
-                else "account_created"
+                "free_active"
+                if plan_config["selected_plan"] == "free"
+                else (
+                    "pro_trialing"
+                    if plan_config["lifecycle_status"] == "TRIALING"
+                    else "pro_active"
+                )
             )
 
         elif retryable:
-            route.status = "mx_retry_pending"
+            # El estado canónico del plan se conserva; el detalle
+            # de sincronización queda en mx_status y mx_response.
+            route.status = (
+                "free_pending_password"
+                if plan_config["selected_plan"] == "free"
+                else "pro_checkout_started"
+            )
 
         elif permanent:
-            route.status = "mx_permanent_error"
+            route.status = (
+                "free_pending_password"
+                if plan_config["selected_plan"] == "free"
+                else "pro_checkout_started"
+            )
 
         else:
-            route.status = "mx_unknown_error"
+            route.status = (
+                "free_pending_password"
+                if plan_config["selected_plan"] == "free"
+                else "pro_checkout_started"
+            )
 
         route.mx_status = (
             mx_status or "UNKNOWN"
@@ -9247,32 +9984,66 @@ def billing_subscription_create(request):
 @csrf_exempt
 @login_required
 def billing_subscription_cancel(request):
+    """
+    Programa la cancelación al final del periodo.
+
+    No cambia todavía al usuario a Free y no envía un evento
+    directamente a México. Stripe emitirá
+    customer.subscription.updated.
+    """
     body = _json_body(request)
-    reason = (body.get("reason") or "").strip()
+
+    reason = str(
+        body.get("reason") or ""
+    ).strip()
 
     if not reason:
         return JsonResponse(
-            {"ok": False, "error": "missing_cancel_reason"},
+            {
+                "ok": False,
+                "error": "missing_cancel_reason",
+                "message": (
+                    "Debes indicar el motivo de la "
+                    "cancelación."
+                ),
+            },
             status=400,
         )
 
     subscription = (
         StripeSubscription.objects
         .filter(user=request.user)
-        .exclude(status__in=["canceled", "cancelled"])
-        .order_by("-id")
+        .exclude(
+            status__in=[
+                "canceled",
+                "cancelled",
+            ]
+        )
+        .order_by("-updated_at", "-id")
         .first()
     )
 
     if not subscription:
         return JsonResponse(
-            {"ok": False, "error": "subscription_not_found"},
+            {
+                "ok": False,
+                "error": "subscription_not_found",
+                "message": (
+                    "No encontramos una suscripción "
+                    "activa."
+                ),
+            },
             status=404,
         )
 
     if not subscription.stripe_subscription_id:
         return JsonResponse(
-            {"ok": False, "error": "missing_stripe_subscription_id"},
+            {
+                "ok": False,
+                "error": (
+                    "missing_stripe_subscription_id"
+                ),
+            },
             status=400,
         )
 
@@ -9285,157 +10056,420 @@ def billing_subscription_cancel(request):
 
     if not route:
         return JsonResponse(
-            {"ok": False, "error": "learning_route_not_found"},
+            {
+                "ok": False,
+                "error": "learning_route_not_found",
+            },
             status=404,
         )
 
     try:
-        stripe_subscription = stripe.Subscription.modify(
-            subscription.stripe_subscription_id,
-            cancel_at_period_end=True,
-            metadata={
-                "cancel_reason": reason,
-                "cancel_requested_by": str(request.user.id),
-                "cancel_requested_from": "top-education-colombia",
-            },
+        stripe_subscription = (
+            stripe.Subscription.modify(
+                subscription.stripe_subscription_id,
+                cancel_at_period_end=True,
+                metadata={
+                    "cancel_reason": reason,
+                    "cancel_requested_by": str(
+                        request.user.id
+                    ),
+                    "cancel_requested_from": (
+                        "top-education-colombia"
+                    ),
+                },
+            )
+        )
+
+        current_period_end_timestamp = (
+            stripe_subscription.get(
+                "current_period_end"
+            )
         )
 
         current_period_end = (
             timezone.datetime.fromtimestamp(
-                stripe_subscription.get("current_period_end"),
+                current_period_end_timestamp,
                 tz=timezone.get_current_timezone(),
             )
-            if stripe_subscription.get("current_period_end")
+            if current_period_end_timestamp
             else subscription.current_period_end
         )
 
+        stripe_status = str(
+            stripe_subscription.get("status")
+            or subscription.status
+            or "active"
+        ).strip().lower()
+
+        lifecycle_status = (
+            "TRIALING"
+            if stripe_status == "trialing"
+            else "ACTIVE"
+        )
+
         subscription.cancel_at_period_end = True
-        subscription.status = stripe_subscription.get("status") or subscription.status
-        subscription.current_period_end = current_period_end
+        subscription.status = stripe_status
+        subscription.current_period_end = (
+            current_period_end
+        )
+        subscription.pending_action = (
+            "CANCEL_AT_PERIOD_END"
+        )
+        subscription.lifecycle_status = (
+            lifecycle_status
+        )
+        subscription.access_status = "ALLOWED"
 
         subscription.save(
             update_fields=[
                 "cancel_at_period_end",
                 "status",
                 "current_period_end",
+                "pending_action",
+                "lifecycle_status",
+                "access_status",
                 "updated_at",
             ]
         )
 
-        route.status = "cancel_at_period_end"
-        route.save(update_fields=["status", "updated_at"])
-
-        plan_value = (
-            getattr(route, "selected_paid_plan", None)
-            or f"{subscription.interval}_{route.selected_plan}"
-            or "monthly_x"
+        route.status = (
+            "subscription_cancel_pending"
         )
-
-        event_id = (
-            f"evt_col_cancel_at_period_end_"
-            f"route_{route.id}_user_{request.user.id}_{uuid.uuid4()}"
+        route.pending_action = (
+            "CANCEL_AT_PERIOD_END"
         )
-
-        payload = build_learning_route_mx_payload(
-            event_id=event_id,
-            event_type="USER_ACCESS_UPDATED",
-            user=request.user,
-            route=route,
-            subscription=subscription,
-            plan_value=plan_value,
-            lifecycle_status_override="ACTIVE",
-            access_status_override="ALLOWED",
-            pending_action_override="CANCEL_AT_PERIOD_END",
+        route.lifecycle_status = (
+            lifecycle_status
         )
-
-        mx_result = send_b2c_access_event_to_mx(
-            payload=payload,
-            user=request.user,
-            route=route,
-        )
-
-        route.mx_status = mx_result.get("status") or route.mx_status
-
-        magic_link = mx_result.get("magicLink") or mx_result.get("response", {}).get("magicLink")
-        mx_user_id = mx_result.get("mxUserId") or mx_result.get("response", {}).get("mxUserId")
-
-        route.mx_response = {
-            **mx_result,
-            "mxUserId": mx_user_id,
-            "magicLink": magic_link,
-        }
-
-        if magic_link:
-            route.mx_magic_link = magic_link
+        route.access_status = "ALLOWED"
 
         route.save(
             update_fields=[
-                "mx_status",
-                "mx_response",
-                "mx_magic_link",
+                "status",
+                "pending_action",
+                "lifecycle_status",
+                "access_status",
                 "updated_at",
             ]
         )
 
-        return JsonResponse({
-            "ok": True,
-            "message": "subscription_will_cancel_at_period_end",
-            "cancel_at_period_end": True,
-            "current_period_end": (
-                subscription.current_period_end.isoformat()
-                if subscription.current_period_end
+        logger.info(
+            "Cancelación programada. "
+            "user=%s subscription=%s period_end=%s",
+            request.user.id,
+            subscription.stripe_subscription_id,
+            (
+                current_period_end.isoformat()
+                if current_period_end
                 else None
             ),
-            "mx_sent": bool(mx_result.get("ok")),
-            "mx_status": mx_result.get("status"),
-            "mx_response": mx_result,
-        })
+        )
 
-    except Exception as e:
-        print("CANCEL ERROR:", str(e))
+        return JsonResponse(
+            {
+                "ok": True,
+                "message": (
+                    "subscription_will_cancel_"
+                    "at_period_end"
+                ),
+                "cancel_at_period_end": True,
+                "current_period_end": (
+                    current_period_end.isoformat()
+                    if current_period_end
+                    else None
+                ),
+                "pending_action": (
+                    "CANCEL_AT_PERIOD_END"
+                ),
+                "access_status": "ALLOWED",
+                "lifecycle_status": (
+                    lifecycle_status
+                ),
+                "mx_sync_pending": True,
+                "mx_sync_source": (
+                    "stripe_webhook"
+                ),
+            },
+            status=200,
+        )
+
+    except stripe.error.StripeError as exc:
+        logger.exception(
+            "Stripe rechazó la cancelación. "
+            "user=%s subscription=%s",
+            request.user.id,
+            subscription.stripe_subscription_id,
+        )
 
         return JsonResponse(
             {
                 "ok": False,
-                "error": str(e),
+                "error": "stripe_cancel_failed",
+                "message": str(exc),
             },
             status=400,
+        )
+
+    except Exception as exc:
+        logger.exception(
+            "Error programando cancelación. "
+            "user=%s subscription=%s",
+            request.user.id,
+            subscription.stripe_subscription_id,
+        )
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": (
+                    "subscription_cancel_failed"
+                ),
+                "message": str(exc),
+            },
+            status=500,
         )
 
 @require_POST
 @csrf_exempt
 @login_required
 def billing_subscription_reactivate(request):
+    """
+    Retira la cancelación programada.
+
+    No envía directamente a México. Stripe emitirá
+    customer.subscription.updated.
+    """
     subscription = (
         StripeSubscription.objects
         .filter(user=request.user)
-        .exclude(status__in=["canceled", "cancelled"])
-        .order_by("-id")
+        .exclude(
+            status__in=[
+                "canceled",
+                "cancelled",
+            ]
+        )
+        .order_by("-updated_at", "-id")
         .first()
     )
 
     if not subscription:
-        return JsonResponse({"ok": False, "error": "subscription_not_found"}, status=404)
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "subscription_not_found",
+                "message": (
+                    "No encontramos una suscripción "
+                    "que pueda reactivarse."
+                ),
+            },
+            status=404,
+        )
 
-    stripe_subscription = stripe.Subscription.modify(
-        subscription.stripe_subscription_id,
-        cancel_at_period_end=False,
+    if not subscription.stripe_subscription_id:
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": (
+                    "missing_stripe_subscription_id"
+                ),
+            },
+            status=400,
+        )
+
+    route = (
+        LearningRouteLead.objects
+        .filter(user=request.user)
+        .order_by("-updated_at", "-id")
+        .first()
     )
 
-    subscription.cancel_at_period_end = False
-    subscription.status = stripe_subscription.get("status") or subscription.status
-    subscription.save(update_fields=["cancel_at_period_end", "status", "updated_at"])
+    try:
+        stripe_subscription = (
+            stripe.Subscription.modify(
+                subscription.stripe_subscription_id,
+                cancel_at_period_end=False,
+                metadata={
+                    "reactivated_by": str(
+                        request.user.id
+                    ),
+                    "reactivated_from": (
+                        "top-education-colombia"
+                    ),
+                },
+            )
+        )
 
-    return JsonResponse({"ok": True})
+        stripe_status = str(
+            stripe_subscription.get("status")
+            or subscription.status
+            or "active"
+        ).strip().lower()
 
-def _mx_iso_now():
-    return (
-        timezone.now()
-        .astimezone(dt_timezone.utc)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
+        current_period_end_timestamp = (
+            stripe_subscription.get(
+                "current_period_end"
+            )
+        )
 
+        if current_period_end_timestamp:
+            subscription.current_period_end = (
+                timezone.datetime.fromtimestamp(
+                    current_period_end_timestamp,
+                    tz=(
+                        timezone
+                        .get_current_timezone()
+                    ),
+                )
+            )
+
+        if stripe_status == "trialing":
+            lifecycle_status = "TRIALING"
+            access_status = "ALLOWED"
+            pending_action = "NONE"
+            legacy_status = "pro_trialing"
+
+        elif stripe_status == "active":
+            lifecycle_status = "ACTIVE"
+            access_status = "ALLOWED"
+            pending_action = "NONE"
+            legacy_status = "pro_active"
+
+        elif stripe_status in {
+            "past_due",
+            "unpaid",
+        }:
+            lifecycle_status = "PAST_DUE"
+            access_status = "BLOCKED"
+            pending_action = "PAYMENT_RETRY"
+            legacy_status = (
+                "pro_payment_failed"
+            )
+
+        else:
+            lifecycle_status = "ACTIVE"
+            access_status = "ALLOWED"
+            pending_action = "NONE"
+            legacy_status = "pro_active"
+
+        subscription.cancel_at_period_end = False
+        subscription.status = stripe_status
+        subscription.lifecycle_status = (
+            lifecycle_status
+        )
+        subscription.access_status = (
+            access_status
+        )
+        subscription.pending_action = (
+            pending_action
+        )
+
+        subscription.save(
+            update_fields=[
+                "cancel_at_period_end",
+                "status",
+                "current_period_end",
+                "lifecycle_status",
+                "access_status",
+                "pending_action",
+                "updated_at",
+            ]
+        )
+
+        if route:
+            route.status = legacy_status
+            route.lifecycle_status = (
+                lifecycle_status
+            )
+            route.access_status = access_status
+            route.pending_action = (
+                pending_action
+            )
+
+            route.save(
+                update_fields=[
+                    "status",
+                    "lifecycle_status",
+                    "access_status",
+                    "pending_action",
+                    "updated_at",
+                ]
+            )
+
+        logger.info(
+            "Suscripción reactivada. "
+            "user=%s subscription=%s status=%s",
+            request.user.id,
+            subscription.stripe_subscription_id,
+            stripe_status,
+        )
+
+        return JsonResponse(
+            {
+                "ok": True,
+                "message": (
+                    "subscription_reactivated"
+                ),
+                "cancel_at_period_end": False,
+                "subscription_status": (
+                    stripe_status
+                ),
+                "lifecycle_status": (
+                    lifecycle_status
+                ),
+                "access_status": access_status,
+                "pending_action": pending_action,
+                "current_period_end": (
+                    subscription
+                    .current_period_end
+                    .isoformat()
+                    if subscription.current_period_end
+                    else None
+                ),
+                "mx_sync_pending": True,
+                "mx_sync_source": (
+                    "stripe_webhook"
+                ),
+            },
+            status=200,
+        )
+
+    except stripe.error.StripeError as exc:
+        logger.exception(
+            "Stripe rechazó la reactivación. "
+            "user=%s subscription=%s",
+            request.user.id,
+            subscription.stripe_subscription_id,
+        )
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": (
+                    "stripe_reactivate_failed"
+                ),
+                "message": str(exc),
+            },
+            status=400,
+        )
+
+    except Exception as exc:
+        logger.exception(
+            "Error reactivando suscripción. "
+            "user=%s subscription=%s",
+            request.user.id,
+            subscription.stripe_subscription_id,
+        )
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": (
+                    "subscription_reactivate_failed"
+                ),
+                "message": str(exc),
+            },
+            status=500,
+        )
 
 def _json_dumps(payload):
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
@@ -9801,801 +10835,6 @@ def select_courses_for_mx_plan(
                 break
 
     return selected_courses[:3]
-
-def build_learning_route_mx_payload(
-    *,
-    event_id,
-    event_type,
-    user,
-    route,
-    subscription=None,
-    plan_value="free",
-    lifecycle_status_override=None,
-    access_status_override=None,
-    pending_action_override=None,
-):
-    occurred_at = _mx_iso_now()
-
-    # =========================================================
-    # NORMALIZACIÓN DEL PLAN
-    # =========================================================
-    plan_value = str(
-        plan_value or "free"
-    ).strip().lower()
-
-    package_code = get_mx_package_code(
-        plan_value
-    )
-
-    if not package_code:
-        raise ValueError(
-            f"unsupported_mx_package_code_for_{plan_value}"
-        )
-
-    package_code = str(
-        package_code
-    ).strip().upper()
-
-    selected_plan = str(
-        getattr(route, "selected_plan", None)
-        or "free"
-    ).strip().lower()
-
-    # =========================================================
-    # CONFIGURACIÓN CONTRACTUAL POR PAQUETE
-    #
-    # Importante:
-    # FREE no tiene periodicidad mensual/anual en México.
-    # Debe enviarse billingPeriod: null.
-    # =========================================================
-    plan_contracts = {
-        "TOP_EDUCATION_FREE": {
-            "tier": "FREE",
-            "billing_period": None,
-            "default_lifecycle_status": "FREE",
-            "default_access_status": "ALLOWED",
-            "default_pending_action": "NONE",
-            "is_paid": False,
-        },
-
-        "TOP_EDUCATION_X_MONTHLY": {
-            "tier": "X",
-            "billing_period": "MONTHLY",
-            "default_lifecycle_status": "TRIALING",
-            "default_access_status": "ALLOWED",
-            "default_pending_action": "NONE",
-            "is_paid": True,
-        },
-
-        "TOP_EDUCATION_X_ANNUAL": {
-            "tier": "X",
-            "billing_period": "ANNUAL",
-            "default_lifecycle_status": "TRIALING",
-            "default_access_status": "ALLOWED",
-            "default_pending_action": "NONE",
-            "is_paid": True,
-        },
-
-        "TOP_EDUCATION_PLUS_MONTHLY": {
-            "tier": "PLUS",
-            "billing_period": "MONTHLY",
-            "default_lifecycle_status": "TRIALING",
-            "default_access_status": "ALLOWED",
-            "default_pending_action": "NONE",
-            "is_paid": True,
-        },
-
-        "TOP_EDUCATION_PLUS_ANNUAL": {
-            "tier": "PLUS",
-            "billing_period": "ANNUAL",
-            "default_lifecycle_status": "TRIALING",
-            "default_access_status": "ALLOWED",
-            "default_pending_action": "NONE",
-            "is_paid": True,
-        },
-    }
-
-    plan_contract = plan_contracts.get(
-        package_code
-    )
-
-    if not plan_contract:
-        raise ValueError(
-            f"unsupported_mx_plan_contract_for_{package_code}"
-        )
-
-    tier = plan_contract["tier"]
-    billing_period = plan_contract["billing_period"]
-    is_paid_plan = plan_contract["is_paid"]
-
-    lifecycle_status = (
-        plan_contract[
-            "default_lifecycle_status"
-        ]
-    )
-
-    access_status = (
-        plan_contract[
-            "default_access_status"
-        ]
-    )
-
-    pending_action = (
-        plan_contract[
-            "default_pending_action"
-        ]
-    )
-
-    # =========================================================
-    # ESTADO DEL PLAN PAGO SEGÚN STRIPE
-    # =========================================================
-    if is_paid_plan:
-        status_raw = str(
-            getattr(
-                subscription,
-                "status",
-                None,
-            )
-            or ""
-        ).strip().lower()
-
-        if status_raw == "trialing":
-            lifecycle_status = "TRIALING"
-
-        elif status_raw in {
-            "active",
-            "paid",
-        }:
-            lifecycle_status = "ACTIVE"
-
-        elif status_raw in {
-            "past_due",
-            "unpaid",
-        }:
-            lifecycle_status = "PAST_DUE"
-
-        elif status_raw in {
-            "canceled",
-            "cancelled",
-        }:
-            lifecycle_status = "CANCELLED"
-
-        elif status_raw == "expired":
-            lifecycle_status = "EXPIRED"
-
-        else:
-            has_trial_dates = bool(
-                getattr(
-                    route,
-                    "trial_start",
-                    None,
-                )
-                and getattr(
-                    route,
-                    "trial_end",
-                    None,
-                )
-            )
-
-            lifecycle_status = (
-                "TRIALING"
-                if has_trial_dates
-                else "ACTIVE"
-            )
-
-        access_status = (
-            "RESTRICTED"
-            if lifecycle_status
-            in {
-                "PAST_DUE",
-                "CANCELLED",
-                "EXPIRED",
-            }
-            else "ALLOWED"
-        )
-
-        pending_action = (
-            "CANCEL_AT_PERIOD_END"
-            if (
-                subscription
-                and getattr(
-                    subscription,
-                    "cancel_at_period_end",
-                    False,
-                )
-            )
-            else "NONE"
-        )
-
-    # =========================================================
-    # OVERRIDES
-    # =========================================================
-    if lifecycle_status_override:
-        lifecycle_status = str(
-            lifecycle_status_override
-        ).strip().upper()
-
-    if access_status_override:
-        access_status = str(
-            access_status_override
-        ).strip().upper()
-
-    if pending_action_override:
-        pending_action = str(
-            pending_action_override
-        ).strip().upper()
-
-    is_trial = (
-        lifecycle_status == "TRIALING"
-    )
-
-    # =========================================================
-    # FECHAS
-    # =========================================================
-    trial_start = getattr(
-        route,
-        "trial_start",
-        None,
-    )
-
-    route_trial_end = getattr(
-        route,
-        "trial_end",
-        None,
-    )
-
-    subscription_period_end = (
-        getattr(
-            subscription,
-            "current_period_end",
-            None,
-        )
-        if subscription
-        else None
-    )
-
-    trial_end = (
-        route_trial_end
-        or subscription_period_end
-    )
-
-    # =========================================================
-    # RECOMENDACIONES
-    #
-    # FREE:
-    # - exactamente 3 cursos;
-    # - prioriza Nivel 1;
-    # - sin duplicados por idInterno.
-    #
-    # PAGOS:
-    # - conserva la ruta completa;
-    # - elimina duplicados por idInterno.
-    # =========================================================
-    raw_recommendations = (
-        getattr(
-            route,
-            "recommended_certifications",
-            None,
-        )
-        or []
-    )
-
-    courses_for_mx = (
-        select_courses_for_mx_plan(
-            raw_recommendations,
-            plan_value=plan_value,
-        )
-    )
-
-    if package_code == "TOP_EDUCATION_FREE":
-        if len(courses_for_mx) != 3:
-            raise ValueError(
-                "free_plan_requires_exactly_3_unique_courses"
-            )
-
-    recommended_courses = []
-
-    for index, course in enumerate(
-        courses_for_mx,
-        start=1,
-    ):
-        if not isinstance(course, dict):
-            continue
-
-        id_interno = (
-            get_recommended_course_internal_id(
-                course
-            )
-        )
-
-        colombia_certification_id = (
-            course.get(
-                "colombiaCertificationId"
-            )
-            or course.get("id")
-            or course.get(
-                "certification_id"
-            )
-        )
-
-        route_level = (
-            normalize_route_level(
-                course.get("routeLevel")
-                or course.get(
-                    "route_level"
-                )
-                or course.get(
-                    "level_route"
-                )
-            )
-            or 1
-        )
-
-        recommended_courses.append(
-            {
-                "idInterno": id_interno,
-
-                "colombiaCertificationId": (
-                    colombia_certification_id
-                ),
-
-                "title": (
-                    course.get("title")
-                    or course.get("nombre")
-                    or course.get("name")
-                    or ""
-                ),
-
-                "level": (
-                    course.get("level")
-                    or course.get(
-                        "nivel_certificacion"
-                    )
-                    or course.get("nivel")
-                    or ""
-                ),
-
-                "provider": (
-                    course.get("provider")
-                    or course.get(
-                        "plataforma"
-                    )
-                    or course.get(
-                        "platform"
-                    )
-                    or ""
-                ),
-
-                # Se reconstruye el orden después
-                # de seleccionar y deduplicar.
-                "order": index,
-
-                "routeLevel": route_level,
-            }
-        )
-
-    # Validación final defensiva.
-    if (
-        package_code
-        == "TOP_EDUCATION_FREE"
-        and len(recommended_courses) != 3
-    ):
-        raise ValueError(
-            "free_plan_payload_does_not_contain_3_courses"
-        )
-
-    # =========================================================
-    # STRIPE / BILLING
-    # =========================================================
-    stripe_subscription_id = (
-        getattr(
-            subscription,
-            "stripe_subscription_id",
-            None,
-        )
-        if subscription
-        else getattr(
-            route,
-            "stripe_subscription_id",
-            None,
-        )
-    )
-
-    stripe_customer_id = (
-        (
-            getattr(
-                subscription,
-                "stripe_customer_id",
-                None,
-            )
-            if subscription
-            else None
-        )
-        or getattr(
-            route,
-            "stripe_customer_id",
-            None,
-        )
-    )
-
-    stripe_price_id = (
-        getattr(
-            subscription,
-            "price_id",
-            None,
-        )
-        if subscription
-        else None
-    )
-
-    stripe_payment_method_id = (
-        (
-            getattr(
-                subscription,
-                "stripe_payment_method_id",
-                None,
-            )
-            or getattr(
-                subscription,
-                "payment_method_id",
-                None,
-            )
-        )
-        if subscription
-        else None
-    )
-
-    subscription_status = (
-        getattr(
-            subscription,
-            "status",
-            None,
-        )
-        if subscription
-        else None
-    )
-
-    current_period_end = (
-        getattr(
-            subscription,
-            "current_period_end",
-            None,
-        )
-        if subscription
-        else None
-    )
-
-    # =========================================================
-    # DATOS DEL USUARIO
-    # =========================================================
-    user_email = str(
-        getattr(
-            user,
-            "email",
-            None,
-        )
-        or getattr(
-            route,
-            "email",
-            None,
-        )
-        or ""
-    ).strip().lower()
-
-    if not user_email:
-        raise ValueError(
-            "missing_email_for_mx_payload"
-        )
-
-    first_name = str(
-        getattr(
-            user,
-            "first_name",
-            None,
-        )
-        or getattr(
-            route,
-            "first_name",
-            None,
-        )
-        or ""
-    ).strip()
-
-    last_name = str(
-        getattr(
-            user,
-            "last_name",
-            None,
-        )
-        or getattr(
-            route,
-            "last_name",
-            None,
-        )
-        or ""
-    ).strip()
-
-    # =========================================================
-    # PAYLOAD DEL PLAN
-    # =========================================================
-    plan_payload = {
-        "packageCode": package_code,
-        "tier": tier,
-
-        # FREE => None => JSON null.
-        "billingPeriod": billing_period,
-
-        "accessStatus": access_status,
-        "lifecycleStatus": lifecycle_status,
-        "pendingAction": pending_action,
-
-        "trial": {
-            "isTrial": is_trial,
-
-            "trialStart": (
-                trial_start.isoformat()
-                if trial_start
-                else None
-            ),
-
-            "trialEnd": (
-                trial_end.isoformat()
-                if trial_end
-                else None
-            ),
-
-            "trialDays": (
-                7
-                if is_trial
-                else 0
-            ),
-        },
-    }
-
-    # =========================================================
-    # PAYLOAD FINAL
-    # =========================================================
-    payload = {
-        "schemaVersion": "1.0",
-        "eventId": event_id,
-        "eventType": event_type,
-
-        "traceId": (
-            f"col-startnow-route-{route.id}"
-            f"-user-{user.id}"
-        ),
-
-        "occurredAt": occurred_at,
-
-        "customer": {
-            "email": user_email,
-            "emailNormalized": user_email,
-            "name": first_name,
-            "lastName": last_name,
-
-            "phoneCountryCode": getattr(
-                route,
-                "phone_country_code",
-                None,
-            ),
-
-            "phoneNumber": getattr(
-                route,
-                "phone_number",
-                None,
-            ),
-
-            "phoneE164": getattr(
-                route,
-                "phone_e164",
-                None,
-            ),
-
-            "age": getattr(
-                route,
-                "age",
-                None,
-            ),
-
-            "gender": getattr(
-                route,
-                "gender",
-                None,
-            ),
-
-            "country": (
-                getattr(
-                    route,
-                    "country",
-                    None,
-                )
-                or "Colombia"
-            ),
-        },
-
-        "learningProfile": {
-            "topics": (
-                getattr(
-                    route,
-                    "topics",
-                    None,
-                )
-                or []
-            ),
-
-            "goal": (
-                getattr(
-                    route,
-                    "goal",
-                    None,
-                )
-                or ""
-            ),
-        },
-
-        "recommendedCourses": (
-            recommended_courses
-        ),
-
-        "plan": plan_payload,
-
-        "billing": {
-            "source": "COLOMBIA",
-
-            "stripeCustomerId": (
-                stripe_customer_id
-            ),
-
-            "stripeSubscriptionId": (
-                stripe_subscription_id
-            ),
-
-            "stripePaymentMethodId": (
-                stripe_payment_method_id
-            ),
-
-            # Free no tiene suscripción Stripe,
-            # pero se identifica explícitamente.
-            "status": (
-                "free"
-                if package_code
-                == "TOP_EDUCATION_FREE"
-                else subscription_status
-            ),
-
-            "currentPeriodEnd": (
-                current_period_end.isoformat()
-                if current_period_end
-                else None
-            ),
-        },
-
-        "redirects": {
-            "subscriptionManagementUrl": (
-                settings
-                .MX_B2C_SUBSCRIPTION_MANAGEMENT_URL
-            ),
-
-            "colombiaAccountUrl": (
-                settings
-                .MX_B2C_COLOMBIA_ACCOUNT_URL
-            ),
-        },
-
-        "metadata": {
-            "routeId": route.id,
-            "selectedPaidPlan": plan_value,
-            "selectedPlan": selected_plan,
-            "createdFrom": "startNow",
-            "stripePriceId": stripe_price_id,
-            "colombiaUserId": user.id,
-
-            # Facilita auditoría en Colombia y MX.
-            "recommendedCoursesCount": len(
-                recommended_courses
-            ),
-        },
-    }
-
-    return payload
-
-def send_b2c_access_event_to_mx(
-    *,
-    payload,
-    user=None,
-    route=None,
-    route_snapshot=None,
-    force=False,
-):
-    event_id = payload["eventId"]
-    event_type = payload["eventType"]
-    occurred_at = payload["occurredAt"]
-
-    raw_body = _json_dumps(payload)
-    headers = _build_mx_headers(raw_body, event_id, occurred_at)
-
-    log, created = MxAccessEventLog.objects.get_or_create(
-        stripe_event_id=event_id,
-        defaults={
-            "user": user,
-            "learning_route_id": route.id if route else None,
-            "event_type": event_type,
-            "event_source": "colombia_b2c",
-            "payload_json": payload,
-            "send_status": "pending",
-            "attempts": 0,
-        },
-    )
-
-    if not created and log.send_status == "sent":
-        return {
-            "ok": True,
-            "status": log.mx_status or "DUPLICATE",
-            "mxUserId": log.mx_user_id,
-            "magicLink": log.magic_link,
-            "skipped": True,
-        }
-
-    log.send_status = "processing"
-    log.attempts = (log.attempts or 0) + 1
-    log.save(update_fields=["send_status", "attempts", "updated_at"])
-
-    try:
-        response = requests.post(
-            settings.MX_B2C_ACCESS_EVENT_URL,
-            data=raw_body.encode("utf-8"),
-            headers=headers,
-            timeout=getattr(settings, "MX_B2C_TIMEOUT", 15),
-        )
-
-        try:
-            response_json = response.json()
-        except Exception:
-            response_json = {"raw": response.text[:3000]}
-
-        mx_status = response_json.get("status")
-        mx_user_id = response_json.get("mxUserId")
-        magic_link = response_json.get("magicLink")
-
-        ok = response.ok and mx_status in ["APPLIED", "DUPLICATE"]
-
-        log.response_json = response_json
-        log.mx_status = mx_status
-        log.mx_user_id = mx_user_id
-        log.magic_link = magic_link
-        log.send_status = "sent" if ok else "failed"
-        log.sent_at = timezone.now() if ok else None
-        log.last_error = None if ok else json.dumps(response_json, ensure_ascii=False)
-        log.save(update_fields=[
-            "response_json",
-            "mx_status",
-            "mx_user_id",
-            "magic_link",
-            "send_status",
-            "sent_at",
-            "last_error",
-            "updated_at",
-        ])
-
-        return {
-            "ok": ok,
-            "status": mx_status,
-            "http_status": response.status_code,
-            "mxUserId": mx_user_id,
-            "magicLink": magic_link,
-            "response": response_json,
-        }
-
-    except Exception as e:
-        log.send_status = "failed"
-        log.last_error = str(e)
-        log.save(update_fields=["send_status", "last_error", "updated_at"])
-
-        return {
-            "ok": False,
-            "status": "RETRYABLE_ERROR",
-            "error": str(e),
-        }
 
 
 LEVEL_RULES = {

@@ -15,6 +15,12 @@ from topeducation.models import (
 )
 
 
+from topeducation.services.free_preview_provider import (
+    FreePreviewProviderError,
+    FreePreviewSelectionError,
+    select_free_preview_courses_for_lead,
+)
+
 DEFAULT_ROUTE_MODE = "SNAPSHOT"
 DEFAULT_ROUTE_SOURCE = "COLOMBIA"
 DEFAULT_ROUTE_LEVEL = 1
@@ -1290,6 +1296,254 @@ def reorder_learning_route(
         source=source,
         change_reason=change_reason,
         created_by_event_id=created_by_event_id,
+        metadata=metadata,
+    )
+
+
+# =========================================================
+# RUTAS FREE TIER
+# =========================================================
+
+def build_free_route_metadata(
+    *,
+    courses: Sequence[Dict[str, Any]],
+    catalog_source: str = "MX_FREE_PREVIEW",
+    extra_metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Construye metadata común para snapshots creados desde el catálogo Free.
+    """
+    metadata = {
+        "catalog": catalog_source,
+        "countryCode": "CO",
+        "courseCount": len(courses),
+        "isFreeTier": True,
+        "selectionSource": "free-preview-courses",
+        "selectedIdInternos": [
+            normalize_id_interno(course.get("idInterno"))
+            for course in courses
+            if isinstance(course, dict)
+            and normalize_id_interno(course.get("idInterno"))
+        ],
+        "selectedAt": timezone.now().isoformat(),
+    }
+
+    if extra_metadata:
+        metadata.update(extra_metadata)
+
+    return metadata
+
+
+def select_free_courses_for_learning_route(
+    *,
+    lead: LearningRouteLead,
+    amount: int = 3,
+    excluded_id_internos: Optional[Iterable[str]] = None,
+    force_catalog_refresh: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Selecciona experiencias elegibles exclusivamente desde el endpoint
+    Free Tier y valida que puedan persistirse como LearningRouteItem.
+    """
+    if not isinstance(lead, LearningRouteLead):
+        raise InvalidLearningRouteError(
+            "lead debe ser una instancia de LearningRouteLead."
+        )
+
+    if not lead.pk:
+        raise InvalidLearningRouteError(
+            "El LearningRouteLead debe estar guardado."
+        )
+
+    try:
+        courses = select_free_preview_courses_for_lead(
+            lead,
+            amount=amount,
+            excluded_id_internos=excluded_id_internos,
+            force_refresh=force_catalog_refresh,
+        )
+    except (FreePreviewSelectionError, FreePreviewProviderError) as exc:
+        raise InvalidLearningRouteError(
+            f"No fue posible construir la ruta Free: {exc}"
+        ) from exc
+
+    normalized = normalize_route_courses(
+        courses,
+        require_certification=False,
+    )
+
+    if len(normalized) != amount:
+        raise InvalidLearningRouteError(
+            "La ruta Free debe contener exactamente "
+            f"{amount} experiencias elegibles."
+        )
+
+    result: List[Dict[str, Any]] = []
+
+    for course in normalized:
+        if not course.preview_type or not course.preview_url:
+            raise InvalidLearningRouteError(
+                "Cada experiencia Free debe incluir preview.type "
+                "y preview.url."
+            )
+
+        result.append({
+            "idInterno": course.id_interno,
+            "title": course.title,
+            "provider": course.provider,
+            "language": course.language,
+            "order": course.order,
+            "routeLevel": course.route_level,
+            "preview": {
+                "type": course.preview_type,
+                "url": course.preview_url,
+                "validatedAt": course.preview_validated_at,
+                "countryCode": (
+                    course.preview_country_code or "CO"
+                ),
+            },
+            "available": course.is_available,
+        })
+
+    return result
+
+
+def create_free_learning_route(
+    *,
+    lead: LearningRouteLead,
+    change_reason: str = "FREE_PLAN_CREATED",
+    created_by_event_id: Optional[str] = None,
+    force_catalog_refresh: bool = False,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> LearningRouteSnapshot:
+    """
+    Crea la primera ruta Free del Lead.
+
+    Debe utilizarse solamente cuando el Lead todavía no tenga snapshots.
+    """
+    courses = select_free_courses_for_learning_route(
+        lead=lead,
+        amount=3,
+        force_catalog_refresh=force_catalog_refresh,
+    )
+
+    return create_initial_learning_route(
+        lead=lead,
+        courses=courses,
+        source="MX_FREE_PREVIEW",
+        change_reason=change_reason,
+        created_by_event_id=created_by_event_id,
+        metadata=build_free_route_metadata(
+            courses=courses,
+            extra_metadata=metadata,
+        ),
+        require_certification=False,
+    )
+
+
+def update_to_free_learning_route(
+    *,
+    lead: LearningRouteLead,
+    change_reason: str = "SUBSCRIPTION_EXPIRED_TO_FREE",
+    created_by_event_id: Optional[str] = None,
+    force_catalog_refresh: bool = False,
+    preserve_current_free_route: bool = True,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> LearningRouteSnapshot:
+    """
+    Crea una nueva versión de la ruta cuando el usuario pasa a Free.
+
+    Si la ruta actual ya es una ruta Free válida y
+    preserve_current_free_route=True, retorna el snapshot vigente para
+    evitar versiones innecesarias e impedir cambios arbitrarios de cursos.
+    """
+    current = get_current_route_snapshot(lead)
+
+    if current is not None and preserve_current_free_route:
+        current_metadata = current.metadata or {}
+        current_items = list(
+            current.courses.order_by(
+                "route_level",
+                "order",
+                "id",
+            )
+        )
+
+        current_is_free = bool(
+            current_metadata.get("isFreeTier")
+            or current_metadata.get("catalog") == "MX_FREE_PREVIEW"
+            or current.source == "MX_FREE_PREVIEW"
+        )
+
+        current_is_valid = (
+            len(current_items) == 3
+            and len({item.id_interno for item in current_items}) == 3
+            and all(
+                item.preview_type
+                and item.preview_url
+                and item.is_available
+                for item in current_items
+            )
+        )
+
+        if current_is_free and current_is_valid:
+            return current
+
+    courses = select_free_courses_for_learning_route(
+        lead=lead,
+        amount=3,
+        force_catalog_refresh=force_catalog_refresh,
+    )
+
+    return update_learning_route(
+        lead=lead,
+        courses=courses,
+        source="MX_FREE_PREVIEW",
+        change_reason=change_reason,
+        created_by_event_id=created_by_event_id,
+        metadata=build_free_route_metadata(
+            courses=courses,
+            extra_metadata=metadata,
+        ),
+        require_certification=False,
+    )
+
+
+def ensure_free_learning_route(
+    *,
+    lead: LearningRouteLead,
+    change_reason: str = "FREE_ROUTE_ENSURED",
+    created_by_event_id: Optional[str] = None,
+    force_catalog_refresh: bool = False,
+    preserve_current_free_route: bool = True,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> LearningRouteSnapshot:
+    """
+    Punto de entrada recomendado para aprovisionar una ruta Free.
+
+    - Si no existe ruta, crea la versión inicial.
+    - Si ya existe, crea una nueva versión Free.
+    - Si la ruta actual ya es Free y válida, puede reutilizarla.
+    """
+    existing = LearningRouteSnapshot.objects.filter(
+        lead=lead
+    ).exists()
+
+    if not existing:
+        return create_free_learning_route(
+            lead=lead,
+            change_reason=change_reason,
+            created_by_event_id=created_by_event_id,
+            force_catalog_refresh=force_catalog_refresh,
+            metadata=metadata,
+        )
+
+    return update_to_free_learning_route(
+        lead=lead,
+        change_reason=change_reason,
+        created_by_event_id=created_by_event_id,
+        force_catalog_refresh=force_catalog_refresh,
+        preserve_current_free_route=preserve_current_free_route,
         metadata=metadata,
     )
 
