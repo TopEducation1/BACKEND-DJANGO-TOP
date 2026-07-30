@@ -12715,7 +12715,7 @@ class LearningRouteRecommendationsAPIView(APIView):
                     "requested_limit_per_level": (
                         requested_limit
                     ),
-                    "limit_per_level": 1,
+                    "limit_per_level": 3,
                     "total_recommendations": len(
                         selected_courses
                     ),

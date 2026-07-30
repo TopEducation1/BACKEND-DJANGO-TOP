@@ -1478,6 +1478,12 @@ class CVAnalysis(models.Model):
 
 
 class MxAccessEventLog(models.Model):
+    class SendStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+
     event_uuid = models.UUIDField(
         default=uuid.uuid4,
         unique=True,
@@ -1541,7 +1547,6 @@ class MxAccessEventLog(models.Model):
         null=True,
     )
 
-    # Se conserva por compatibilidad con eventos anteriores.
     stripe_event_id = models.CharField(
         max_length=255,
         unique=True,
@@ -1601,12 +1606,12 @@ class MxAccessEventLog(models.Model):
 
     send_status = models.CharField(
         max_length=30,
-        default="pending",
+        choices=SendStatus.choices,
+        default=SendStatus.PENDING,
         db_index=True,
     )
 
     is_retryable = models.BooleanField(default=False)
-
     attempts = models.PositiveIntegerField(default=0)
 
     last_error = models.TextField(
