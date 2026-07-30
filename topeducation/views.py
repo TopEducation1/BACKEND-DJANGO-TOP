@@ -93,6 +93,12 @@ from topeducation.services.mx_payload_builder import (
 from topeducation.services.mx_webhook_sender import (
     send_b2c_access_event_to_mx,
 )
+# Agrega este import junto a los demás imports del view:
+from topeducation.services.free_preview_provider import (
+    FreePreviewProviderError,
+    get_free_preview_catalog,
+)
+
 
 
 @staff_member_required(login_url="/signin/")
@@ -8468,6 +8474,317 @@ class LearningRouteCreateView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    FREE_PACKAGE_CODE = "TOP_EDUCATION_FREE"
+    FREE_TIER = "FREE"
+    FREE_COURSES_REQUIRED = 3
+
+    ALLOWED_FREE_PROVIDERS = {
+        "COURSERA",
+        "EDX",
+    }
+
+    @staticmethod
+    def _normalize_provider(value):
+        normalized = (
+            str(value or "")
+            .strip()
+            .upper()
+            .replace(" ", "")
+        )
+
+        provider_aliases = {
+            "COURSERA": "COURSERA",
+            "EDX": "EDX",
+            "ED-X": "EDX",
+        }
+
+        return provider_aliases.get(
+            normalized,
+            normalized,
+        )
+
+    @staticmethod
+    def _normalize_topics(value):
+        if not isinstance(value, list):
+            return None
+
+        topics = []
+
+        for item in value:
+            clean = str(item or "").strip()
+
+            if clean and clean not in topics:
+                topics.append(clean)
+
+        return topics
+
+    def _normalize_free_courses(self, courses):
+        """
+        Valida y normaliza los tres cursos mostrados por StartNow.
+
+        Conserva idInterno exactamente como fue recibido porque
+        México lo utiliza como identificador canónico.
+        """
+        if not isinstance(courses, list):
+            return None, {
+                "error": "invalid_free_courses",
+                "message": (
+                    "free_courses debe ser una lista."
+                ),
+            }
+
+        if len(courses) != self.FREE_COURSES_REQUIRED:
+            return None, {
+                "error": "invalid_free_courses_amount",
+                "message": (
+                    "La ruta gratuita debe contener "
+                    "exactamente tres cursos."
+                ),
+                "required": self.FREE_COURSES_REQUIRED,
+                "received": len(courses),
+            }
+
+        normalized_courses = []
+        used_internal_ids = set()
+
+        for index, item in enumerate(
+            courses,
+            start=1,
+        ):
+            if not isinstance(item, dict):
+                return None, {
+                    "error": "invalid_free_course",
+                    "message": (
+                        f"El curso en la posición {index} "
+                        "no tiene una estructura válida."
+                    ),
+                }
+
+            id_interno = (
+                item.get("idInterno")
+                or item.get("id_interno")
+                or item.get("idInternoMx")
+                or item.get("id_interno_mx")
+            )
+
+            # No aplicamos lower(), slugify() ni otras
+            # transformaciones al identificador de México.
+            id_interno = str(
+                id_interno or ""
+            ).strip()
+
+            if not id_interno:
+                return None, {
+                    "error": (
+                        "free_course_missing_internal_id"
+                    ),
+                    "message": (
+                        f"El curso en la posición {index} "
+                        "no contiene idInterno."
+                    ),
+                }
+
+            identity_key = id_interno.lower()
+
+            if identity_key in used_internal_ids:
+                return None, {
+                    "error": "duplicated_free_course",
+                    "message": (
+                        "La ruta gratuita no puede contener "
+                        "cursos repetidos."
+                    ),
+                    "idInterno": id_interno,
+                }
+
+            provider = self._normalize_provider(
+                item.get("provider")
+                or item.get("plataforma_nombre")
+                or item.get("platform")
+                or item.get("plataforma")
+            )
+
+            if (
+                provider
+                not in self.ALLOWED_FREE_PROVIDERS
+            ):
+                return None, {
+                    "error": (
+                        "free_course_provider_not_allowed"
+                    ),
+                    "message": (
+                        "Los cursos gratuitos solo pueden "
+                        "pertenecer a Coursera o edX."
+                    ),
+                    "provider": provider,
+                    "idInterno": id_interno,
+                }
+
+            preview = item.get("preview")
+
+            if not isinstance(preview, dict):
+                preview = {}
+
+            preview_type = str(
+                preview.get("type")
+                or item.get("preview_type")
+                or ""
+            ).strip().upper()
+
+            preview_url = str(
+                preview.get("url")
+                or item.get("preview_url")
+                or ""
+            ).strip()
+
+            preview_validated_at = (
+                preview.get("validatedAt")
+                or item.get(
+                    "preview_validated_at"
+                )
+            )
+
+            if not preview_type or not preview_url:
+                return None, {
+                    "error": (
+                        "free_course_preview_required"
+                    ),
+                    "message": (
+                        f"El curso {id_interno} no contiene "
+                        "un preview gratuito válido."
+                    ),
+                    "idInterno": id_interno,
+                }
+
+            title = str(
+                item.get("title")
+                or item.get("nombre")
+                or ""
+            ).strip()
+
+            provider_display = (
+                "edX"
+                if provider == "EDX"
+                else "Coursera"
+            )
+
+            route_level = item.get(
+                "routeLevel"
+            )
+
+            try:
+                route_level = int(
+                    route_level or index
+                )
+            except (TypeError, ValueError):
+                route_level = index
+
+            route_level = max(
+                1,
+                min(route_level, 3),
+            )
+
+            normalized_courses.append(
+                {
+                    "idInterno": id_interno,
+                    "id_interno": id_interno,
+
+                    "title": (
+                        title
+                        or "Curso gratuito recomendado"
+                    ),
+                    "nombre": (
+                        title
+                        or "Curso gratuito recomendado"
+                    ),
+
+                    "provider": provider_display,
+                    "language": str(
+                        item.get("language") or ""
+                    ).strip(),
+
+                    "order": index,
+                    "routeLevel": route_level,
+                    "available": True,
+
+                    "preview": {
+                        "type": preview_type,
+                        "url": preview_url,
+                        "validatedAt": (
+                            preview_validated_at
+                        ),
+                    },
+
+                    "preview_type": preview_type,
+                    "preview_url": preview_url,
+                    "preview_validated_at": (
+                        preview_validated_at
+                    ),
+
+                    # Compatibilidad con el servicio actual.
+                    "id": (
+                        item.get("id")
+                        or id_interno
+                    ),
+                    "colombiaCertificationId": (
+                        item.get(
+                            "colombiaCertificationId"
+                        )
+                    ),
+                    "level": (
+                        item.get("level")
+                        or item.get(
+                            "nivel_certificacion"
+                        )
+                        or "Recomendado"
+                    ),
+                    "hours": (
+                        item.get("hours")
+                        or item.get(
+                            "tiempo_certificacion"
+                        )
+                        or "Acceso gratuito disponible"
+                    ),
+                    "institution": (
+                        item.get("institution")
+                        or item.get(
+                            "universidad_nombre"
+                        )
+                        or provider_display
+                    ),
+                    "platform": provider_display,
+                    "platform_id": (
+                        1
+                        if provider == "EDX"
+                        else 2
+                    ),
+                    "platform_logo": (
+                        item.get("platform_logo")
+                        or item.get("plat_ico")
+                        or (
+                            "/assets/platforms/icons/"
+                            "icon-edx.png"
+                            if provider == "EDX"
+                            else (
+                                "/assets/platforms/icons/"
+                                "icon-coursera.png"
+                            )
+                        )
+                    ),
+                    "image": (
+                        item.get("image")
+                        or item.get("imagen_final")
+                        or (
+                            "/assets/content/courses/"
+                            "course-1.jpg"
+                        )
+                    ),
+                }
+            )
+
+            used_internal_ids.add(identity_key)
+
+        return normalized_courses, None
+
     @transaction.atomic
     def post(self, request):
         email = str(
@@ -8483,15 +8800,20 @@ class LearningRouteCreateView(APIView):
         ).strip()
 
         phone_country_code = str(
-            request.data.get("phone_country_code") or ""
+            request.data.get(
+                "phone_country_code"
+            )
+            or ""
         ).strip()
 
         phone_number = str(
-            request.data.get("phone_number") or ""
+            request.data.get("phone_number")
+            or ""
         ).strip()
 
         phone_e164 = str(
-            request.data.get("phone_e164") or ""
+            request.data.get("phone_e164")
+            or ""
         ).strip()
 
         age = request.data.get("age")
@@ -8504,27 +8826,41 @@ class LearningRouteCreateView(APIView):
             request.data.get("country") or ""
         ).strip()
 
-        topics = request.data.get("topics") or []
+        topics_raw = (
+            request.data.get("topics")
+            or []
+        )
 
         goal = str(
             request.data.get("goal") or ""
         ).strip()
 
-        recommended_courses = (
-            request.data.get(
+        # Nombre canónico nuevo, conservando compatibilidad
+        # con el StartNow anterior.
+        free_courses_raw = (
+            request.data.get("free_courses")
+            or request.data.get(
                 "recommended_certifications"
             )
-            or request.data.get("recommended_courses")
+            or request.data.get(
+                "recommended_courses"
+            )
             or []
         )
 
-        selected_plan = request.data.get(
-            "selected_plan"
-        )
+        # Se guarda únicamente como referencia de intención.
+        # No se activa ningún plan pago en este endpoint.
+        requested_plan = str(
+            request.data.get("selected_plan")
+            or ""
+        ).strip().lower()
 
-        selected_paid_plan = request.data.get(
-            "selected_paid_plan"
-        )
+        requested_paid_plan = str(
+            request.data.get(
+                "selected_paid_plan"
+            )
+            or ""
+        ).strip().lower()
 
         # =====================================================
         # VALIDACIONES BÁSICAS
@@ -8535,9 +8871,13 @@ class LearningRouteCreateView(APIView):
                 {
                     "ok": False,
                     "error": "email_required",
-                    "message": "El correo es obligatorio.",
+                    "message": (
+                        "El correo es obligatorio."
+                    ),
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
 
         existing_user = (
@@ -8550,9 +8890,12 @@ class LearningRouteCreateView(APIView):
             return Response(
                 {
                     "ok": False,
-                    "error": "email_already_registered",
+                    "error": (
+                        "email_already_registered"
+                    ),
                     "message": (
-                        "Ya existe una cuenta con este correo."
+                        "Ya existe una cuenta con "
+                        "este correo."
                     ),
                     "redirect": "/login",
                     "email": email,
@@ -8564,34 +8907,50 @@ class LearningRouteCreateView(APIView):
             return Response(
                 {
                     "ok": False,
-                    "error": "first_name_required",
-                    "message": "El nombre es obligatorio.",
+                    "error": (
+                        "first_name_required"
+                    ),
+                    "message": (
+                        "El nombre es obligatorio."
+                    ),
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
 
         if not phone_country_code:
             return Response(
                 {
                     "ok": False,
-                    "error": "phone_country_code_required",
+                    "error": (
+                        "phone_country_code_required"
+                    ),
                     "message": (
-                        "El indicativo telefónico es obligatorio."
+                        "El indicativo telefónico "
+                        "es obligatorio."
                     ),
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
 
         if not phone_number:
             return Response(
                 {
                     "ok": False,
-                    "error": "phone_number_required",
+                    "error": (
+                        "phone_number_required"
+                    ),
                     "message": (
-                        "El número telefónico es obligatorio."
+                        "El número telefónico "
+                        "es obligatorio."
                     ),
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
 
         if not goal:
@@ -8599,12 +8958,20 @@ class LearningRouteCreateView(APIView):
                 {
                     "ok": False,
                     "error": "goal_required",
-                    "message": "El objetivo es obligatorio.",
+                    "message": (
+                        "El objetivo es obligatorio."
+                    ),
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
 
-        if not isinstance(topics, list):
+        topics = self._normalize_topics(
+            topics_raw
+        )
+
+        if topics is None:
             return Response(
                 {
                     "ok": False,
@@ -8613,54 +8980,49 @@ class LearningRouteCreateView(APIView):
                         "topics debe ser una lista."
                     ),
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
 
-        if not isinstance(recommended_courses, list):
+        free_courses, courses_error = (
+            self._normalize_free_courses(
+                free_courses_raw
+            )
+        )
+
+        if courses_error:
             return Response(
                 {
                     "ok": False,
-                    "error": "invalid_recommended_courses",
-                    "message": (
-                        "recommended_certifications "
-                        "debe ser una lista."
-                    ),
+                    **courses_error,
                 },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if not recommended_courses:
-            return Response(
-                {
-                    "ok": False,
-                    "error": "recommended_courses_required",
-                    "message": (
-                        "La ruta debe contener al menos un curso."
-                    ),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=(
+                    status.HTTP_400_BAD_REQUEST
+                ),
             )
 
         if not phone_e164:
-            digits = "".join(
-                filter(str.isdigit, phone_number)
+            country_digits = "".join(
+                filter(
+                    str.isdigit,
+                    phone_country_code,
+                )
+            )
+
+            phone_digits = "".join(
+                filter(
+                    str.isdigit,
+                    phone_number,
+                )
             )
 
             phone_e164 = (
-                f"{phone_country_code}{digits}"
+                f"+{country_digits}{phone_digits}"
             )
 
-        plan_config, plan_error = normalize_b2c_plan(
-            selected_plan=selected_plan,
-            selected_paid_plan=selected_paid_plan,
-        )
-
-        # El plan puede no venir todavía desde este paso.
-        if plan_error:
-            plan_config = B2C_PLAN_CONFIG["free"].copy()
-
         # =====================================================
-        # CREAR EL LEAD
+        # CREAR LEAD EN ESTADO FREE PROVISIONAL
         # =====================================================
 
         route = LearningRouteLead.objects.create(
@@ -8668,7 +9030,9 @@ class LearningRouteCreateView(APIView):
             email=email,
             first_name=first_name,
             last_name=last_name,
-            phone_country_code=phone_country_code,
+            phone_country_code=(
+                phone_country_code
+            ),
             phone_number=phone_number,
             phone_e164=phone_e164,
             age=age,
@@ -8677,17 +9041,21 @@ class LearningRouteCreateView(APIView):
             topics=topics,
             goal=goal,
 
-            # Se conserva por compatibilidad, pero el servicio
-            # lo reemplaza con la versión normalizada.
+            # Compatibilidad. El snapshot es la fuente
+            # principal de los cursos.
             recommended_certifications=[],
 
-            selected_plan=plan_config["selected_plan"],
-            package_code=plan_config["package_code"],
-            tier=plan_config["tier"],
-            billing_period=plan_config["billing_period"],
-            access_status=plan_config["access_status"],
-            lifecycle_status=plan_config["lifecycle_status"],
-            pending_action=plan_config["pending_action"],
+            # Hasta completar signup o confirmar Stripe,
+            # el lead siempre permanece en Free.
+            selected_plan="free",
+            package_code=(
+                self.FREE_PACKAGE_CODE
+            ),
+            tier=self.FREE_TIER,
+            billing_period=None,
+            access_status="ALLOWED",
+            lifecycle_status="FREE",
+            pending_action="NONE",
 
             route_version=1,
             mx_route_version=None,
@@ -8699,10 +9067,11 @@ class LearningRouteCreateView(APIView):
             mx_response=None,
         )
 
-        if hasattr(route, "selected_paid_plan"):
-            route.selected_paid_plan = (
-                plan_config["selected_paid_plan"] or None
-            )
+        if hasattr(
+            route,
+            "selected_paid_plan",
+        ):
+            route.selected_paid_plan = None
 
             route.save(
                 update_fields=[
@@ -8712,39 +9081,72 @@ class LearningRouteCreateView(APIView):
             )
 
         # =====================================================
-        # CREAR SNAPSHOT V1
+        # CREAR SNAPSHOT FREE V1
         # =====================================================
 
         try:
-            snapshot = create_initial_learning_route(
-                lead=route,
-                courses=recommended_courses,
-                source="START_NOW",
-                change_reason="START_NOW_ROUTE_CREATED",
-                metadata={
-                    "goal": goal,
-                    "topics": topics,
-                    "country": country,
-                    "selectedPlan": (
-                        plan_config["selected_plan"]
+            snapshot = (
+                create_initial_learning_route(
+                    lead=route,
+                    courses=free_courses,
+                    source="START_NOW_FREE",
+                    change_reason=(
+                        "START_NOW_FREE_ROUTE_CREATED"
                     ),
-                    "selectedPaidPlan": (
-                        plan_config[
-                            "selected_paid_plan"
-                        ]
-                        or None
-                    ),
-                },
-                require_certification=False,
+                    metadata={
+                        "catalog": (
+                            "free-preview-courses"
+                        ),
+                        "goal": goal,
+                        "topics": topics,
+                        "country": country,
+                        "providersAllowed": [
+                            "COURSERA",
+                            "EDX",
+                        ],
+                        "requestedPlan": (
+                            requested_plan or None
+                        ),
+                        "requestedPaidPlan": (
+                            requested_paid_plan
+                            or None
+                        ),
+                        "initialPackageCode": (
+                            self.FREE_PACKAGE_CODE
+                        ),
+                    },
+                    require_certification=False,
+                )
             )
 
         except LearningRouteServiceError as exc:
-            raise transaction.TransactionManagementError(
-                str(exc)
-            ) from exc
+            logger.exception(
+                "No fue posible crear el snapshot "
+                "inicial Free. email=%s route=%s",
+                email,
+                route.id,
+            )
 
-        snapshot_data = serialize_route_snapshot(
-            snapshot
+            transaction.set_rollback(True)
+
+            return Response(
+                {
+                    "ok": False,
+                    "error": (
+                        "learning_route_creation_failed"
+                    ),
+                    "message": str(exc),
+                },
+                status=(
+                    status
+                    .HTTP_422_UNPROCESSABLE_ENTITY
+                ),
+            )
+
+        snapshot_data = (
+            serialize_route_snapshot(
+                snapshot
+            )
         )
 
         return Response(
@@ -8758,11 +9160,47 @@ class LearningRouteCreateView(APIView):
                 "phone_country_code": (
                     route.phone_country_code
                 ),
-                "phone_number": route.phone_number,
+                "phone_number": (
+                    route.phone_number
+                ),
                 "phone_e164": route.phone_e164,
                 "status": route.status,
+
+                "selected_plan": (
+                    route.selected_plan
+                ),
+                "package_code": (
+                    route.package_code
+                ),
+                "tier": route.tier,
+                "billing_period": (
+                    route.billing_period
+                ),
+                "lifecycle_status": (
+                    route.lifecycle_status
+                ),
+                "access_status": (
+                    route.access_status
+                ),
+                "pending_action": (
+                    route.pending_action
+                ),
+
                 "route_version": snapshot.version,
                 "learning_route": snapshot_data,
+
+                "meta": {
+                    "catalog": (
+                        "free-preview-courses"
+                    ),
+                    "providers": [
+                        "COURSERA",
+                        "EDX",
+                    ],
+                    "free_courses_count": len(
+                        free_courses
+                    ),
+                },
             },
             status=status.HTTP_201_CREATED,
         )
@@ -11567,45 +12005,260 @@ def build_level_recommendations(
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteRecommendationsAPIView(APIView):
+    """
+    Devuelve exactamente tres recomendaciones elegibles para el plan Free.
+
+    Fuente única:
+        /v1/b2c/free-preview-courses
+
+    Proveedores permitidos:
+        - Coursera
+        - edX
+
+    Mantiene la estructura level_1, level_2 y level_3 para no romper
+    el StartNow actual, pero entrega un curso por nivel.
+    """
+
     authentication_classes = []
     permission_classes = []
 
-    def post(self, request, *args, **kwargs):
-        topics = request.data.get("topics") or []
-        topic_ids = (
-            request.data.get("topic_ids") or []
+    FREE_PROVIDERS = (
+        "COURSERA",
+        "EDX",
+    )
+
+    FREE_RECOMMENDATION_AMOUNT = 3
+
+    LEVEL_PRESENTATION = {
+        "level_1": {
+            "label": "Comienza aquí",
+            "subtitle": (
+                "Una experiencia gratuita para construir "
+                "las bases de tu ruta."
+            ),
+            "badge": "Fundamentos",
+            "nivel": "BEGINNER",
+        },
+        "level_2": {
+            "label": "Continúa aprendiendo",
+            "subtitle": (
+                "Una experiencia gratuita relacionada con "
+                "tus intereses y objetivo."
+            ),
+            "badge": "Desarrollo",
+            "nivel": "INTERMEDIATE",
+        },
+        "level_3": {
+            "label": "Da el siguiente paso",
+            "subtitle": (
+                "Una experiencia gratuita para ampliar "
+                "tu perfil profesional."
+            ),
+            "badge": "Proyección",
+            "nivel": "ADVANCED",
+        },
+    }
+
+    @staticmethod
+    def _normalize_list(value):
+        if not isinstance(value, list):
+            return []
+
+        result = []
+
+        for item in value:
+            clean = str(item or "").strip()
+
+            if clean and clean not in result:
+                result.append(clean)
+
+        return result
+
+    @staticmethod
+    def _tokenize(*values):
+        """
+        Convierte textos en tokens comparables usando slugify,
+        eliminando diferencias de mayúsculas, acentos y signos.
+        """
+        tokens = set()
+
+        for value in values:
+            clean = slugify(str(value or "")).replace("-", " ")
+
+            for token in clean.split():
+                if len(token) >= 3:
+                    tokens.add(token)
+
+        return tokens
+
+    def _score_course(
+        self,
+        course,
+        *,
+        topics,
+        goal,
+    ):
+        """
+        Prioriza coincidencias entre título/proveedor/idioma y las
+        selecciones realizadas por la persona.
+
+        El catálogo Free es la fuente de elegibilidad; este score
+        solamente ordena los cursos elegibles.
+        """
+        searchable_tokens = self._tokenize(
+            course.get("title"),
+            course.get("provider"),
+            course.get("language"),
         )
+
+        topic_tokens = self._tokenize(*topics)
+        goal_tokens = self._tokenize(goal)
+
+        topic_matches = len(
+            searchable_tokens.intersection(topic_tokens)
+        )
+
+        goal_matches = len(
+            searchable_tokens.intersection(goal_tokens)
+        )
+
+        # Los temas pesan más que el objetivo general.
+        return (
+            topic_matches * 10
+            + goal_matches * 4
+        )
+
+    @staticmethod
+    def _serialize_course(
+        course,
+        *,
+        order,
+        route_level,
+        level_name,
+    ):
+        preview = (
+            course.get("preview")
+            if isinstance(course.get("preview"), dict)
+            else {}
+        )
+
+        provider = str(
+            course.get("provider") or ""
+        ).strip()
+
+        provider_upper = provider.upper()
+
+        if provider_upper == "EDX":
+            platform_id = 1
+            platform_logo = (
+                "/assets/platforms/icons/icon-edx.png"
+            )
+            provider_display = "edX"
+        else:
+            platform_id = 2
+            platform_logo = (
+                "/assets/platforms/icons/icon-coursera.png"
+            )
+            provider_display = "Coursera"
+
+        id_interno = str(
+            course.get("idInterno") or ""
+        ).strip()
+
+        return {
+            # Campos canónicos.
+            "idInterno": id_interno,
+            "id_interno": id_interno,
+            "title": (
+                str(course.get("title") or "").strip()
+                or "Curso gratuito recomendado"
+            ),
+            "nombre": (
+                str(course.get("title") or "").strip()
+                or "Curso gratuito recomendado"
+            ),
+            "provider": provider_display,
+            "language": (
+                str(course.get("language") or "").strip()
+            ),
+            "order": order,
+            "routeLevel": route_level,
+            "available": True,
+
+            # Preview gratuito.
+            "preview": {
+                "type": preview.get("type"),
+                "url": preview.get("url"),
+                "validatedAt": (
+                    preview.get("validatedAt")
+                ),
+            },
+            "preview_type": preview.get("type"),
+            "preview_url": preview.get("url"),
+            "preview_validated_at": (
+                preview.get("validatedAt")
+            ),
+
+            # Compatibilidad con normalizeCourseForCard().
+            "id": id_interno,
+            "colombiaCertificationId": None,
+            "nivel_certificacion": level_name,
+            "level": level_name,
+            "tiempo_certificacion": (
+                "Acceso gratuito disponible"
+            ),
+            "hours": "Acceso gratuito disponible",
+            "plataforma_nombre": provider_display,
+            "platform": provider_display,
+            "platform_id": platform_id,
+            "plataforma_certificacion_id": (
+                platform_id
+            ),
+            "platform_logo": platform_logo,
+            "plat_ico": platform_logo,
+            "universidad_nombre": provider_display,
+            "institution": provider_display,
+            "imagen_final": (
+                "/assets/content/courses/course-1.jpg"
+            ),
+            "image": (
+                "/assets/content/courses/course-1.jpg"
+            ),
+            "main_skill": "",
+            "main_skill_icon": "",
+        }
+
+    def post(self, request, *args, **kwargs):
+        topics = self._normalize_list(
+            request.data.get("topics") or []
+        )
+
+        topic_ids = request.data.get(
+            "topic_ids"
+        ) or []
 
         goal = str(
             request.data.get("goal") or ""
         ).strip()
 
-        try:
-            limit_per_level = int(
-                request.data.get(
-                    "limit_per_level"
-                )
-                or 3
-            )
-        except (TypeError, ValueError):
-            limit_per_level = 3
+        country_code = str(
+            request.data.get("country_code")
+            or request.data.get("countryCode")
+            or "CO"
+        ).strip().upper()[:2]
 
-        limit_per_level = max(
-            1,
-            min(limit_per_level, 10),
-        )
+        language = str(
+            request.data.get("language") or ""
+        ).strip().lower() or None
 
-        if not isinstance(topics, list):
-            return Response(
-                {
-                    "ok": False,
-                    "error": "invalid_topics",
-                    "message": (
-                        "topics debe ser una lista."
-                    ),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        force_refresh = str(
+            request.data.get("force_refresh") or ""
+        ).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
         if not isinstance(topic_ids, list):
             return Response(
@@ -11619,163 +12272,473 @@ class LearningRouteRecommendationsAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        skill_ids = get_valid_topic_skill_ids(
-            topic_ids
+        # El plan Free siempre expone exactamente tres cursos.
+        requested_limit = request.data.get(
+            "limit_per_level"
         )
 
-        if not skill_ids:
-            skill_ids = get_topic_skill_ids(
-                topics
+        all_courses = []
+        provider_errors = {}
+
+        try:
+            # Consultamos todo el catálogo Free una sola vez.
+            # El filtro por Coursera y edX se realiza localmente para
+            # evitar incompatibilidades con el parámetro provider de MX.
+            catalog = get_free_preview_catalog(
+                force_refresh=force_refresh,
+                provider=None,
+                language=language,
+                country_code=country_code,
+                allow_stale=True,
             )
 
-        data = {}
-
-        # Estos conjuntos viven durante toda la construcción
-        # de la ruta, no solamente dentro de un nivel.
-        used_internal_ids = set()
-        used_certification_ids = set()
-
-        for level_key, rule in LEVEL_RULES.items():
-            items = build_level_recommendations(
-                request=request,
-                skill_ids=skill_ids,
-                rule=rule,
-                limit=limit_per_level,
-                excluded_internal_ids=(
-                    used_internal_ids
-                ),
-                excluded_certification_ids=(
-                    used_certification_ids
-                ),
+            catalog_items = (
+                catalog.items
+                if isinstance(catalog.items, list)
+                else []
             )
 
-            clean_items = []
+            logger.info(
+                "Catálogo Free recibido. total=%s source=%s stale=%s",
+                len(catalog_items),
+                getattr(catalog, "source", None),
+                getattr(catalog, "stale", False),
+            )
 
-            for item in items or []:
-                if not isinstance(item, dict):
+            for course in catalog_items:
+                if not isinstance(course, dict):
                     continue
 
-                internal_id = str(
-                    item.get("id_interno")
-                    or item.get("idInterno")
-                    or item.get("id_interno_mx")
-                    or item.get("idInternoMx")
-                    or ""
-                ).strip().lower()
-
-                certification_id = str(
-                    item.get("id")
-                    or item.get("certification_id")
-                    or item.get(
-                        "colombiaCertificationId"
-                    )
+                raw_provider = str(
+                    course.get("provider")
+                    or course.get("providerName")
+                    or course.get("provider_name")
+                    or course.get("platform")
+                    or course.get("platformName")
+                    or course.get("platform_name")
+                    or course.get("plataforma")
+                    or course.get("plataforma_nombre")
+                    or course.get("sourceProvider")
+                    or course.get("source_provider")
                     or ""
                 ).strip()
 
-                # Validación global por identidad México.
-                if (
-                    internal_id
-                    and internal_id
-                    in used_internal_ids
-                ):
-                    logger.warning(
-                        "Curso omitido porque ya fue usado "
-                        "en otro nivel. "
-                        "level=%s id_interno=%s",
-                        level_key,
-                        internal_id,
+                normalized_provider = (
+                    slugify(raw_provider)
+                    .replace("-", "")
+                    .replace("_", "")
+                    .lower()
+                )
+
+                provider_aliases = {
+                    "coursera": "COURSERA",
+                    "courseraorg": "COURSERA",
+                    "courserainc": "COURSERA",
+                    "edx": "EDX",
+                    "edxorg": "EDX",
+                    "edxonline": "EDX",
+                }
+
+                item_provider = provider_aliases.get(
+                    normalized_provider
+                )
+
+                if not item_provider:
+                    logger.info(
+                        "Curso Free omitido por proveedor no permitido. "
+                        "provider=%s idInterno=%s keys=%s",
+                        raw_provider,
+                        (
+                            course.get("idInterno")
+                            or course.get("id_interno")
+                        ),
+                        list(course.keys()),
                     )
                     continue
 
-                # Si no existe id_interno, usamos la PK de
-                # Colombia como respaldo.
-                if (
-                    not internal_id
-                    and certification_id
-                    and certification_id
-                    in used_certification_ids
-                ):
-                    logger.warning(
-                        "Curso omitido porque ya fue usado "
-                        "en otro nivel. "
-                        "level=%s certification_id=%s",
-                        level_key,
-                        certification_id,
+                id_interno = str(
+                    course.get("idInterno")
+                    or course.get("id_interno")
+                    or course.get("internalId")
+                    or course.get("internal_id")
+                    or ""
+                ).strip()
+
+                preview = (
+                    course.get("preview")
+                    if isinstance(course.get("preview"), dict)
+                    else {}
+                )
+
+                preview_type = str(
+                    preview.get("type")
+                    or preview.get("previewType")
+                    or course.get("previewType")
+                    or course.get("preview_type")
+                    or ""
+                ).strip()
+
+                preview_url = str(
+                    preview.get("url")
+                    or preview.get("previewUrl")
+                    or course.get("previewUrl")
+                    or course.get("preview_url")
+                    or ""
+                ).strip()
+
+                preview_validated_at = (
+                    preview.get("validatedAt")
+                    or preview.get("validated_at")
+                    or course.get("previewValidatedAt")
+                    or course.get("preview_validated_at")
+                )
+
+                title = str(
+                    course.get("title")
+                    or course.get("name")
+                    or course.get("nombre")
+                    or ""
+                ).strip()
+
+                language_value = str(
+                    course.get("language")
+                    or course.get("languageCode")
+                    or course.get("language_code")
+                    or course.get("idioma")
+                    or ""
+                ).strip()
+
+                normalized = {
+                    **course,
+                    "idInterno": id_interno,
+                    "title": title,
+                    "provider": item_provider,
+                    "language": language_value,
+                    "preview": {
+                        "type": preview_type,
+                        "url": preview_url,
+                        "validatedAt": preview_validated_at,
+                    },
+                    "_catalog_source": getattr(
+                        catalog,
+                        "source",
+                        None,
+                    ),
+                    "_catalog_stale": getattr(
+                        catalog,
+                        "stale",
+                        False,
+                    ),
+                }
+
+                all_courses.append(normalized)
+
+        except FreePreviewProviderError as exc:
+            provider_errors["catalog"] = str(exc)
+
+            logger.exception(
+                "Falló la consulta del catálogo Free completo."
+            )
+
+        except Exception as exc:
+            provider_errors["unexpected"] = str(exc)
+
+            logger.exception(
+                "Error inesperado procesando el catálogo Free."
+            )
+
+        # =========================================================
+        # DEDUPLICACIÓN Y VALIDACIÓN DE ELEGIBILIDAD
+        # =========================================================
+        unique_courses = []
+        used_internal_ids = set()
+
+        discard_stats = {
+            "missing_internal_id": 0,
+            "missing_preview_type": 0,
+            "missing_preview_url": 0,
+            "duplicated": 0,
+        }
+
+        for course in all_courses:
+            id_interno = str(
+                course.get("idInterno") or ""
+            ).strip()
+
+            preview = (
+                course.get("preview")
+                if isinstance(
+                    course.get("preview"),
+                    dict,
+                )
+                else {}
+            )
+
+            preview_type = str(
+                preview.get("type") or ""
+            ).strip()
+
+            preview_url = str(
+                preview.get("url") or ""
+            ).strip()
+
+            if not id_interno:
+                discard_stats["missing_internal_id"] += 1
+                continue
+
+            if not preview_type:
+                discard_stats["missing_preview_type"] += 1
+                continue
+
+            if not preview_url:
+                discard_stats["missing_preview_url"] += 1
+                continue
+
+            identity_key = id_interno.lower()
+
+            if identity_key in used_internal_ids:
+                discard_stats["duplicated"] += 1
+                continue
+
+            used_internal_ids.add(identity_key)
+            unique_courses.append(course)
+
+        # Orden por relevancia. Los empates quedan estables por
+        # proveedor, título e idInterno.
+        ranked_courses = sorted(
+            unique_courses,
+            key=lambda course: (
+                -self._score_course(
+                    course,
+                    topics=topics,
+                    goal=goal,
+                ),
+                str(
+                    course.get("provider") or ""
+                ).upper(),
+                str(
+                    course.get("title") or ""
+                ).lower(),
+                str(
+                    course.get("idInterno") or ""
+                ),
+            ),
+        )
+
+        selected_courses = ranked_courses[
+            :self.FREE_RECOMMENDATION_AMOUNT
+        ]
+
+        if (
+            len(selected_courses)
+            < self.FREE_RECOMMENDATION_AMOUNT
+        ):
+            providers_found = sorted({
+                str(
+                    item.get("provider") or ""
+                ).strip()
+                for item in all_courses
+                if item.get("provider")
+            })
+
+            debug_items = []
+
+            for item in all_courses[:20]:
+                preview = (
+                    item.get("preview")
+                    if isinstance(
+                        item.get("preview"),
+                        dict,
                     )
-                    continue
+                    else {}
+                )
 
-                clean_items.append(item)
+                debug_items.append(
+                    {
+                        "idInterno": item.get(
+                            "idInterno"
+                        ),
+                        "title": item.get("title"),
+                        "provider": item.get(
+                            "provider"
+                        ),
+                        "preview_type": preview.get(
+                            "type"
+                        ),
+                        "has_preview_url": bool(
+                            preview.get("url")
+                        ),
+                    }
+                )
 
-                if internal_id:
-                    used_internal_ids.add(
-                        internal_id
-                    )
+            logger.warning(
+                "Cursos Free insuficientes. "
+                "catalog_total=%s eligible_total=%s "
+                "selected_total=%s providers=%s "
+                "discard_stats=%s errors=%s samples=%s",
+                len(all_courses),
+                len(unique_courses),
+                len(selected_courses),
+                providers_found,
+                discard_stats,
+                provider_errors,
+                debug_items,
+            )
 
-                if certification_id:
-                    used_certification_ids.add(
-                        certification_id
-                    )
+            return Response(
+                {
+                    "ok": False,
+                    "error": (
+                        "insufficient_free_recommendations"
+                    ),
+                    "message": (
+                        "No existen suficientes cursos gratuitos "
+                        "elegibles de Coursera y edX."
+                    ),
+                    "meta": {
+                        "required": (
+                            self.FREE_RECOMMENDATION_AMOUNT
+                        ),
+                        "available": len(
+                            selected_courses
+                        ),
+                        "catalog_total": len(
+                            all_courses
+                        ),
+                        "eligible_total": len(
+                            unique_courses
+                        ),
+                        "providers_allowed": list(
+                            self.FREE_PROVIDERS
+                        ),
+                        "providers_found": (
+                            providers_found
+                        ),
+                        "discard_stats": discard_stats,
+                        "provider_errors": (
+                            provider_errors
+                        ),
+                    },
+                    "debug": {
+                        "items": debug_items,
+                    },
+                },
+                status=(
+                    status.HTTP_503_SERVICE_UNAVAILABLE
+                ),
+            )
 
-                if (
-                    len(clean_items)
-                    >= limit_per_level
-                ):
-                    break
+        logger.info(
+            "Recomendaciones Free generadas. "
+            "catalog_total=%s eligible_total=%s "
+            "selected_total=%s ids=%s",
+            len(all_courses),
+            len(unique_courses),
+            len(selected_courses),
+            [
+                item.get("idInterno")
+                for item in selected_courses
+            ],
+        )
+
+        data = {}
+
+        for index, (
+            level_key,
+            presentation,
+        ) in enumerate(
+            self.LEVEL_PRESENTATION.items(),
+            start=1,
+        ):
+            course = selected_courses[index - 1]
+
+            serialized = self._serialize_course(
+                course,
+                order=index,
+                route_level=index,
+                level_name=presentation["nivel"],
+            )
 
             data[level_key] = {
-                "label": rule["label"],
-                "subtitle": rule["subtitle"],
-                "badge": rule["badge"],
-                "platform_ids": (
-                    rule["platform_ids"]
+                "label": presentation["label"],
+                "subtitle": (
+                    presentation["subtitle"]
                 ),
-                "nivel": rule["nivel"],
-                "items": clean_items,
+                "badge": presentation["badge"],
+                "platform_ids": [1, 2],
+                "nivel": presentation["nivel"],
+                "items": [serialized],
             }
 
-        total_items = sum(
-            len(level_data["items"])
-            for level_data in data.values()
-        )
+        selected_ids = [
+            course.get("idInterno")
+            for course in selected_courses
+        ]
 
-        total_expected = (
-            len(LEVEL_RULES)
-            * limit_per_level
-        )
+        selected_providers = sorted({
+            str(
+                course.get("provider") or ""
+            ).upper()
+            for course in selected_courses
+        })
+
+        sources = sorted({
+            str(
+                course.get("_catalog_source")
+                or ""
+            )
+            for course in selected_courses
+            if course.get("_catalog_source")
+        })
 
         return Response(
             {
                 "ok": True,
                 "data": data,
                 "meta": {
+                    "catalog": "free-preview-courses",
+                    "plan": "free",
+                    "package_code": (
+                        "TOP_EDUCATION_FREE"
+                    ),
                     "topics": topics,
                     "topic_ids": topic_ids,
                     "goal": goal,
-                    "skill_ids": skill_ids,
-                    "limit_per_level": (
-                        limit_per_level
+                    "country_code": country_code,
+                    "language": language,
+                    "providers_allowed": list(
+                        self.FREE_PROVIDERS
                     ),
-                    "total_recommendations": (
-                        total_items
+                    "providers_selected": (
+                        selected_providers
+                    ),
+                    "requested_limit_per_level": (
+                        requested_limit
+                    ),
+                    "limit_per_level": 1,
+                    "total_recommendations": len(
+                        selected_courses
                     ),
                     "total_expected": (
-                        total_expected
+                        self
+                        .FREE_RECOMMENDATION_AMOUNT
                     ),
-                    "route_complete": (
-                        total_items
-                        == total_expected
-                    ),
+                    "route_complete": True,
                     "unique_internal_ids": len(
-                        used_internal_ids
+                        selected_ids
                     ),
-                    "unique_certification_ids": len(
-                        used_certification_ids
+                    "selected_internal_ids": (
+                        selected_ids
+                    ),
+                    "catalog_sources": sources,
+                    "provider_errors": (
+                        provider_errors
                     ),
                 },
             },
             status=status.HTTP_200_OK,
         )
-
+    
 #ANALISIS DE CV
 from django.utils.dateparse import parse_datetime   
 from topeducation.models import CVAnalysis
