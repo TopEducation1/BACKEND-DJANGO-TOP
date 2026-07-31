@@ -9685,22 +9685,22 @@ class LearningRouteCompleteSignupView(APIView):
                     plan_config["package_code"]
                     == "TOP_EDUCATION_FREE"
                 ):
-                    # El plan Free usa exclusivamente el catálogo
-                    # /v1/b2c/free-preview-courses mediante el service.
-                    snapshot = ensure_free_learning_route(
-                        lead=route,
-                        change_reason="FREE_SIGNUP",
-                        metadata={
-                            "trigger": "complete-signup",
-                            "packageCode": (
-                                plan_config["package_code"]
-                            ),
-                            "selectedPlan": (
-                                plan_config["selected_plan"]
-                            ),
-                            "selectedPaidPlan": None,
-                        },
+                    snapshot = get_current_route_snapshot(
+                        route,
+                        for_update=True,
                     )
+
+                    if snapshot is None:
+                        return Response(
+                            {
+                                "ok": False,
+                                "error": "learning_route_not_found",
+                                "message": (
+                                    "No existe una ruta FREE creada durante Start Now."
+                                ),
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
 
                 else:
                     # Los planes pagos conservan la ruta personalizada
@@ -9848,6 +9848,13 @@ class LearningRouteCompleteSignupView(APIView):
                 user=user,
                 route=route,
                 route_snapshot=snapshot,
+
+
+                strict_free_courses=(
+                    plan_config["package_code"]
+                    == "TOP_EDUCATION_FREE"
+                ),
+
                 extra_metadata={
                     "trigger": "complete-signup",
                     "selectedPlan": (
@@ -9867,39 +9874,6 @@ class LearningRouteCompleteSignupView(APIView):
                     ),
                 },
             )
-
-            if (
-                plan_config["package_code"]
-                == "TOP_EDUCATION_FREE"
-            ):
-                mx_free_courses = get_free_route_courses(snapshot)
-
-                if len(mx_free_courses) != 3:
-                    logger.error(
-                        "Ruta FREE inválida antes de enviar a MX. "
-                        "route=%s snapshot=%s courses=%s",
-                        route.id,
-                        snapshot.id,
-                        len(mx_free_courses),
-                    )
-
-                    return Response(
-                        {
-                            "ok": False,
-                            "error": "invalid_free_route_courses",
-                            "message": (
-                                "No fue posible seleccionar exactamente "
-                                "tres cursos gratuitos para México."
-                            ),
-                            "route_id": route.id,
-                            "snapshot_id": snapshot.id,
-                            "courses_count": len(mx_free_courses),
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-
-                payload.setdefault("learningRoute", {})
-                payload["learningRoute"]["courses"] = mx_free_courses
 
             mx_result = send_b2c_access_event_to_mx(
                 payload=payload,
@@ -9943,33 +9917,58 @@ class LearningRouteCompleteSignupView(APIView):
                 ),
             )
 
+        # =====================================================
+        # NORMALIZAR RESPUESTA DE MÉXICO
+        # =====================================================
+
+        # México puede responder directamente o envolver el resultado
+        # funcional dentro de ``data``. Nunca debemos usar el ``ok``
+        # HTTP/envelope como confirmación de aprovisionamiento.
+        result_data = (
+            mx_result.get("data")
+            if isinstance(mx_result.get("data"), dict)
+            else {}
+        )
+
         mx_status = str(
-            mx_result.get("status") or ""
+            result_data.get("status")
+            or mx_result.get("status")
+            or ""
         ).strip().upper()
 
-        accepted = bool(
-            mx_result.get("accepted")
-            or mx_result.get("ok")
+        accepted = mx_status in {
+            "APPLIED",
+            "DUPLICATE",
+        }
+
+        retryable = (
+            mx_status == "RETRYABLE_ERROR"
+            or bool(mx_result.get("retry"))
         )
 
-        retryable = bool(
-            mx_result.get("retry")
-        )
-
-        permanent = bool(
-            mx_result.get("permanent")
+        permanent = (
+            mx_status == "PERMANENT_ERROR"
+            or bool(mx_result.get("permanent"))
         )
 
         pending = bool(
-            mx_result.get("pending")
+            result_data.get("pending")
+            or mx_result.get("pending")
+            or str(
+                result_data.get("entitlementStatus")
+                or mx_result.get("entitlementStatus")
+                or ""
+            ).strip().upper() == "PENDING"
         )
 
-        magic_link = mx_result.get(
-            "magicLink"
+        magic_link = (
+            result_data.get("magicLink")
+            or mx_result.get("magicLink")
         )
 
-        mx_user_id = mx_result.get(
-            "mxUserId"
+        mx_user_id = (
+            result_data.get("mxUserId")
+            or mx_result.get("mxUserId")
         )
 
         if accepted:
@@ -10011,7 +10010,24 @@ class LearningRouteCompleteSignupView(APIView):
             mx_status or "UNKNOWN"
         )
 
-        route.mx_response = mx_result
+        # Guardamos una copia segura de la respuesta. El Magic Link se
+        # persiste únicamente en mx_magic_link porque funciona como una
+        # credencial personal.
+        stored_mx_response = dict(mx_result)
+
+        if stored_mx_response.get("magicLink"):
+            stored_mx_response["magicLink"] = "[REDACTED]"
+
+        if isinstance(stored_mx_response.get("data"), dict):
+            stored_mx_response["data"] = dict(
+                stored_mx_response["data"]
+            )
+            if stored_mx_response["data"].get("magicLink"):
+                stored_mx_response["data"]["magicLink"] = (
+                    "[REDACTED]"
+                )
+
+        route.mx_response = stored_mx_response
 
         if magic_link:
             route.mx_magic_link = magic_link
@@ -10094,8 +10110,9 @@ class LearningRouteCompleteSignupView(APIView):
                     "route_id": route.id,
                     "event_id": event_id,
                     "mx_status": route.mx_status,
-                    "next_retry_at": mx_result.get(
-                        "nextRetryAt"
+                    "next_retry_at": (
+                        result_data.get("nextRetryAt")
+                        or mx_result.get("nextRetryAt")
                     ),
                     "redirect": redirect_url,
                 },
@@ -10120,7 +10137,7 @@ class LearningRouteCompleteSignupView(APIView):
                 "route_id": route.id,
                 "event_id": event_id,
                 "mx_status": route.mx_status,
-                "mx_response": mx_result,
+                "mx_response": stored_mx_response,
                 "redirect": redirect_url,
             },
             status=(
