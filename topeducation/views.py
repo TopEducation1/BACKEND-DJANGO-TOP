@@ -9265,7 +9265,6 @@ class LearningRouteFreeSignupView(APIView):
         })
 
 
-
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteCompleteSignupView(APIView):
     permission_classes = [AllowAny]
@@ -12027,7 +12026,7 @@ class LearningRouteRecommendationsAPIView(APIView):
         "EDX",
     )
 
-    FREE_RECOMMENDATION_AMOUNT = 3
+    FREE_RECOMMENDATION_AMOUNT = 9
 
     LEVEL_PRESENTATION = {
         "level_1": {
