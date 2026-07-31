@@ -5,6 +5,7 @@ from datetime import datetime, timezone as dt_timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, Mapping, Optional
 
+from django.conf import settings
 from django.utils import timezone
 
 
@@ -14,6 +15,44 @@ DEFAULT_SCHEMA_VERSION = "1.1"
 FREE_PACKAGE_CODE = "TOP_EDUCATION_FREE"
 FREE_TIER = "FREE"
 FREE_MAX_COURSES = 3
+
+SUPPORTED_PACKAGES = {
+    "TOP_EDUCATION_FREE": {
+        "tier": "FREE",
+        "billingPeriod": None,
+        "trialAllowed": False,
+    },
+    "TOP_EDUCATION_BASIC_MONTHLY": {
+        "tier": "BASIC",
+        "billingPeriod": "MONTHLY",
+        "trialAllowed": False,
+    },
+    "TOP_EDUCATION_BASIC_ANNUAL": {
+        "tier": "BASIC",
+        "billingPeriod": "ANNUAL",
+        "trialAllowed": False,
+    },
+    "TOP_EDUCATION_X_MONTHLY": {
+        "tier": "X",
+        "billingPeriod": "MONTHLY",
+        "trialAllowed": True,
+    },
+    "TOP_EDUCATION_X_ANNUAL": {
+        "tier": "X",
+        "billingPeriod": "ANNUAL",
+        "trialAllowed": True,
+    },
+    "TOP_EDUCATION_PLUS_MONTHLY": {
+        "tier": "PLUS",
+        "billingPeriod": "MONTHLY",
+        "trialAllowed": True,
+    },
+    "TOP_EDUCATION_PLUS_ANNUAL": {
+        "tier": "PLUS",
+        "billingPeriod": "ANNUAL",
+        "trialAllowed": True,
+    },
+}
 
 UNSET = object()
 
@@ -318,6 +357,7 @@ def build_customer_snapshot(
         ),
         "mxUserId": getattr(route, "mx_user_id", None),
         "email": email,
+        "emailNormalized": email,
         "name": str(first_name or "").strip(),
         "lastName": str(last_name or "").strip(),
         "fullName": full_name,
@@ -464,20 +504,68 @@ def build_plan_snapshot(
     if billing_period is not None:
         billing_period = normalize_upper(billing_period)
 
-    plan = {
+    expected = SUPPORTED_PACKAGES.get(package_code)
+
+    if expected is None:
+        raise ValueError(f"unsupported_package_code:{package_code}")
+
+    # El contrato 1.1 exige que packageCode, tier y billingPeriod
+    # describan exactamente el mismo paquete. Se canonizan aquí
+    # para impedir combinaciones inconsistentes provenientes de
+    # registros legacy o de Stripe.
+    tier = expected["tier"]
+    billing_period = expected["billingPeriod"]
+
+    trial_start = iso_from_ts(
+        getattr(route, "trial_start", None)
+        or getattr(local_subscription, "trial_start", None)
+    )
+    trial_end = iso_from_ts(
+        getattr(route, "trial_end", None)
+        or getattr(local_subscription, "trial_end", None)
+    )
+
+    is_trial = bool(
+        expected["trialAllowed"]
+        and lifecycle_status == "TRIALING"
+        and trial_end
+    )
+
+    if not expected["trialAllowed"]:
+        trial_start = None
+        trial_end = None
+        is_trial = False
+
+    trial_days = 0
+    if is_trial and trial_start and trial_end:
+        try:
+            start_dt = datetime.fromisoformat(
+                trial_start.replace("Z", "+00:00")
+            )
+            end_dt = datetime.fromisoformat(
+                trial_end.replace("Z", "+00:00")
+            )
+            trial_days = max(
+                0,
+                int((end_dt - start_dt).total_seconds() // 86400),
+            )
+        except (TypeError, ValueError):
+            trial_days = 0
+
+    return {
         "packageCode": package_code,
         "tier": tier,
         "billingPeriod": billing_period,
         "accessStatus": access_status,
         "lifecycleStatus": lifecycle_status,
         "pendingAction": pending_action,
+        "trial": {
+            "isTrial": is_trial,
+            "trialStart": trial_start,
+            "trialEnd": trial_end,
+            "trialDays": trial_days,
+        },
     }
-
-    # Para FREE el contrato exige null explícito.
-    if package_code == FREE_PACKAGE_CODE:
-        plan["billingPeriod"] = None
-
-    return plan
 
 
 # =========================================================
@@ -981,6 +1069,26 @@ def get_free_courses_from_route(route) -> list:
     return []
 
 
+def serialize_snapshot_courses(snapshot: Any) -> list:
+    """Serializa, en orden estable, los cursos persistidos en un snapshot."""
+    if snapshot is None:
+        return []
+
+    manager = getattr(snapshot, "courses", None)
+    if manager is None:
+        return []
+
+    try:
+        items = (
+            manager
+            .select_related("certification")
+            .order_by("route_level", "order", "id")
+        )
+        return [serialize_route_item(item) for item in items]
+    except Exception:
+        return []
+
+
 def build_learning_route_snapshot(
     *,
     route=None,
@@ -1011,35 +1119,30 @@ def build_learning_route_snapshot(
         FREE_PACKAGE_CODE,
     )
 
-    # FREE únicamente usa selecciones provenientes del catálogo Free.
+    # FREE usa exactamente la selección persistida que originalmente
+    # provino del catálogo Free Tier. free_courses permite un override
+    # explícito; de lo contrario se reutiliza el snapshot actual.
     if package_code == FREE_PACKAGE_CODE:
+        if snapshot is not None:
+            version = getattr(snapshot, "version", version)
+            mode = getattr(snapshot, "mode", "SNAPSHOT")
+            snapshot_id = getattr(snapshot, "pk", None)
+
         selected_free_courses = (
             list(free_courses)
             if free_courses is not None
-            else get_free_courses_from_route(route)
+            else serialize_snapshot_courses(snapshot)
         )
 
-        courses = normalize_free_preview_courses(
-            selected_free_courses
-        )
+        if not selected_free_courses:
+            selected_free_courses = get_free_courses_from_route(route)
 
-        if strict_free_courses and len(courses) != 3:
+        courses = normalize_free_preview_courses(selected_free_courses)
+
+        if strict_free_courses and len(courses) != FREE_MAX_COURSES:
             raise ValueError(
                 "free_plan_requires_exactly_three_courses"
             )
-
-        if snapshot is not None:
-            version = getattr(
-                snapshot,
-                "version",
-                version,
-            )
-            mode = getattr(
-                snapshot,
-                "mode",
-                "SNAPSHOT",
-            )
-            snapshot_id = getattr(snapshot, "pk", None)
 
     else:
         if snapshot is not None:
@@ -1055,26 +1158,7 @@ def build_learning_route_snapshot(
             )
             snapshot_id = getattr(snapshot, "pk", None)
 
-            manager = getattr(snapshot, "courses", None)
-
-            if manager is not None:
-                try:
-                    items = (
-                        manager
-                        .select_related("certification")
-                        .order_by(
-                            "route_level",
-                            "order",
-                            "id",
-                        )
-                    )
-
-                    courses = [
-                        serialize_route_item(item)
-                        for item in items
-                    ]
-                except Exception:
-                    courses = []
+            courses = serialize_snapshot_courses(snapshot)
 
         if not courses:
             courses = serialize_legacy_recommendations(
@@ -1102,6 +1186,84 @@ def build_learning_route_snapshot(
             ),
         },
     })
+
+
+def build_redirects_snapshot() -> Dict[str, str]:
+    """URLs de Colombia exigidas por el contrato B2C 1.1."""
+    account_url = str(
+        getattr(
+            settings,
+            "B2C_COLOMBIA_ACCOUNT_URL",
+            "https://top.education/account",
+        )
+    ).strip()
+
+    subscription_url = str(
+        getattr(
+            settings,
+            "B2C_SUBSCRIPTION_MANAGEMENT_URL",
+            f"{account_url}?tab=license",
+        )
+    ).strip()
+
+    return {
+        "subscriptionManagementUrl": subscription_url,
+        "colombiaAccountUrl": account_url,
+    }
+
+
+def validate_contract_payload(payload: Mapping[str, Any]) -> None:
+    """Validaciones locales de las reglas obligatorias del contrato 1.1."""
+    if payload.get("schemaVersion") != DEFAULT_SCHEMA_VERSION:
+        raise ValueError("invalid_schema_version")
+
+    customer = mapping_or_empty(payload.get("customer"))
+    email = normalize_email(customer.get("email"))
+    email_normalized = normalize_email(customer.get("emailNormalized"))
+    if not email or email != email_normalized:
+        raise ValueError("customer_email_normalization_mismatch")
+
+    plan = mapping_or_empty(payload.get("plan"))
+    package_code = normalize_upper(plan.get("packageCode"))
+    expected = SUPPORTED_PACKAGES.get(package_code)
+    if expected is None:
+        raise ValueError(f"unsupported_package_code:{package_code}")
+    if normalize_upper(plan.get("tier")) != expected["tier"]:
+        raise ValueError("package_tier_mismatch")
+    if plan.get("billingPeriod") != expected["billingPeriod"]:
+        raise ValueError("package_billing_period_mismatch")
+
+    trial = mapping_or_empty(plan.get("trial"))
+    if not expected["trialAllowed"] and bool(trial.get("isTrial")):
+        raise ValueError("trial_not_allowed_for_package")
+
+    learning_route = mapping_or_empty(payload.get("learningRoute"))
+    if normalize_upper(learning_route.get("mode")) != "SNAPSHOT":
+        raise ValueError("learning_route_mode_must_be_snapshot")
+    if int(learning_route.get("version") or 0) < 1:
+        raise ValueError("learning_route_version_must_start_at_one")
+
+    courses = learning_route.get("courses") or []
+    if not isinstance(courses, list):
+        raise ValueError("learning_route_courses_must_be_list")
+
+    internal_ids = [
+        str(item.get("idInterno") or "")
+        for item in courses
+        if isinstance(item, Mapping)
+    ]
+    if any(not item for item in internal_ids):
+        raise ValueError("course_id_interno_required")
+    if len(internal_ids) != len(set(internal_ids)):
+        raise ValueError("duplicate_course_id_interno")
+    if package_code == FREE_PACKAGE_CODE and len(courses) != FREE_MAX_COURSES:
+        raise ValueError("free_plan_requires_exactly_three_courses")
+
+    redirects = mapping_or_empty(payload.get("redirects"))
+    if not redirects.get("subscriptionManagementUrl"):
+        raise ValueError("subscription_management_url_required")
+    if not redirects.get("colombiaAccountUrl"):
+        raise ValueError("colombia_account_url_required")
 
 
 # =========================================================
@@ -1207,6 +1369,20 @@ def build_mx_access_payload(
         occurred_at=occurred_at,
     )
 
+    # Trazabilidad comercial canónica del contrato. El bloque plan, no
+    # billing, determina el acceso en México.
+    billing["source"] = "COLOMBIA"
+    billing["status"] = (
+        "free"
+        if plan.get("packageCode") == FREE_PACKAGE_CODE
+        else str(
+            getattr(local_subscription, "status", None)
+            or plan.get("lifecycleStatus")
+            or "active"
+        ).strip().lower()
+    )
+    billing["currentPeriodEnd"] = billing.get("periodEnd")
+
     learning_route = build_learning_route_snapshot(
         route=route,
         route_snapshot=route_snapshot,
@@ -1249,31 +1425,38 @@ def build_mx_access_payload(
         "schemaVersion": DEFAULT_SCHEMA_VERSION,
         "eventId": str(event_id),
         "eventType": event_type,
+        "traceId": stripe_event_id or str(event_id),
         "occurredAt": occurred_at,
         "source": SOURCE_NAME,
         "customer": customer,
         "plan": plan,
         "billing": billing,
         "learningRoute": learning_route,
+        "redirects": build_redirects_snapshot(),
         "metadata": compact_dict(metadata),
     }
 
     payload = compact_dict(payload)
 
-    # FREE conserva null explícito.
-    if (
-        normalize_upper(
-            payload.get("plan", {}).get(
-                "packageCode"
-            )
-        )
-        == FREE_PACKAGE_CODE
-    ):
-        payload.setdefault(
-            "plan",
-            {},
-        )["billingPeriod"] = None
+    # compact_dict elimina None, pero el contrato exige varios null
+    # explícitos. Se restauran después de compactar.
+    payload.setdefault("plan", {})["billingPeriod"] = (
+        SUPPORTED_PACKAGES[
+            payload["plan"]["packageCode"]
+        ]["billingPeriod"]
+    )
 
+    trial = payload.setdefault("plan", {}).setdefault("trial", {})
+    if not trial.get("isTrial"):
+        trial["isTrial"] = False
+        trial["trialStart"] = None
+        trial["trialEnd"] = None
+        trial["trialDays"] = 0
+
+    if payload["plan"]["packageCode"] == FREE_PACKAGE_CODE:
+        payload.setdefault("billing", {})["currentPeriodEnd"] = None
+
+    validate_contract_payload(payload)
     return payload
 
 
