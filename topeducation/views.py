@@ -8275,7 +8275,7 @@ B2C_PLAN_CONFIG = {
         "selected_paid_plan": "",
         "package_code": "TOP_EDUCATION_FREE",
         "tier": "FREE",
-        "billing_period": None,
+        "billing_period": "FREE",
         "access_status": "ALLOWED",
         "lifecycle_status": "FREE",
         "pending_action": "NONE",
