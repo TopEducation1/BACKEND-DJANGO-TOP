@@ -8299,7 +8299,7 @@ B2C_PLAN_CONFIG = {
     "yearly_basic": {
         "selected_plan": "basic",
         "selected_paid_plan": "yearly_basic",
-        "package_code": "TOP_EDUCATION_BASIC_YEARLY",
+        "package_code": "TOP_EDUCATION_BASIC_ANNUAL",
         "tier": "BASIC",
         "billing_period": "ANNUAL",
         "access_status": "ALLOWED",
@@ -8325,7 +8325,7 @@ B2C_PLAN_CONFIG = {
     "yearly_x": {
         "selected_plan": "pro",
         "selected_paid_plan": "yearly_x",
-        "package_code": "TOP_EDUCATION_X_YEARLY",
+        "package_code": "TOP_EDUCATION_X_ANNUAL",
         "tier": "X",
         "billing_period": "ANNUAL",
         "access_status": "ALLOWED",
@@ -8347,7 +8347,7 @@ B2C_PLAN_CONFIG = {
     "yearly_plus": {
         "selected_plan": "plus",
         "selected_paid_plan": "yearly_plus",
-        "package_code": "TOP_EDUCATION_PLUS_YEARLY",
+        "package_code": "TOP_EDUCATION_PLUS_ANNUAL",
         "tier": "PLUS",
         "billing_period": "ANNUAL",
         "access_status": "ALLOWED",
