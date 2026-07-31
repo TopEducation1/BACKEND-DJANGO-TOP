@@ -99,6 +99,9 @@ from topeducation.services.free_preview_provider import (
     get_free_preview_catalog,
 )
 
+from topeducation.services.free_course_hydrator import (
+    hydrate_free_preview_catalog_result,
+)
 
 
 @staff_member_required(login_url="/signin/")
@@ -12987,15 +12990,38 @@ def debug_free_preview_catalog(request):
             allow_stale=True,
         )
 
+        hydrated = hydrate_free_preview_catalog_result(
+            catalog,
+            request=request,
+        )
+
         return JsonResponse(
             {
                 "ok": True,
-                "source": catalog.source,
-                "stale": catalog.stale,
-                "total": catalog.total,
-                "pages": catalog.pages,
-                "metadata": catalog.metadata,
-                "items": catalog.items,
+                "catalog": {
+                    "source": catalog.source,
+                    "stale": catalog.stale,
+                    "total": catalog.total,
+                    "pages": catalog.pages,
+                    "metadata": catalog.metadata,
+                },
+                "hydration": {
+                    "totalRequested": hydrated.total_requested,
+                    "totalMatched": hydrated.total_matched,
+                    "totalUnmatched": len(
+                        hydrated.unmatched_id_internos
+                    ),
+                    "totalDuplicated": len(
+                        hydrated.duplicated_id_internos
+                    ),
+                    "unmatchedIdInternos": (
+                        hydrated.unmatched_id_internos[:100]
+                    ),
+                    "duplicatedIdInternos": (
+                        hydrated.duplicated_id_internos[:100]
+                    ),
+                },
+                "items": hydrated.courses,
             },
             status=200,
             json_dumps_params={
