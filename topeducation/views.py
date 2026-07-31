@@ -8446,13 +8446,13 @@ def get_free_route_courses(snapshot):
         if int(course.get("routeLevel") or 1) == 1
     ]
 
-    selected = level_one[:3]
+    selected = level_one[:9]
     selected_ids = {
         str(course["idInterno"]).lower()
         for course in selected
     }
 
-    if len(selected) < 3:
+    if len(selected) < 9:
         for course in unique_courses:
             key = str(
                 course.get("idInterno") or ""
@@ -8464,10 +8464,10 @@ def get_free_route_courses(snapshot):
             selected.append(course)
             selected_ids.add(key)
 
-            if len(selected) == 3:
+            if len(selected) == 9:
                 break
 
-    return selected[:3]
+    return selected[:9]
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteCreateView(APIView):
@@ -9723,7 +9723,7 @@ class LearningRouteCompleteSignupView(APIView):
             ):
                 mx_free_courses = get_free_route_courses(snapshot)
 
-                if len(mx_free_courses) != 3:
+                if len(mx_free_courses) != 9:
                     logger.error(
                         "Ruta FREE inválida antes de enviar a MX. "
                         "route=%s snapshot=%s courses=%s",
@@ -12947,4 +12947,95 @@ class AccountCVLastAnalysisAPIView(APIView):
                 },
             },
             status=status.HTTP_200_OK,
+        )
+
+@require_GET
+def debug_free_preview_catalog(request):
+    """
+    Vista temporal para inspeccionar en el navegador
+    el catálogo completo de cursos Free Preview.
+    """
+
+    force_refresh = str(
+        request.GET.get("refresh") or "1"
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "si",
+        "sí",
+    }
+
+    provider = str(
+        request.GET.get("provider") or ""
+    ).strip() or None
+
+    language = str(
+        request.GET.get("language") or ""
+    ).strip() or None
+
+    country_code = str(
+        request.GET.get("countryCode") or "CO"
+    ).strip().upper()
+
+    try:
+        catalog = get_free_preview_catalog(
+            force_refresh=force_refresh,
+            provider=provider,
+            language=language,
+            country_code=country_code,
+            allow_stale=True,
+        )
+
+        return JsonResponse(
+            {
+                "ok": True,
+                "source": catalog.source,
+                "stale": catalog.stale,
+                "total": catalog.total,
+                "pages": catalog.pages,
+                "metadata": catalog.metadata,
+                "items": catalog.items,
+            },
+            status=200,
+            json_dumps_params={
+                "ensure_ascii": False,
+                "indent": 2,
+            },
+        )
+
+    except FreePreviewProviderError as exc:
+        logger.exception(
+            "Error consultando el catálogo Free Preview."
+        )
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": exc.__class__.__name__,
+                "detail": str(exc),
+            },
+            status=502,
+            json_dumps_params={
+                "ensure_ascii": False,
+                "indent": 2,
+            },
+        )
+
+    except Exception as exc:
+        logger.exception(
+            "Error inesperado consultando el catálogo Free Preview."
+        )
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": exc.__class__.__name__,
+                "detail": str(exc),
+            },
+            status=500,
+            json_dumps_params={
+                "ensure_ascii": False,
+                "indent": 2,
+            },
         )

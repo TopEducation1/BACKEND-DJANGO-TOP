@@ -138,6 +138,7 @@ urlpatterns = [
     path("api/billing/subscription/change-plan/",views.billing_subscription_change_plan,name="billing_subscription_change_plan",),
     path("api/billing/payment-methods/<int:method_id>/delete/",views.billing_payment_method_delete,name="billing_payment_method_delete",),
     path("api/learning-route/complete-signup/",LearningRouteCompleteSignupView.as_view(), name="learning_route_complete_signup",),
+    path("debug/free-preview-catalog/", views.debug_free_preview_catalog,name="debug_free_preview_catalog",),
 
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 if settings.DEBUG:

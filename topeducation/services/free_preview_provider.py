@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import random
@@ -434,9 +435,49 @@ def fetch_free_preview_page(
     try:
         payload = response.json()
     except ValueError as exc:
+        logger.error(
+            "FREE PREVIEW devolvió una respuesta no JSON. "
+            "status=%s content_type=%s body=%s",
+            response.status_code,
+            response.headers.get("Content-Type"),
+            (response.text or "")[:5000],
+        )
+
         raise FreePreviewResponseError(
             "El endpoint del catálogo Free no devolvió JSON válido."
         ) from exc
+
+
+    # =========================================================
+    # LOG TEMPORAL: RESPUESTA COMPLETA DEL CATÁLOGO FREE
+    # =========================================================
+
+    try:
+        logger.warning(
+            "\n"
+            "============================================================\n"
+            "FREE PREVIEW - RESPUESTA COMPLETA DEL ENDPOINT\n"
+            "endpoint=%s\n"
+            "status_code=%s\n"
+            "params=%s\n"
+            "payload=\n%s\n"
+            "============================================================",
+            endpoint,
+            response.status_code,
+            params,
+            json.dumps(
+                payload,
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "No fue posible imprimir la respuesta completa "
+            "del catálogo Free."
+        )
+
 
     data = _extract_response_data(payload)
 
