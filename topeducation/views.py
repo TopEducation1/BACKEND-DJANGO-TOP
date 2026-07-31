@@ -8275,11 +8275,41 @@ B2C_PLAN_CONFIG = {
         "selected_paid_plan": "",
         "package_code": "TOP_EDUCATION_FREE",
         "tier": "FREE",
-        "billing_period": "FREE",
+        "billing_period": None,
         "access_status": "ALLOWED",
         "lifecycle_status": "FREE",
         "pending_action": "NONE",
     },
+
+    # =====================================================
+    # PLAN BÁSICO
+    # =====================================================
+
+    "monthly_basic": {
+        "selected_plan": "basic",
+        "selected_paid_plan": "monthly_basic",
+        "package_code": "TOP_EDUCATION_BASIC_MONTHLY",
+        "tier": "BASIC",
+        "billing_period": "MONTHLY",
+        "access_status": "ALLOWED",
+        "lifecycle_status": "TRIALING",
+        "pending_action": "NONE",
+    },
+
+    "yearly_basic": {
+        "selected_plan": "basic",
+        "selected_paid_plan": "yearly_basic",
+        "package_code": "TOP_EDUCATION_BASIC_YEARLY",
+        "tier": "BASIC",
+        "billing_period": "ANNUAL",
+        "access_status": "ALLOWED",
+        "lifecycle_status": "TRIALING",
+        "pending_action": "NONE",
+    },
+
+    # =====================================================
+    # PLAN X
+    # =====================================================
 
     "monthly_x": {
         "selected_plan": "pro",
@@ -8295,7 +8325,7 @@ B2C_PLAN_CONFIG = {
     "yearly_x": {
         "selected_plan": "pro",
         "selected_paid_plan": "yearly_x",
-        "package_code": "TOP_EDUCATION_X_ANNUAL",
+        "package_code": "TOP_EDUCATION_X_YEARLY",
         "tier": "X",
         "billing_period": "ANNUAL",
         "access_status": "ALLOWED",
@@ -8317,7 +8347,7 @@ B2C_PLAN_CONFIG = {
     "yearly_plus": {
         "selected_plan": "plus",
         "selected_paid_plan": "yearly_plus",
-        "package_code": "TOP_EDUCATION_PLUS_ANNUAL",
+        "package_code": "TOP_EDUCATION_PLUS_YEARLY",
         "tier": "PLUS",
         "billing_period": "ANNUAL",
         "access_status": "ALLOWED",
@@ -8328,8 +8358,25 @@ B2C_PLAN_CONFIG = {
 
 
 B2C_PLAN_ALIASES = {
+    # ======================================
+    # FREE
+    # ======================================
     "free": "free",
 
+    # ======================================
+    # BASIC
+    # ======================================
+    "basic": "monthly_basic",
+    "monthly_basic": "monthly_basic",
+    "basic_monthly": "monthly_basic",
+
+    "yearly_basic": "yearly_basic",
+    "annual_basic": "yearly_basic",
+    "basic_yearly": "yearly_basic",
+
+    # ======================================
+    # X
+    # ======================================
     "x": "monthly_x",
     "pro": "monthly_x",
     "monthly": "monthly_x",
@@ -8343,6 +8390,9 @@ B2C_PLAN_ALIASES = {
     "yearly_pro": "yearly_x",
     "pro_yearly": "yearly_x",
 
+    # ======================================
+    # PLUS
+    # ======================================
     "plus": "monthly_plus",
     "monthly_plus": "monthly_plus",
     "plus_monthly": "monthly_plus",
@@ -8353,28 +8403,67 @@ B2C_PLAN_ALIASES = {
     "plus_yearly": "yearly_plus",
 }
 
-
 def normalize_b2c_plan(
     *,
     selected_plan=None,
     selected_paid_plan=None,
 ):
-    selected_plan = str(
+    def normalize_plan_value(value):
+        normalized = slugify(
+            str(value or "").strip().lower()
+        )
+
+        return normalized.replace("-", "_")
+
+    selected_plan = normalize_plan_value(
         selected_plan or "free"
-    ).strip().lower()
+    )
 
-    selected_paid_plan = str(
-        selected_paid_plan or ""
-    ).strip().lower()
+    selected_paid_plan = normalize_plan_value(
+        selected_paid_plan
+    )
 
-    candidate = selected_paid_plan or selected_plan
-    normalized_key = B2C_PLAN_ALIASES.get(candidate)
+    candidate = (
+        selected_paid_plan
+        or selected_plan
+    )
+
+    normalized_key = B2C_PLAN_ALIASES.get(
+        candidate
+    )
 
     if not normalized_key:
-        return None, "invalid_plan"
+        logger.warning(
+            "Plan B2C no reconocido. "
+            "selected_plan=%s "
+            "selected_paid_plan=%s "
+            "candidate=%s",
+            selected_plan,
+            selected_paid_plan,
+            candidate,
+        )
 
-    return B2C_PLAN_CONFIG[normalized_key].copy(), None
+        return None, (
+            f"invalid_plan_{candidate or 'empty'}"
+        )
 
+    plan_config = B2C_PLAN_CONFIG.get(
+        normalized_key
+    )
+
+    if not plan_config:
+        logger.error(
+            "Alias B2C apunta a una configuración inexistente. "
+            "candidate=%s normalized_key=%s",
+            candidate,
+            normalized_key,
+        )
+
+        return None, (
+            f"missing_plan_config_{normalized_key}"
+        )
+
+    return plan_config.copy(), None
 
 def apply_b2c_plan_to_route(
     route,
