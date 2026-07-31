@@ -8476,7 +8476,7 @@ class LearningRouteCreateView(APIView):
 
     FREE_PACKAGE_CODE = "TOP_EDUCATION_FREE"
     FREE_TIER = "FREE"
-    FREE_COURSES_REQUIRED = 3
+    FREE_COURSES_REQUIRED = 9
 
     ALLOWED_FREE_PROVIDERS = {
         "COURSERA",
@@ -9716,6 +9716,39 @@ class LearningRouteCompleteSignupView(APIView):
                     ),
                 },
             )
+
+            if (
+                plan_config["package_code"]
+                == "TOP_EDUCATION_FREE"
+            ):
+                mx_free_courses = get_free_route_courses(snapshot)
+
+                if len(mx_free_courses) != 3:
+                    logger.error(
+                        "Ruta FREE inválida antes de enviar a MX. "
+                        "route=%s snapshot=%s courses=%s",
+                        route.id,
+                        snapshot.id,
+                        len(mx_free_courses),
+                    )
+
+                    return Response(
+                        {
+                            "ok": False,
+                            "error": "invalid_free_route_courses",
+                            "message": (
+                                "No fue posible seleccionar exactamente "
+                                "tres cursos gratuitos para México."
+                            ),
+                            "route_id": route.id,
+                            "snapshot_id": snapshot.id,
+                            "courses_count": len(mx_free_courses),
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                payload.setdefault("learningRoute", {})
+                payload["learningRoute"]["courses"] = mx_free_courses
 
             mx_result = send_b2c_access_event_to_mx(
                 payload=payload,
