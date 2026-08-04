@@ -92,6 +92,7 @@ urlpatterns = [
     path("api/learning-route/recommendations/", LearningRouteRecommendationsAPIView.as_view(), name="learning_route_recommendations",),
     path("api/account/cv/analyze/", AccountCVAnalysisAPIView.as_view(), name="account_cv_analyze",),
     path("api/account/cv/last-analysis/", AccountCVLastAnalysisAPIView.as_view(), name="account_cv_last_analysis",),
+    path("api/account/career-plan/", AccountCareerPlanAPIView.as_view(), name="account-career-plan",),
     path("originals/slider/", OriginalsSliderView.as_view(), name="originals-slider"),
     
     path('originals/<slug:slug>/', OriginalDetailView.as_view(), name='original-detail'),

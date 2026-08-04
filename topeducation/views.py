@@ -55,6 +55,7 @@ from rest_framework import permissions as drf_permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -13370,4 +13371,644 @@ def debug_free_preview_catalog(request):
                 "ensure_ascii": False,
                 "indent": 2,
             },
+        )
+
+##Consulta de plan de carrera
+def _career_clean_value(value, default=""):
+    """
+    Limpia valores heredados como NONE, Null o cadenas vacías.
+    """
+    text = str(value or "").strip()
+
+    if text.lower() in {
+        "",
+        "none",
+        "null",
+        "undefined",
+        "n/a",
+    }:
+        return default
+
+    return text
+
+
+def _career_absolute_url(request, value):
+    """
+    Convierte rutas relativas de imágenes en URLs absolutas.
+    Las URLs externas permanecen sin cambios.
+    """
+    url = _career_clean_value(value)
+
+    if not url:
+        return ""
+
+    if url.startswith(("http://", "https://")):
+        return url
+
+    if not url.startswith("/"):
+        url = f"/{url}"
+
+    return request.build_absolute_uri(url)
+
+
+def _career_plan_key(route):
+    """
+    Resuelve la llave que utiliza CareerTab:
+    free, basic, x o plus.
+
+    Prioriza los campos canónicos del contrato B2C.
+    """
+    tier = _career_clean_value(
+        getattr(route, "tier", "")
+    ).upper()
+
+    package_code = _career_clean_value(
+        getattr(route, "package_code", "")
+    ).upper()
+
+    if tier == "PLUS" or "_PLUS_" in package_code:
+        return "plus"
+
+    if tier == "X" or "_X_" in package_code:
+        return "x"
+
+    if tier == "BASIC" or "_BASIC_" in package_code:
+        return "basic"
+
+    return "free"
+
+
+def _career_institution_name(certification):
+    if not certification:
+        return ""
+
+    university = getattr(
+        certification,
+        "universidad_certificacion",
+        None,
+    )
+
+    if university:
+        return _career_clean_value(
+            getattr(university, "nombre", "")
+        )
+
+    company = getattr(
+        certification,
+        "empresa_certificacion",
+        None,
+    )
+
+    if company:
+        return _career_clean_value(
+            getattr(company, "nombre", "")
+        )
+
+    return ""
+
+
+def _career_provider_name(item, certification):
+    """
+    Prioriza la plataforma normalizada en Certificaciones,
+    pero conserva el provider del snapshot como respaldo.
+    """
+    if certification:
+        platform = getattr(
+            certification,
+            "plataforma_certificacion",
+            None,
+        )
+
+        if platform:
+            name = _career_clean_value(
+                getattr(platform, "nombre", "")
+            )
+
+            if name:
+                return name
+
+    return _career_clean_value(
+        getattr(item, "provider", "")
+    )
+
+
+def _career_course_skills(certification):
+    if not certification:
+        return []
+
+    try:
+        skills = certification.skills.all()
+    except Exception:
+        return []
+
+    values = []
+
+    for skill in skills:
+        name = _career_clean_value(
+            getattr(skill, "nombre", "")
+        )
+
+        if name and name not in values:
+            values.append(name)
+
+        if len(values) >= 5:
+            break
+
+    return values
+
+
+def _serialize_career_course(request, item):
+    certification = getattr(
+        item,
+        "certification",
+        None,
+    )
+
+    title = _career_clean_value(
+        getattr(certification, "nombre", "")
+        if certification
+        else ""
+    )
+
+    if not title:
+        title = _career_clean_value(
+            getattr(item, "title", ""),
+            "Curso recomendado",
+        )
+
+    provider = _career_provider_name(
+        item,
+        certification,
+    )
+
+    institution = _career_institution_name(
+        certification
+    )
+
+    language = _career_clean_value(
+        getattr(item, "language", "")
+    )
+
+    duration = ""
+    image = ""
+    course_level = ""
+    certification_slug = ""
+    certification_url = ""
+
+    if certification:
+        duration = _career_clean_value(
+            certification.tiempo_certificacion
+        )
+
+        language = (
+            _career_clean_value(
+                certification.language_normalized
+            )
+            or _career_clean_value(
+                certification.lenguaje_certificacion
+            )
+            or language
+        )
+
+        image = _career_absolute_url(
+            request,
+            certification.imagen_final,
+        )
+
+        course_level = _career_clean_value(
+            certification.nivel_certificacion
+        )
+
+        certification_slug = _career_clean_value(
+            certification.slug
+        )
+
+        if certification_slug:
+            certification_url = (
+                f"/certificacion/"
+                f"{certification_slug}/"
+            )
+
+    preview_url = _career_clean_value(
+        getattr(item, "preview_url", "")
+    )
+
+    original_url = ""
+
+    if certification:
+        original_url = _career_clean_value(
+            certification.url_certificacion_original
+        )
+
+    
+    ##No uses esta sintaxis. Este comentario solo señala la prioridad:
+    ## access_url = preview_url or original_url or certification_url
+    
+
+    access_url = (
+        preview_url
+        or original_url
+        or certification_url
+    )
+
+    return {
+        "routeItemId": item.id,
+        "certificationId": (
+            certification.id
+            if certification
+            else None
+        ),
+        "idInterno": item.id_interno,
+        "title": title,
+        "provider": provider,
+        "institution": institution,
+        "duration": duration,
+        "language": language,
+        "courseLevel": course_level,
+        "image": image,
+        "slug": certification_slug,
+
+        # Posición real dentro de la ruta.
+        "order": item.order,
+        "routeLevel": item.route_level,
+
+        # Disponibilidad registrada en el snapshot.
+        "available": bool(item.is_available),
+
+        # Accesos.
+        "url": access_url,
+        "detailUrl": certification_url,
+        "previewUrl": preview_url,
+        "originalUrl": original_url,
+        "previewType": _career_clean_value(
+            getattr(item, "preview_type", "")
+        ),
+
+        # Información útil para mostrar.
+        "skills": _career_course_skills(
+            certification
+        ),
+
+        # Aún no tenemos progreso real.
+        "progress": {
+            "supported": False,
+            "status": "unknown",
+            "percent": None,
+            "message": (
+                "El seguimiento estará disponible "
+                "cuando México habilite el endpoint "
+                "de progreso."
+            ),
+        },
+    }
+
+class AccountCareerPlanAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # =====================================================
+        # RUTA ACTUAL DEL USUARIO
+        # =====================================================
+
+        route = (
+            LearningRouteLead.objects
+            .filter(user=user)
+            .order_by(
+                "-updated_at",
+                "-id",
+            )
+            .first()
+        )
+
+        # Respaldo por correo para registros antiguos que
+        # todavía no tengan user relacionado.
+        if not route:
+            email = str(
+                getattr(user, "email", "") or ""
+            ).strip().lower()
+
+            if email:
+                route = (
+                    LearningRouteLead.objects
+                    .filter(email__iexact=email)
+                    .order_by(
+                        "-updated_at",
+                        "-id",
+                    )
+                    .first()
+                )
+
+        if not route:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "learning_route_not_found",
+                    "message": (
+                        "El usuario todavía no tiene "
+                        "un plan de carrera."
+                    ),
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # =====================================================
+        # SNAPSHOT VIGENTE
+        # =====================================================
+
+        course_queryset = (
+            LearningRouteItem.objects
+            .select_related(
+                "certification",
+                (
+                    "certification__"
+                    "plataforma_certificacion"
+                ),
+                (
+                    "certification__"
+                    "universidad_certificacion"
+                ),
+                (
+                    "certification__"
+                    "empresa_certificacion"
+                ),
+                (
+                    "certification__"
+                    "tema_certificacion"
+                ),
+            )
+            .prefetch_related(
+                "certification__skills"
+            )
+            .order_by(
+                "route_level",
+                "order",
+                "id",
+            )
+        )
+
+        snapshot = (
+            LearningRouteSnapshot.objects
+            .filter(
+                lead=route,
+                is_current=True,
+            )
+            .prefetch_related(
+                Prefetch(
+                    "courses",
+                    queryset=course_queryset,
+                )
+            )
+            .order_by(
+                "-version",
+                "-id",
+            )
+            .first()
+        )
+
+        # Respaldo para rutas antiguas donde is_current
+        # pudiera no estar correctamente actualizado.
+        if not snapshot:
+            snapshot = (
+                LearningRouteSnapshot.objects
+                .filter(lead=route)
+                .prefetch_related(
+                    Prefetch(
+                        "courses",
+                        queryset=course_queryset,
+                    )
+                )
+                .order_by(
+                    "-version",
+                    "-id",
+                )
+                .first()
+            )
+
+        if not snapshot:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "route_snapshot_not_found",
+                    "message": (
+                        "La ruta existe, pero no tiene "
+                        "un snapshot disponible."
+                    ),
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        route_items = list(
+            snapshot.courses.all()
+        )
+
+        # =====================================================
+        # AGRUPAR CURSOS POR NIVEL
+        # =====================================================
+
+        level_definitions = {
+            1: {
+                "id": 1,
+                "number": "01",
+                "key": "fundamentals",
+                "title": "Fundamentos",
+                "level": "Principiante",
+            },
+            2: {
+                "id": 2,
+                "number": "02",
+                "key": "practical_application",
+                "title": "Aplicación práctica",
+                "level": "Intermedio",
+            },
+            3: {
+                "id": 3,
+                "number": "03",
+                "key": "specialization",
+                "title": "Especialización",
+                "level": "Avanzado",
+            },
+        }
+
+        levels = []
+
+        for level_id in (1, 2, 3):
+            definition = level_definitions[level_id]
+
+            level_items = [
+                item
+                for item in route_items
+                if int(item.route_level or 1)
+                == level_id
+            ]
+
+            serialized_courses = [
+                _serialize_career_course(
+                    request,
+                    item,
+                )
+                for item in level_items
+            ]
+
+            providers = []
+
+            for course in serialized_courses:
+                provider = course.get("provider")
+
+                if (
+                    provider
+                    and provider not in providers
+                ):
+                    providers.append(provider)
+
+            levels.append(
+                {
+                    **definition,
+                    "status": (
+                        "in_progress"
+                        if level_id == 1
+                        else "available"
+                    ),
+                    "coursesCount": len(
+                        serialized_courses
+                    ),
+                    "providers": providers,
+                    "courses": serialized_courses,
+                }
+            )
+
+        # =====================================================
+        # ESTADÍSTICAS REALES
+        # =====================================================
+
+        all_providers = []
+
+        for item in route_items:
+            certification = getattr(
+                item,
+                "certification",
+                None,
+            )
+
+            provider = _career_provider_name(
+                item,
+                certification,
+            )
+
+            if (
+                provider
+                and provider not in all_providers
+            ):
+                all_providers.append(provider)
+
+        available_courses = sum(
+            1
+            for item in route_items
+            if item.is_available
+        )
+
+        unavailable_courses = (
+            len(route_items)
+            - available_courses
+        )
+
+        plan_key = _career_plan_key(route)
+
+        # =====================================================
+        # RESPUESTA
+        # =====================================================
+
+        return Response(
+            {
+                "ok": True,
+                "data": {
+                    "plan": {
+                        "key": plan_key,
+                        "selectedPlan": (
+                            route.selected_plan
+                        ),
+                        "selectedPaidPlan": getattr(
+                            route,
+                            "selected_paid_plan",
+                            None,
+                        ),
+                        "packageCode": (
+                            route.package_code
+                        ),
+                        "tier": route.tier,
+                        "billingPeriod": (
+                            route.billing_period
+                        ),
+                        "accessStatus": (
+                            route.access_status
+                        ),
+                        "lifecycleStatus": (
+                            route.lifecycle_status
+                        ),
+                        "pendingAction": (
+                            route.pending_action
+                        ),
+                        "status": route.status,
+                    },
+                    "route": {
+                        "id": route.id,
+                        "version": snapshot.version,
+                        "mode": snapshot.mode,
+                        "source": snapshot.source,
+                        "changeReason": (
+                            snapshot.change_reason
+                        ),
+                        "goal": route.goal,
+                        "topics": route.topics or [],
+                        "createdAt": (
+                            snapshot.created_at
+                        ),
+                        "updatedAt": (
+                            snapshot.updated_at
+                        ),
+                        "coursesTotal": len(
+                            route_items
+                        ),
+                        "coursesAvailable": (
+                            available_courses
+                        ),
+                        "coursesUnavailable": (
+                            unavailable_courses
+                        ),
+                        "providers": all_providers,
+                        "providersTotal": len(
+                            all_providers
+                        ),
+                        "levelsTotal": 3,
+                        "levels": levels,
+
+                        # Seguimiento pendiente de México.
+                        "progress": {
+                            "supported": False,
+                            "source": None,
+                            "percent": None,
+                            "message": (
+                                "México todavía no ha "
+                                "habilitado el endpoint "
+                                "de seguimiento."
+                            ),
+                        },
+                    },
+                    "mx": {
+                        "userId": route.mx_user_id,
+                        "status": route.mx_status,
+                        "entitlementStatus": (
+                            route.mx_entitlement_status
+                        ),
+                        "routeVersion": (
+                            route.mx_route_version
+                        ),
+                        "lastSyncAt": (
+                            route.mx_last_sync_at
+                        ),
+                    },
+                },
+            },
+            status=status.HTTP_200_OK,
         )
