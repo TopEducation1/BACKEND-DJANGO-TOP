@@ -12775,11 +12775,14 @@ class LearningRouteRecommendationsAPIView(APIView):
         "EDX",
     )
 
-    # Cantidad máxima que se muestra visualmente en StartNow.
+    # Cantidad máxima visible en StartNow.
     RECOMMENDATIONS_PER_LEVEL = 3
     MAX_VISUAL_RECOMMENDATIONS = 9
 
-    # Cantidad contractual que México recibe para TOP_EDUCATION_FREE.
+    # Cantidad máxima de cursos de la ruta completa.
+    MAX_COMPLETE_RECOMMENDATIONS = 150
+
+    # Cantidad contractual para TOP_EDUCATION_FREE.
     FREE_MX_RECOMMENDATION_AMOUNT = 3
 
     LEVEL_PRESENTATION = {
