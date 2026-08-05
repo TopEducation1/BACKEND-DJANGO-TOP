@@ -122,6 +122,16 @@ def admin_purchases_page(request):
 def inicio(request):
     return HttpResponse("<h1>Bienvenido a Top.Education</h1>")
 
+@require_GET
+def csrf_token_view(request):
+    token = get_token(request)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "csrfToken": token,
+        }
+    )
 
 @login_required
 def dashboard(request):
@@ -8591,7 +8601,7 @@ class LearningRouteCreateView(APIView):
     FREE_TIER = "FREE"
 
     FREE_COURSES_REQUIRED = 3
-    MAX_RECOMMENDED_COURSES = 9
+    MAX_RECOMMENDED_COURSES = 150
     MAX_COURSES_PER_LEVEL = 3
 
     ALLOWED_FREE_PROVIDERS = {
@@ -14685,4 +14695,296 @@ class AccountCareerPlanAPIView(APIView):
                 },
             },
             status=status.HTTP_200_OK,
+        )
+
+class AccountAvailableCoursesAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    DEFAULT_PAGE_SIZE = 18
+    MAX_PAGE_SIZE = 60
+
+    def _get_route(self, user):
+        route = (
+            LearningRouteLead.objects
+            .filter(user=user)
+            .order_by("-updated_at", "-id")
+            .first()
+        )
+
+        if route:
+            return route
+
+        email = str(
+            getattr(user, "email", "") or ""
+        ).strip().lower()
+
+        if not email:
+            return None
+
+        return (
+            LearningRouteLead.objects
+            .filter(email__iexact=email)
+            .order_by("-updated_at", "-id")
+            .first()
+        )
+
+    @staticmethod
+    def _get_snapshot(route):
+        if not route:
+            return None
+
+        snapshot = (
+            LearningRouteSnapshot.objects
+            .filter(
+                lead=route,
+                is_current=True,
+            )
+            .order_by("-version", "-id")
+            .first()
+        )
+
+        if snapshot:
+            return snapshot
+
+        return (
+            LearningRouteSnapshot.objects
+            .filter(lead=route)
+            .order_by("-version", "-id")
+            .first()
+        )
+
+    def get(self, request):
+        route = self._get_route(request.user)
+
+        if not route:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "learning_route_not_found",
+                    "message": (
+                        "El usuario todavía no tiene "
+                        "una ruta de aprendizaje."
+                    ),
+                },
+                status=404,
+            )
+
+        snapshot = self._get_snapshot(route)
+
+        if not snapshot:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "route_snapshot_not_found",
+                    "message": (
+                        "No existe una versión vigente "
+                        "de la ruta."
+                    ),
+                },
+                status=404,
+            )
+
+        q = str(
+            request.query_params.get("q") or ""
+        ).strip()
+
+        provider = str(
+            request.query_params.get("provider")
+            or ""
+        ).strip()
+
+        topic_id = str(
+            request.query_params.get("topic_id")
+            or ""
+        ).strip()
+
+        try:
+            page = max(
+                1,
+                int(
+                    request.query_params.get(
+                        "page",
+                        1,
+                    )
+                ),
+            )
+        except (TypeError, ValueError):
+            page = 1
+
+        try:
+            page_size = int(
+                request.query_params.get(
+                    "page_size",
+                    self.DEFAULT_PAGE_SIZE,
+                )
+            )
+        except (TypeError, ValueError):
+            page_size = self.DEFAULT_PAGE_SIZE
+
+        page_size = max(
+            1,
+            min(
+                page_size,
+                self.MAX_PAGE_SIZE,
+            ),
+        )
+
+        base_queryset = (
+            LearningRouteItem.objects
+            .filter(route=snapshot)
+            .select_related(
+                "certification",
+                "certification__plataforma_certificacion",
+                "certification__universidad_certificacion",
+                "certification__empresa_certificacion",
+                "certification__tema_certificacion",
+            )
+            .prefetch_related(
+                "certification__skills"
+            )
+            .order_by(
+                "route_level",
+                "order",
+                "id",
+            )
+        )
+
+        all_items = list(base_queryset)
+
+        providers_map = {}
+        topics_map = {}
+
+        for item in all_items:
+            certification = getattr(
+                item,
+                "certification",
+                None,
+            )
+
+            provider_name = (
+                _career_provider_name(
+                    item,
+                    certification,
+                )
+            )
+
+            if provider_name:
+                providers_map[
+                    provider_name.lower()
+                ] = provider_name
+
+            topic = (
+                getattr(
+                    certification,
+                    "tema_certificacion",
+                    None,
+                )
+                if certification
+                else None
+            )
+
+            if topic:
+                topic_name = str(
+                    getattr(
+                        topic,
+                        "nombre",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                if topic_name:
+                    topics_map[
+                        str(topic.id)
+                    ] = {
+                        "id": topic.id,
+                        "name": topic_name,
+                    }
+
+        queryset = base_queryset
+
+        if q:
+            queryset = queryset.filter(
+                Q(title__icontains=q)
+                | Q(id_interno__icontains=q)
+                | Q(provider__icontains=q)
+                | Q(
+                    certification__nombre__icontains=q
+                )
+                | Q(
+                    certification__descripcion_certificacion__icontains=q
+                )
+                | Q(
+                    certification__universidad_certificacion__nombre__icontains=q
+                )
+                | Q(
+                    certification__empresa_certificacion__nombre__icontains=q
+                )
+                | Q(
+                    certification__skills__nombre__icontains=q
+                )
+            ).distinct()
+
+        if provider:
+            queryset = queryset.filter(
+                Q(provider__iexact=provider)
+                | Q(
+                    certification__plataforma_certificacion__nombre__iexact=provider
+                )
+            )
+
+        if topic_id:
+            queryset = queryset.filter(
+                certification__tema_certificacion_id=topic_id
+            )
+
+        paginator = Paginator(
+            queryset,
+            page_size,
+        )
+
+        page_obj = paginator.get_page(page)
+
+        items = [
+            _serialize_career_course(
+                request,
+                item,
+            )
+            for item in page_obj.object_list
+        ]
+
+        return Response(
+            {
+                "ok": True,
+                "data": {
+                    "plan": {
+                        "key": _career_plan_key(route),
+                        "packageCode": route.package_code,
+                        "tier": route.tier,
+                    },
+                    "route": {
+                        "id": route.id,
+                        "snapshotId": snapshot.id,
+                        "version": snapshot.version,
+                    },
+                    "items": items,
+                    "filters": {
+                        "providers": sorted(
+                            providers_map.values()
+                        ),
+                        "topics": sorted(
+                            topics_map.values(),
+                            key=lambda item: item["name"],
+                        ),
+                    },
+                    "pagination": {
+                        "page": page_obj.number,
+                        "pageSize": page_size,
+                        "total": paginator.count,
+                        "totalPages": paginator.num_pages,
+                        "hasNext": page_obj.has_next(),
+                        "hasPrevious": page_obj.has_previous(),
+                    },
+                },
+            }
         )
