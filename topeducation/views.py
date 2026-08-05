@@ -8602,7 +8602,6 @@ class LearningRouteCreateView(APIView):
 
     FREE_COURSES_REQUIRED = 3
     MAX_RECOMMENDED_COURSES = 150
-    MAX_COURSES_PER_LEVEL = 100
 
     ALLOWED_FREE_PROVIDERS = {
         "COURSERA",
@@ -8677,7 +8676,7 @@ class LearningRouteCreateView(APIView):
         except (TypeError, ValueError):
             order = default
 
-        return max(1, min(order, 3))
+        return max(1, order)
 
     def _normalize_course_payload(
         self,
@@ -9070,22 +9069,8 @@ class LearningRouteCreateView(APIView):
                 )
             )
 
-            if (
-                level_counts[route_level]
-                >= self.MAX_COURSES_PER_LEVEL
-            ):
-                continue
-
             requested_order = (
-                self._extract_order(
-                    item,
-                    default=(
-                        level_counts[
-                            route_level
-                        ]
-                        + 1
-                    ),
-                )
+                level_counts[route_level] + 1
             )
 
             position_key = (
@@ -13451,24 +13436,83 @@ class LearningRouteRecommendationsAPIView(APIView):
         # =====================================================
         # SELECCIÓN DE HASTA NUEVE CURSOS ÚNICOS
         # =====================================================
+        # =====================================================
+        # PREPARAR RUTA COMPLETA Y RECOMENDACIONES VISUALES
+        # =====================================================
 
-        ranked_courses = (
+        # Los cursos preferidos son los que realmente coinciden
+        # con los dominios, temas o skills elegidos por el usuario.
+        #
+        # Los fallback se utilizan para completar la visualización
+        # cuando no existen suficientes coincidencias directas.
+        complete_source_courses = (
+            preferred_courses
+            if preferred_courses
+            else fallback_courses
+        )
+
+        visual_source_courses = (
             preferred_courses
             + fallback_courses
         )
+
+        # =====================================================
+        # RUTA COMPLETA: HASTA 150 CURSOS ÚNICOS
+        # =====================================================
+
+        complete_ranked_courses = []
+        complete_ids = set()
+
+        for course in complete_source_courses:
+            if not isinstance(course, dict):
+                continue
+
+            id_interno = str(
+                course.get("idInterno")
+                or course.get("id_interno")
+                or ""
+            ).strip()
+
+            if not id_interno:
+                continue
+
+            identity_key = id_interno.lower()
+
+            if identity_key in complete_ids:
+                continue
+
+            complete_ids.add(identity_key)
+            complete_ranked_courses.append(course)
+
+            if (
+                len(complete_ranked_courses)
+                >= self.MAX_COMPLETE_RECOMMENDATIONS
+            ):
+                break
+
+        # =====================================================
+        # SELECCIÓN VISUAL: MÁXIMO NUEVE
+        # =====================================================
 
         selected_courses = []
         selected_ids = set()
         selected_providers = set()
 
-        # Primera pasada: intenta incluir al menos un curso por proveedor.
-        for course in ranked_courses:
+        # Primera pasada:
+        # intenta incluir al menos un curso por proveedor.
+        for course in visual_source_courses:
+            if not isinstance(course, dict):
+                continue
+
             id_interno = str(
-                course.get("idInterno") or ""
+                course.get("idInterno")
+                or course.get("id_interno")
+                or ""
             ).strip()
 
             provider = str(
-                course.get("provider") or ""
+                course.get("provider")
+                or ""
             ).strip().upper()
 
             if not id_interno:
@@ -13479,7 +13523,10 @@ class LearningRouteRecommendationsAPIView(APIView):
             if identity_key in selected_ids:
                 continue
 
-            if provider and provider in selected_providers:
+            if (
+                provider
+                and provider in selected_providers
+            ):
                 continue
 
             selected_courses.append(course)
@@ -13494,22 +13541,28 @@ class LearningRouteRecommendationsAPIView(APIView):
             ):
                 break
 
-        # Segunda pasada: completa la selección por relevancia, sin repetir.
+        # Segunda pasada:
+        # completa hasta nueve por relevancia, sin duplicados.
         if (
             len(selected_courses)
             < self.MAX_VISUAL_RECOMMENDATIONS
         ):
-            for course in ranked_courses:
+            for course in visual_source_courses:
+                if not isinstance(course, dict):
+                    continue
+
                 id_interno = str(
-                    course.get("idInterno") or ""
+                    course.get("idInterno")
+                    or course.get("id_interno")
+                    or ""
                 ).strip()
+
+                if not id_interno:
+                    continue
 
                 identity_key = id_interno.lower()
 
-                if (
-                    not identity_key
-                    or identity_key in selected_ids
-                ):
+                if identity_key in selected_ids:
                     continue
 
                 selected_courses.append(course)
@@ -13521,8 +13574,7 @@ class LearningRouteRecommendationsAPIView(APIView):
                 ):
                     break
 
-        # Para Free necesitamos como mínimo tres cursos, porque se enviará
-        # exactamente uno por cada nivel a México.
+        # Para Free necesitamos al menos tres cursos.
         if (
             len(selected_courses)
             < self.FREE_MX_RECOMMENDATION_AMOUNT
@@ -13539,13 +13591,18 @@ class LearningRouteRecommendationsAPIView(APIView):
                     ),
                     "meta": {
                         "minimum_required": (
-                            self.FREE_MX_RECOMMENDATION_AMOUNT
+                            self
+                            .FREE_MX_RECOMMENDATION_AMOUNT
                         ),
                         "visual_expected": (
-                            self.MAX_VISUAL_RECOMMENDATIONS
+                            self
+                            .MAX_VISUAL_RECOMMENDATIONS
                         ),
                         "available": len(
                             selected_courses
+                        ),
+                        "complete_available": len(
+                            complete_ranked_courses
                         ),
                         "hydrated": len(
                             hydrated_map
@@ -13558,6 +13615,336 @@ class LearningRouteRecommendationsAPIView(APIView):
                 status=(
                     status.HTTP_503_SERVICE_UNAVAILABLE
                 ),
+            )
+
+        # =====================================================
+        # DISTRIBUIR LOS NUEVE CURSOS VISUALES
+        # =====================================================
+
+        level_course_map = {
+            level_key: []
+            for level_key
+            in self.LEVEL_PRESENTATION
+        }
+
+        level_keys = list(
+            self.LEVEL_PRESENTATION.keys()
+        )
+
+        # Reparto circular:
+        # nivel 1, nivel 2, nivel 3 y repetir.
+        for index, course in enumerate(
+            selected_courses[
+                :self.MAX_VISUAL_RECOMMENDATIONS
+            ]
+        ):
+            level_key = level_keys[
+                index % len(level_keys)
+            ]
+
+            if (
+                len(level_course_map[level_key])
+                < self.RECOMMENDATIONS_PER_LEVEL
+            ):
+                level_course_map[
+                    level_key
+                ].append(course)
+
+        # =====================================================
+        # SERIALIZAR LOS NUEVE CURSOS VISUALES
+        # =====================================================
+
+        data = {}
+        serialized_courses = []
+
+        for route_level, (
+            level_key,
+            presentation,
+        ) in enumerate(
+            self.LEVEL_PRESENTATION.items(),
+            start=1,
+        ):
+            level_courses = level_course_map.get(
+                level_key,
+                [],
+            )
+
+            serialized_level_courses = []
+
+            for order, course in enumerate(
+                level_courses,
+                start=1,
+            ):
+                serialized = self._serialize_course(
+                    course,
+                    order=order,
+                    route_level=route_level,
+                    level_name=(
+                        presentation["nivel"]
+                    ),
+                )
+
+                serialized_level_courses.append(
+                    serialized
+                )
+
+                serialized_courses.append(
+                    serialized
+                )
+
+            platform_ids = []
+
+            for item in serialized_level_courses:
+                platform_id = item.get(
+                    "platform_id"
+                )
+
+                if (
+                    platform_id is not None
+                    and platform_id
+                    not in platform_ids
+                ):
+                    platform_ids.append(
+                        platform_id
+                    )
+
+            data[level_key] = {
+                "label": (
+                    presentation["label"]
+                ),
+                "subtitle": (
+                    presentation["subtitle"]
+                ),
+                "badge": (
+                    presentation["badge"]
+                ),
+                "platform_ids": platform_ids,
+                "nivel": (
+                    presentation["nivel"]
+                ),
+                "items": (
+                    serialized_level_courses
+                ),
+            }
+
+        # =====================================================
+        # SERIALIZAR LA RUTA COMPLETA
+        # =====================================================
+
+        complete_serialized_courses = []
+
+        level_counters = {
+            1: 0,
+            2: 0,
+            3: 0,
+        }
+
+        presentation_values = list(
+            self.LEVEL_PRESENTATION.values()
+        )
+
+        for index, course in enumerate(
+            complete_ranked_courses
+        ):
+            # Distribuye la ruta completa entre los tres
+            # bloques del plan de carrera.
+            route_level = (
+                index % 3
+            ) + 1
+
+            level_counters[
+                route_level
+            ] += 1
+
+            presentation = (
+                presentation_values[
+                    route_level - 1
+                ]
+            )
+
+            serialized = self._serialize_course(
+                course,
+                order=level_counters[
+                    route_level
+                ],
+                route_level=route_level,
+                level_name=(
+                    presentation["nivel"]
+                ),
+            )
+
+            complete_serialized_courses.append(
+                serialized
+            )
+
+            # Protección:
+            # si no hubo coincidencias suficientes para formar
+            # una ruta completa, se usan las recomendaciones
+            # visuales como mínimo.
+            if (
+                len(complete_serialized_courses)
+                < self.FREE_MX_RECOMMENDATION_AMOUNT
+            ):
+                complete_serialized_courses = list(
+                    serialized_courses
+                )
+
+            # =====================================================
+            # SELECCIÓN CONTRACTUAL DEL PLAN FREE
+            # =====================================================
+
+            free_courses = []
+
+            for level_key in level_keys:
+                level_items = (
+                    data[level_key]["items"]
+                )
+
+                if level_items:
+                    # Exactamente uno por cada nivel.
+                    free_courses.append(
+                        level_items[0]
+                    )
+
+            if (
+                len(free_courses)
+                != self.FREE_MX_RECOMMENDATION_AMOUNT
+            ):
+                return Response(
+                    {
+                        "ok": False,
+                        "error": (
+                            "insufficient_free_recommendations"
+                        ),
+                        "message": (
+                            "No fue posible seleccionar un curso "
+                            "Free para cada nivel."
+                        ),
+                        "meta": {
+                            "required": (
+                                self
+                                .FREE_MX_RECOMMENDATION_AMOUNT
+                            ),
+                            "available": len(
+                                free_courses
+                            ),
+                        },
+                    },
+                    status=(
+                        status.HTTP_503_SERVICE_UNAVAILABLE
+                    ),
+                )
+
+            logger.info(
+                "Recomendaciones hidratadas generadas. "
+                "complete_total=%s visual_total=%s "
+                "free_total=%s topic_matches=%s",
+                len(complete_serialized_courses),
+                len(serialized_courses),
+                len(free_courses),
+                len(relevant_ids),
+            )
+
+            return Response(
+                {
+                    "ok": True,
+
+                    # Estructura visual utilizada por StartNow.
+                    "data": data,
+
+                    # Ruta completa que se guarda en Colombia.
+                    # Para Basic, X y Plus también se envía a MX.
+                    "recommended_courses": (
+                        complete_serialized_courses
+                    ),
+
+                    # Nueve cursos visibles en StartNow.
+                    "visual_recommended_courses": (
+                        serialized_courses
+                    ),
+
+                    # Tres cursos contractuales del plan Free.
+                    "free_courses": free_courses,
+
+                    "meta": {
+                        "catalog": (
+                            "free-preview-courses"
+                        ),
+                        "hydrated": True,
+                        "topics": topics,
+                        "topic_ids": topic_ids,
+                        "goal": goal,
+                        "country_code": country_code,
+                        "language": language,
+
+                        "providers_allowed": list(
+                            self.FREE_PROVIDERS
+                        ),
+
+                        "recommendations_per_level": (
+                            self
+                            .RECOMMENDATIONS_PER_LEVEL
+                        ),
+
+                        # Total completo enviado al backend
+                        # para crear el snapshot.
+                        "total_complete_recommendations": (
+                            len(
+                                complete_serialized_courses
+                            )
+                        ),
+
+                        # Total mostrado visualmente.
+                        "total_visual_recommendations": (
+                            len(serialized_courses)
+                        ),
+
+                        "total_visual_expected": (
+                            self
+                            .MAX_VISUAL_RECOMMENDATIONS
+                        ),
+
+                        "total_free_courses": (
+                            len(free_courses)
+                        ),
+
+                        "complete_route_limit": (
+                            self
+                            .MAX_COMPLETE_RECOMMENDATIONS
+                        ),
+
+                        "visual_route_complete": (
+                            len(serialized_courses)
+                            == self
+                            .MAX_VISUAL_RECOMMENDATIONS
+                        ),
+
+                        "free_route_complete": (
+                            len(free_courses)
+                            == self
+                            .FREE_MX_RECOMMENDATION_AMOUNT
+                        ),
+
+                        "complete_internal_ids": [
+                            item.get("idInterno")
+                            for item
+                            in complete_serialized_courses
+                        ],
+
+                        "visual_internal_ids": [
+                            item.get("idInterno")
+                            for item
+                            in serialized_courses
+                        ],
+
+                        "free_internal_ids": [
+                            item.get("idInterno")
+                            for item
+                            in free_courses
+                        ],
+                    },
+                },
+                status=status.HTTP_200_OK,
             )
 
         # =====================================================
@@ -13650,7 +14037,39 @@ class LearningRouteRecommendationsAPIView(APIView):
                 "nivel": presentation["nivel"],
                 "items": serialized_level_courses,
             }
+        complete_serialized_courses = []
 
+        level_counters = {
+            1: 0,
+            2: 0,
+            3: 0,
+        }
+
+        for index, course in enumerate(
+            complete_ranked_courses
+        ):
+            route_level = (
+                index % 3
+            ) + 1
+
+            level_counters[route_level] += 1
+
+            presentation = list(
+                self.LEVEL_PRESENTATION.values()
+            )[route_level - 1]
+
+            serialized = self._serialize_course(
+                course,
+                order=level_counters[
+                    route_level
+                ],
+                route_level=route_level,
+                level_name=presentation["nivel"],
+            )
+
+            complete_serialized_courses.append(
+                serialized
+            )
         # =====================================================
         # SELECCIÓN CONTRACTUAL PARA EL PLAN FREE
         # =====================================================
@@ -13712,7 +14131,14 @@ class LearningRouteRecommendationsAPIView(APIView):
 
                 # Hasta nueve cursos: tres por nivel cuando el catálogo
                 # dispone de suficientes resultados.
+                # Ruta completa que se guarda en Colombia y se envía
+                # a México para Basic, X y Plus.
                 "recommended_courses": (
+                    complete_serialized_courses
+                ),
+
+                # Solo nueve para mostrar en StartNow.
+                "visual_recommended_courses": (
                     serialized_courses
                 ),
 
