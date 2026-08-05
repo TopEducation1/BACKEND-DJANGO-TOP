@@ -9019,13 +9019,14 @@ class LearningRouteCreateView(APIView):
         courses,
     ):
         """
-        Normaliza la ruta visual/completa.
+        Normaliza la ruta completa del usuario.
 
-        Admite hasta nueve cursos:
-        - máximo tres en Fundamentos;
-        - máximo tres en Aplicación práctica;
-        - máximo tres en Especialización.
+        Permite hasta MAX_RECOMMENDED_COURSES cursos,
+        distribuidos entre los niveles 1, 2 y 3.
+
+        No limita a tres cursos por nivel.
         """
+
         if not isinstance(courses, list):
             return None, {
                 "error": (
@@ -9039,7 +9040,7 @@ class LearningRouteCreateView(APIView):
 
         normalized_courses = []
         used_internal_ids = set()
-        used_positions = set()
+
         level_counts = {
             1: 0,
             2: 0,
@@ -9051,15 +9052,22 @@ class LearningRouteCreateView(APIView):
                 continue
 
             id_interno = (
-                self._extract_internal_id(item)
+                self._extract_internal_id(
+                    item
+                )
             )
 
             if not id_interno:
                 continue
 
-            identity_key = id_interno.lower()
+            identity_key = (
+                id_interno.lower()
+            )
 
-            if identity_key in used_internal_ids:
+            if (
+                identity_key
+                in used_internal_ids
+            ):
                 continue
 
             route_level = (
@@ -9069,47 +9077,14 @@ class LearningRouteCreateView(APIView):
                 )
             )
 
+            # El orden se asigna automáticamente
+            # dentro de cada nivel.
             requested_order = (
-                level_counts[route_level] + 1
+                level_counts[
+                    route_level
+                ]
+                + 1
             )
-
-            position_key = (
-                route_level,
-                requested_order,
-            )
-
-            # Si el frontend envió un orden repetido,
-            # se busca automáticamente la siguiente
-            # posición libre del nivel.
-            if position_key in used_positions:
-                requested_order = None
-
-                for possible_order in range(
-                    1,
-                    self.MAX_COURSES_PER_LEVEL
-                    + 1,
-                ):
-                    possible_key = (
-                        route_level,
-                        possible_order,
-                    )
-
-                    if (
-                        possible_key
-                        not in used_positions
-                    ):
-                        requested_order = (
-                            possible_order
-                        )
-                        break
-
-                if requested_order is None:
-                    continue
-
-                position_key = (
-                    route_level,
-                    requested_order,
-                )
 
             normalized, error = (
                 self._normalize_course_payload(
@@ -9131,10 +9106,10 @@ class LearningRouteCreateView(APIView):
             used_internal_ids.add(
                 identity_key
             )
-            used_positions.add(
-                position_key
-            )
-            level_counts[route_level] += 1
+
+            level_counts[
+                route_level
+            ] += 1
 
             if (
                 len(normalized_courses)
@@ -9427,7 +9402,7 @@ class LearningRouteCreateView(APIView):
             or ""
         ).strip()
 
-        # Ruta completa: hasta nueve cursos.
+        # Ruta completa: hasta 150 cursos.
         recommended_courses_raw = (
             request.data.get(
                 "recommended_courses"
@@ -9670,7 +9645,7 @@ class LearningRouteCreateView(APIView):
                 goal=goal,
 
                 # Se conservan ambas colecciones:
-                # - ruta completa de hasta nueve;
+                # - ruta completa de hasta 150;
                 # - selección Free de tres.
                 recommended_certifications={
                     "recommended_courses": (
@@ -9721,11 +9696,11 @@ class LearningRouteCreateView(APIView):
         # CREAR SNAPSHOT COMPLETO V1
         # =====================================================
         #
-        # Colombia conserva hasta nueve cursos.
+        # Colombia conserva la ruta completa.
         # CompleteSignup decidirá:
         #
         # - Free: enviar a MX uno por nivel (3).
-        # - Basic/X/Plus: enviar a MX hasta nueve.
+        # - Basic/X/Plus: enviar a MX toda la ruta.
         # =====================================================
 
         try:
