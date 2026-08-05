@@ -13415,19 +13415,40 @@ class LearningRouteRecommendationsAPIView(APIView):
         # PREPARAR RUTA COMPLETA Y RECOMENDACIONES VISUALES
         # =====================================================
 
-        # La ruta completa usa únicamente coincidencias reales
-        # con los dominios, temas o habilidades seleccionados.
-        #
-        # Solo si no existe ninguna coincidencia directa se
-        # utilizan los cursos fallback como respaldo.
+        # Además de las coincidencias directas por tema/skill,
+        # incluimos cursos que obtuvieron puntuación positiva
+        # por título, descripción, keywords, objetivo, idioma,
+        # tema o habilidades.
+        scored_related_courses = [
+            course
+            for course in fallback_courses
+            if int(
+                course.get(
+                    "_recommendationScore",
+                    0,
+                )
+                or 0
+            ) > 0
+        ]
+
+        # La ruta completa contiene:
+        # 1. coincidencias directas;
+        # 2. coincidencias relacionadas por puntuación.
         complete_source_courses = (
             preferred_courses
-            if preferred_courses
-            else fallback_courses
+            + scored_related_courses
         )
 
-        # Para las nueve recomendaciones visuales sí se permite
-        # completar con resultados fallback.
+        # Si no hubo ninguna coincidencia relevante, usamos
+        # el catálogo ordenado como respaldo para no impedir
+        # la creación de la ruta.
+        if not complete_source_courses:
+            complete_source_courses = (
+                fallback_courses
+            )
+
+        # La visualización puede usar todo el catálogo ordenado
+        # para completar hasta nueve recomendaciones.
         visual_source_courses = (
             preferred_courses
             + fallback_courses
