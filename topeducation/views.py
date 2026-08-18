@@ -2551,41 +2551,29 @@ class CertificationDetailView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-@method_decorator(
-    cache_page(60 * 60),
-    name="dispatch",
-)
+@method_decorator(cache_page(60 * 60), name="dispatch")
 class SkillsFilterMiniView(APIView):
     def get(self, request):
         qs = (
             Skills.objects
-            .filter(
-                estado=True
-            )
+            .filter(estado=True)
             .only(
                 "id",
                 "nombre",
                 "translate",
                 "slug",
+                "skill_ico",
+                "skill_img",
+                "skill_col",
                 "skill_type",
+                "estado",
                 "parent_id",
             )
-            .order_by(
-                "parent_id",
-                "nombre",
-            )
+            .order_by("parent_id", "nombre")
         )
 
-        serializer = (
-            SkillFilterMiniSerializer(
-                qs,
-                many=True,
-            )
-        )
-
-        return Response(
-            serializer.data
-        )
+        serializer = SkillFilterMiniSerializer(qs, many=True)
+        return Response(serializer.data)
 
 @method_decorator(cache_page(60 * 60), name="dispatch")
 class CompaniesFilterMiniView(APIView):
