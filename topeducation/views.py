@@ -13,6 +13,7 @@ import stripe
 from django.conf import settings
 from django.contrib import messages
 
+
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth import authenticate, get_backends, get_user_model, login, logout
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -1637,70 +1638,277 @@ class FastNoCountPagination:
             "results": data,
         })
 
+
 class FastCachedCountPagination:
     page_size = 16
     page_size_query_param = "page_size"
     max_page_size = 50
-    count_cache_timeout = 60 * 15  # 15 minutos
 
-    def paginate_queryset(self, queryset, request):
+    # El catálogo no necesita recalcular el total constantemente.
+    count_cache_timeout = 60 * 15
+
+    # Parámetros que NO modifican la cantidad total del queryset.
+    COUNT_IGNORED_PARAMS = {
+        "page",
+        "page_size",
+        "latest",
+        "clear",
+    }
+
+    def _get_count_cache_key(
+        self,
+        request,
+    ):
+        """
+        Genera una clave únicamente con los filtros reales.
+
+        Ejemplo:
+
+        /certificaciones/filter/
+            ?idioma=es
+            &idioma=en
+            &page=1
+            &page_size=16
+
+        y
+
+        /certificaciones/filter/
+            ?idioma=es
+            &idioma=en
+            &page=25
+            &page_size=16
+
+        comparten el mismo COUNT.
+        """
+
+        normalized_filters = {}
+
+        for key, values in request.query_params.lists():
+            if key in self.COUNT_IGNORED_PARAMS:
+                continue
+
+            clean_values = sorted(
+                {
+                    str(value).strip()
+                    for value in values
+                    if str(value).strip()
+                }
+            )
+
+            if clean_values:
+                normalized_filters[
+                    key
+                ] = clean_values
+
+        raw_key = json.dumps(
+            normalized_filters,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+        digest = hashlib.md5(
+            raw_key.encode("utf-8")
+        ).hexdigest()
+
+        return (
+            f"certifications:"
+            f"filter-count:"
+            f"{digest}"
+        )
+
+    def paginate_queryset(
+        self,
+        queryset,
+        request,
+    ):
         self.request = request
 
+        # =====================================================
+        # PÁGINA
+        # =====================================================
+
         try:
-            self.page = max(1, int(request.query_params.get("page", 1)))
-        except Exception:
+            self.page = max(
+                1,
+                int(
+                    request.query_params.get(
+                        "page",
+                        1,
+                    )
+                ),
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
             self.page = 1
 
+        # =====================================================
+        # PAGE SIZE
+        # =====================================================
+
         try:
-            self.page_size = int(request.query_params.get(self.page_size_query_param, self.page_size))
-        except Exception:
-            self.page_size = 16
+            requested_page_size = int(
+                request.query_params.get(
+                    self.page_size_query_param,
+                    self.page_size,
+                )
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            requested_page_size = (
+                self.page_size
+            )
 
-        self.page_size = max(1, min(self.page_size, self.max_page_size))
+        self.page_size = max(
+            1,
+            min(
+                requested_page_size,
+                self.max_page_size,
+            ),
+        )
 
-        cache_raw_key = f"cert_count:{request.get_full_path()}"
-        cache_key = hashlib.md5(cache_raw_key.encode("utf-8")).hexdigest()
-        cache_key = f"cert_count:{cache_key}"
+        # =====================================================
+        # COUNT CACHEADO
+        # =====================================================
 
-        cached_count = cache.get(cache_key)
+        cache_key = (
+            self._get_count_cache_key(
+                request
+            )
+        )
+
+        cached_count = cache.get(
+            cache_key
+        )
 
         if cached_count is None:
-            cached_count = queryset.count()
-            cache.set(cache_key, cached_count, self.count_cache_timeout)
+            cached_count = (
+                queryset
+                .order_by()
+                .count()
+            )
 
-        self.count = cached_count
-        self.total_pages = max(1, (self.count + self.page_size - 1) // self.page_size)
+            cache.set(
+                cache_key,
+                cached_count,
+                self.count_cache_timeout,
+            )
 
-        start = (self.page - 1) * self.page_size
-        end = start + self.page_size
+        self.count = int(
+            cached_count or 0
+        )
 
-        return list(queryset[start:end])
+        # =====================================================
+        # TOTAL DE PÁGINAS
+        # =====================================================
 
-    def get_paginated_response(self, data):
-        return Response({
-            "count": self.count,
-            "current_page": self.page,
-            "page_size": self.page_size,
-            "total_pages": self.total_pages,
-            "has_next": self.page < self.total_pages,
-            "has_previous": self.page > 1,
-            "results": data,
-        })
+        self.total_pages = max(
+            1,
+            (
+                self.count
+                + self.page_size
+                - 1
+            )
+            // self.page_size,
+        )
 
-class CustomPagination(PageNumberPagination):
+        # Si piden una página superior al máximo,
+        # mantenemos comportamiento seguro.
+        if (
+            self.count > 0
+            and self.page
+            > self.total_pages
+        ):
+            self.page = (
+                self.total_pages
+            )
+
+        # =====================================================
+        # PAGINAR
+        # =====================================================
+
+        start = (
+            self.page - 1
+        ) * self.page_size
+
+        end = (
+            start
+            + self.page_size
+        )
+
+        return list(
+            queryset[
+                start:end
+            ]
+        )
+
+    def get_paginated_response(
+        self,
+        data,
+    ):
+        return Response(
+            {
+                "count": self.count,
+                "current_page": (
+                    self.page
+                ),
+                "page_size": (
+                    self.page_size
+                ),
+                "total_pages": (
+                    self.total_pages
+                ),
+                "has_next": (
+                    self.page
+                    < self.total_pages
+                ),
+                "has_previous": (
+                    self.page > 1
+                ),
+                "results": data,
+            }
+        )
+
+
+class CustomPagination(
+    PageNumberPagination
+):
     page_size = 12
-    page_size_query_param = 'page_size'
+    page_size_query_param = (
+        "page_size"
+    )
     max_page_size = 100
-    
-    def get_paginated_response(self, data):
-        return Response({
-            'count': self.page.paginator.count,
-            'next': self.get_next_link(),
-            'previous': self.get_previous_link(),
-            'total_page': self.page.paginator.num_pages,
-            'results': data
-        })
 
+    def get_paginated_response(
+        self,
+        data,
+    ):
+        return Response(
+            {
+                "count": (
+                    self.page
+                    .paginator
+                    .count
+                ),
+                "next": (
+                    self.get_next_link()
+                ),
+                "previous": (
+                    self
+                    .get_previous_link()
+                ),
+                "total_page": (
+                    self.page
+                    .paginator
+                    .num_pages
+                ),
+                "results": data,
+            }
+        )
 
 #Api config to get the blogs
 
@@ -2343,29 +2551,41 @@ class CertificationDetailView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-@method_decorator(cache_page(60 * 60), name="dispatch")
+@method_decorator(
+    cache_page(60 * 60),
+    name="dispatch",
+)
 class SkillsFilterMiniView(APIView):
     def get(self, request):
         qs = (
             Skills.objects
-            .filter(estado=True)
+            .filter(
+                estado=True
+            )
             .only(
                 "id",
                 "nombre",
                 "translate",
                 "slug",
-                "skill_ico",
-                "skill_img",
-                "skill_col",
                 "skill_type",
-                "estado",
                 "parent_id",
             )
-            .order_by("parent_id", "nombre")
+            .order_by(
+                "parent_id",
+                "nombre",
+            )
         )
 
-        serializer = SkillFilterMiniSerializer(qs, many=True)
-        return Response(serializer.data)
+        serializer = (
+            SkillFilterMiniSerializer(
+                qs,
+                many=True,
+            )
+        )
+
+        return Response(
+            serializer.data
+        )
 
 @method_decorator(cache_page(60 * 60), name="dispatch")
 class CompaniesFilterMiniView(APIView):
@@ -3215,15 +3435,16 @@ def load_explore_certification_page(
     cache_page(60 * 15),
     name="dispatch",
 )
-
 class filter_by_tags(APIView):
     pagination_class = FastCachedCountPagination
 
     def get(self, request):
         try:
-            params = (
-                request.query_params.copy()
-            )
+            params = request.query_params.copy()
+
+            # =====================================================
+            # ACUMULADORES
+            # =====================================================
 
             tema_slugs = []
             habilidad_slugs = []
@@ -3244,10 +3465,13 @@ class filter_by_tags(APIView):
             tipo_certificacion_values = []
             nivel_certificacion_values = []
 
-            # =================================================
+            # =====================================================
             # LEER PARÁMETROS
-            # =================================================
+            # =====================================================
+
             for key, value_list in params.lists():
+
+                # Parámetros que no modifican el queryset filtrado.
                 if key in {
                     "page",
                     "page_size",
@@ -3255,6 +3479,10 @@ class filter_by_tags(APIView):
                     "clear",
                 }:
                     continue
+
+                # -------------------------------------------------
+                # TEMAS
+                # -------------------------------------------------
 
                 if key in {
                     "Tema",
@@ -3266,6 +3494,10 @@ class filter_by_tags(APIView):
                         )
                     )
 
+                # -------------------------------------------------
+                # HABILIDADES
+                # -------------------------------------------------
+
                 elif key in {
                     "Habilidad",
                     "habilidades",
@@ -3275,6 +3507,10 @@ class filter_by_tags(APIView):
                             value_list
                         )
                     )
+
+                # -------------------------------------------------
+                # TEMA ID
+                # -------------------------------------------------
 
                 elif key in {
                     "tema_id",
@@ -3286,6 +3522,10 @@ class filter_by_tags(APIView):
                         )
                     )
 
+                # -------------------------------------------------
+                # HABILIDAD ID
+                # -------------------------------------------------
+
                 elif key in {
                     "habilidad_id",
                     "Habilidad_id",
@@ -3296,6 +3536,10 @@ class filter_by_tags(APIView):
                             value_list
                         )
                     )
+
+                # -------------------------------------------------
+                # PLATAFORMA TEXTO
+                # -------------------------------------------------
 
                 elif key in {
                     "Plataforma",
@@ -3309,6 +3553,10 @@ class filter_by_tags(APIView):
                         )
                     )
 
+                # -------------------------------------------------
+                # EMPRESA TEXTO
+                # -------------------------------------------------
+
                 elif key in {
                     "Empresa",
                     "empresas",
@@ -3319,6 +3567,10 @@ class filter_by_tags(APIView):
                             value_list
                         )
                     )
+
+                # -------------------------------------------------
+                # UNIVERSIDAD TEXTO
+                # -------------------------------------------------
 
                 elif key in {
                     "Universidad",
@@ -3331,6 +3583,10 @@ class filter_by_tags(APIView):
                         )
                     )
 
+                # -------------------------------------------------
+                # PLATAFORMA ID
+                # -------------------------------------------------
+
                 elif key in {
                     "plataforma_id",
                     "Plataforma_id",
@@ -3341,6 +3597,10 @@ class filter_by_tags(APIView):
                             value_list
                         )
                     )
+
+                # -------------------------------------------------
+                # EMPRESA ID
+                # -------------------------------------------------
 
                 elif key in {
                     "empresa_id",
@@ -3353,6 +3613,10 @@ class filter_by_tags(APIView):
                         )
                     )
 
+                # -------------------------------------------------
+                # UNIVERSIDAD ID
+                # -------------------------------------------------
+
                 elif key in {
                     "universidad_id",
                     "Universidad_id",
@@ -3363,6 +3627,10 @@ class filter_by_tags(APIView):
                             value_list
                         )
                     )
+
+                # -------------------------------------------------
+                # IDIOMA
+                # -------------------------------------------------
 
                 elif key in {
                     "Idioma",
@@ -3375,6 +3643,10 @@ class filter_by_tags(APIView):
                         )
                     )
 
+                # -------------------------------------------------
+                # TIPO CERTIFICACIÓN
+                # -------------------------------------------------
+
                 elif key in {
                     "tipo_certificacion",
                     "Tipo",
@@ -3385,6 +3657,10 @@ class filter_by_tags(APIView):
                             value_list
                         )
                     )
+
+                # -------------------------------------------------
+                # NIVEL
+                # -------------------------------------------------
 
                 elif key in {
                     "nivel_certificacion",
@@ -3397,9 +3673,10 @@ class filter_by_tags(APIView):
                         )
                     )
 
-            # =================================================
+            # =====================================================
             # NORMALIZAR Y QUITAR DUPLICADOS
-            # =================================================
+            # =====================================================
+
             tema_ids = normalize_explore_filter_ids(
                 tema_ids
             )
@@ -3473,26 +3750,32 @@ class filter_by_tags(APIView):
 
             selected_skill_slugs = (
                 normalize_explore_filter_strings(
-                    tema_slugs + habilidad_slugs
+                    tema_slugs
+                    + habilidad_slugs
                 )
             )
 
-            # Si tenemos IDs, los slugs son redundantes.
-            # Evita un OR entre skill_id y skill__slug.
+            # Si existen IDs, no usamos slugs.
+            # Evita introducir OR innecesarios.
             if selected_skill_ids:
                 selected_skill_slugs = []
 
-            # =================================================
-            # QUERYSET BASE LIGERO
+            # =====================================================
+            # QUERYSET BASE
+            # =====================================================
             #
-            # En esta etapa NO usamos:
-            # - select_related
-            # - prefetch_related
-            # - only con relaciones
+            # Mantenerlo ligero es importante:
             #
-            # El conteo y la paginación trabajan solo sobre
-            # Certificaciones y subconsultas indexadas.
-            # =================================================
+            # - sin select_related;
+            # - sin prefetch_related;
+            # - sin imágenes;
+            # - sin logos;
+            # - sin relaciones pesadas.
+            #
+            # El COUNT y el LIMIT deben trabajar sobre
+            # Certificaciones + filtros simples/subconsultas.
+            # =====================================================
+
             queryset = (
                 Certificaciones.objects
                 .filter(
@@ -3506,9 +3789,10 @@ class filter_by_tags(APIView):
                 )
             )
 
-            # =================================================
+            # =====================================================
             # IDIOMA
-            # =================================================
+            # =====================================================
+
             if idioma_codes:
                 queryset = queryset.filter(
                     language_normalized__in=
@@ -3519,9 +3803,10 @@ class filter_by_tags(APIView):
                     language_normalized="es"
                 )
 
-            # =================================================
+            # =====================================================
             # PLATAFORMA
-            # =================================================
+            # =====================================================
+
             if plataforma_ids:
                 queryset = queryset.filter(
                     plataforma_certificacion_id__in=
@@ -3541,9 +3826,10 @@ class filter_by_tags(APIView):
                     platform_query
                 )
 
-            # =================================================
+            # =====================================================
             # EMPRESA
-            # =================================================
+            # =====================================================
+
             if empresa_ids:
                 queryset = queryset.filter(
                     empresa_certificacion_id__in=
@@ -3563,9 +3849,10 @@ class filter_by_tags(APIView):
                     company_query
                 )
 
-            # =================================================
+            # =====================================================
             # UNIVERSIDAD
-            # =================================================
+            # =====================================================
+
             if universidad_ids:
                 queryset = queryset.filter(
                     universidad_certificacion_id__in=
@@ -3585,9 +3872,10 @@ class filter_by_tags(APIView):
                     university_query
                 )
 
-            # =================================================
+            # =====================================================
             # TIPO DE CERTIFICACIÓN
-            # =================================================
+            # =====================================================
+
             if tipo_certificacion_values:
                 queryset = queryset.filter(
                     build_certification_type_q(
@@ -3595,9 +3883,10 @@ class filter_by_tags(APIView):
                     )
                 )
 
-            # =================================================
+            # =====================================================
             # NIVEL
-            # =================================================
+            # =====================================================
+
             if nivel_certificacion_values:
                 queryset = queryset.filter(
                     build_certification_level_q(
@@ -3605,29 +3894,27 @@ class filter_by_tags(APIView):
                     )
                 )
 
-            # =================================================
-            # DOMINIO / TEMAS / HABILIDADES
+            # =====================================================
+            # DOMINIOS / TEMAS / HABILIDADES
+            # =====================================================
             #
-            # Usa:
+            # apply_skills_domain_filter() ya utiliza una subconsulta
+            # por certificacion_id en SkillsCertification.
             #
-            # id IN (
-            #   SELECT certificacion_id
-            #   FROM SkillsCertification
-            #   WHERE skill_id IN (...)
-            # )
-            #
-            # Esto evita evaluar un EXISTS correlacionado por
-            # cada certificación.
-            # =================================================
+            # Eso es preferible a un JOIN + DISTINCT sobre todo
+            # el catálogo.
+            # =====================================================
+
             queryset = apply_skills_domain_filter(
                 queryset,
                 skill_ids=selected_skill_ids,
                 skill_slugs=selected_skill_slugs,
             )
 
-            # =================================================
+            # =====================================================
             # ORDEN
-            # =================================================
+            # =====================================================
+
             total_selected_skills = (
                 len(selected_skill_ids)
                 if selected_skill_ids
@@ -3637,38 +3924,51 @@ class filter_by_tags(APIView):
             )
 
             if total_selected_skills == 1:
-                queryset = (
-                    apply_single_skill_priority(
-                        queryset,
-                        skill_id=(
-                            selected_skill_ids[0]
-                            if selected_skill_ids
-                            else None
-                        ),
-                        skill_slug=(
-                            selected_skill_slugs[0]
-                            if selected_skill_slugs
-                            else None
-                        ),
-                    )
+                # Solo usamos prioridad especial para una skill.
+                #
+                # No aplicar estas subqueries cuando el usuario
+                # selecciona un dominio completo con varias skills.
+                queryset = apply_single_skill_priority(
+                    queryset,
+                    skill_id=(
+                        selected_skill_ids[0]
+                        if selected_skill_ids
+                        else None
+                    ),
+                    skill_slug=(
+                        selected_skill_slugs[0]
+                        if selected_skill_slugs
+                        else None
+                    ),
                 )
 
             else:
-                # Para dominios de múltiples habilidades:
-                # no ejecutar subconsultas de prioridad.
+                # Orden estándar, compatible con índice:
+                #
+                # vigente_certificacion
+                # fecha_creado_cert
+                # id
                 queryset = queryset.order_by(
                     "-fecha_creado_cert",
                     "-id",
                 )
 
-            # =================================================
-            # PAGINAR ÚNICAMENTE IDS
+            # =====================================================
+            # PAGINAR ÚNICAMENTE IDs
+            # =====================================================
             #
-            # El COUNT y la consulta LIMIT no cargan logos,
-            # entidades, imágenes ni skills.
-            # =================================================
+            # NO agregamos .distinct() aquí por defecto.
+            #
+            # apply_skills_domain_filter() trabaja mediante
+            # subconsulta y no debería duplicar certificaciones.
+            #
+            # DISTINCT puede obligar a MySQL a crear una operación
+            # extra y empeorar tanto COUNT como ORDER/LIMIT.
+            # =====================================================
+
             ids_queryset = (
-                queryset.values_list(
+                queryset
+                .values_list(
                     "id",
                     flat=True,
                 )
@@ -3689,9 +3989,26 @@ class filter_by_tags(APIView):
                 paginated_ids or []
             )
 
-            # =================================================
+            # =====================================================
+            # RESPUESTA VACÍA
+            # =====================================================
+            #
+            # Evitamos ejecutar el loader/serializer si esta página
+            # no contiene certificaciones.
+            # =====================================================
+
+            if not paginated_ids:
+                return (
+                    paginator
+                    .get_paginated_response(
+                        []
+                    )
+                )
+
+            # =====================================================
             # CARGAR SOLO LAS CARDS DE ESTA PÁGINA
-            # =================================================
+            # =====================================================
+
             certifications = (
                 load_explore_certification_page(
                     paginated_ids
