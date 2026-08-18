@@ -3769,12 +3769,6 @@ class filter_by_tags(APIView):
                 .filter(
                     vigente_certificacion=True
                 )
-                .exclude(
-                    nombre__isnull=True
-                )
-                .exclude(
-                    nombre=""
-                )
             )
 
             # =====================================================
