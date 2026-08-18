@@ -38,7 +38,8 @@ MX_B2C_COLOMBIA_ACCOUNT_URL = os.getenv(
     "MX_B2C_COLOMBIA_ACCOUNT_URL",
     "https://top.education/account",
 )
-MX_B2C_TIMEOUT = int(os.getenv("MX_B2C_TIMEOUT", "45"))
+MX_B2C_TIMEOUT = int(os.getenv("MX_B2C_TIMEOUT", "60"))
+MX_B2C_CONNECT_TIMEOUT = int(os.getenv("MX_B2C_CONNECT_TIMEOUT", "10"))
 
 STRIPE_BILLING_PORTAL_RETURN_URL = os.getenv(
     "STRIPE_BILLING_PORTAL_RETURN_URL",
@@ -80,7 +81,7 @@ APPEND_SLASH = True
 
 COURSES_EXTERNAL_ENDPOINT = os.getenv(
     "COURSES_EXTERNAL_ENDPOINT",
-    "https://api-colombia-dev.universidad.top"
+    "https://api-colombia.universidad.top"
 ).rstrip("/")
 
 # API Key
@@ -150,7 +151,7 @@ CSRF_TRUSTED_ORIGINS = [
 
 CV_ANALYSIS_URL = os.getenv(
     "CV_ANALYSIS_URL",
-    "https://api-colombia-dev.universidad.top/v2/cv/analysis"
+    "https://api-colombia.universidad.top/v2/cv/analysis"
 )
 
 CV_ANALYSIS_TIMEOUT = int(os.getenv("CV_ANALYSIS_TIMEOUT", "120"))
