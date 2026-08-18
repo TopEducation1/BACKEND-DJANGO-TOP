@@ -1483,7 +1483,7 @@ def updateRanking(request, ranking_id):
 
 
 def catalog_inspector(request):
-    base_url = "https://api-colombia-dev.universidad.top/course-information"
+    base_url = "https://api-colombia.universidad.top/course-information"
 
     return render(
         request,
@@ -8520,21 +8520,48 @@ def get_snapshot_courses(snapshot):
 
 def get_free_route_courses(snapshot):
     """
-    El paquete TOP_EDUCATION_FREE envía exactamente tres cursos:
-    uno por cada nivel de la ruta.
+    Obtiene las experiencias Free elegibles almacenadas
+    dentro de un snapshot de ruta.
+
+    Contrato actual Free Tier:
+
+    - No existe una regla de exactamente tres cursos.
+    - No existe una regla de un curso por nivel.
+    - Puede existir una o más experiencias Free.
+    - No se infiere elegibilidad por routeLevel.
+    - No se infiere elegibilidad por proveedor.
+    - Un curso Free debe conservar su preview.
+    - No se permiten idInterno duplicados.
+    - idInterno se conserva exactamente como fue recibido.
+
+    IMPORTANTE:
+    La elegibilidad real debe haber sido determinada previamente
+    usando el catálogo oficial:
+
+        /v1/b2c/free-preview-courses
+
+    Este helper NO consulta nuevamente el catálogo remoto.
+    Únicamente recupera del snapshot aquellos elementos que
+    conservan información explícita de Free Preview.
     """
 
-    courses = get_snapshot_courses(snapshot)
+    courses = get_snapshot_courses(
+        snapshot
+    )
 
     if not isinstance(courses, list):
         return []
 
-    unique_courses = []
+    free_courses = []
     seen_ids = set()
 
     for course in courses:
         if not isinstance(course, dict):
             continue
+
+        # =====================================================
+        # ID INTERNO
+        # =====================================================
 
         id_interno = str(
             course.get("idInterno")
@@ -8545,71 +8572,236 @@ def get_free_route_courses(snapshot):
         if not id_interno:
             continue
 
-        identity_key = id_interno.lower()
+        # Solo normalizamos para comparar duplicados.
+        # El valor almacenado/enviado permanece intacto.
+        identity_key = id_interno.casefold()
 
         if identity_key in seen_ids:
             continue
 
-        seen_ids.add(identity_key)
+        # =====================================================
+        # PREVIEW
+        # =====================================================
 
-        normalized = dict(course)
-        normalized["idInterno"] = id_interno
+        preview = course.get("preview")
 
-        unique_courses.append(normalized)
+        if not isinstance(preview, dict):
+            preview = {}
 
-    selected = []
+        preview_type = str(
+            preview.get("type")
+            or course.get("preview_type")
+            or ""
+        ).strip().upper()
 
-    # Prioriza exactamente un curso por nivel.
-    for route_level in (1, 2, 3):
-        level_course = next(
-            (
-                course
-                for course in unique_courses
-                if int(
-                    course.get("routeLevel")
-                    or course.get("route_level")
-                    or 1
-                ) == route_level
-                and course not in selected
-            ),
-            None,
+        preview_url = str(
+            preview.get("url")
+            or course.get("preview_url")
+            or ""
+        ).strip()
+
+        preview_validated_at = (
+            preview.get("validatedAt")
+            or course.get(
+                "preview_validated_at"
+            )
         )
 
-        if level_course:
-            selected.append(level_course)
+        preview_country_code = str(
+            preview.get("countryCode")
+            or course.get(
+                "preview_country_code"
+            )
+            or ""
+        ).strip().upper()
 
-    # Compatibilidad: completa con otros cursos únicos si algún
-    # snapshot anterior no tiene correctamente routeLevel.
-    if len(selected) < 3:
-        for course in unique_courses:
-            if course in selected:
-                continue
+        # =====================================================
+        # ELEGIBILIDAD FREE
+        # =====================================================
+        #
+        # No usamos:
+        # - routeLevel
+        # - provider
+        # - platform
+        #
+        # como mecanismo para inferir Free.
+        #
+        # Exigimos que el snapshot conserve el preview que vino
+        # del catálogo Free oficial.
+        # =====================================================
 
-            selected.append(course)
+        if (
+            not preview_type
+            or not preview_url
+            or not preview_validated_at
+        ):
+            continue
 
-            if len(selected) == 3:
-                break
+        # =====================================================
+        # NORMALIZAR SIN ALTERAR EL ID
+        # =====================================================
 
-    return selected[:3]
+        normalized = dict(course)
+
+        normalized["idInterno"] = (
+            id_interno
+        )
+
+        # Conservamos también alias interno mientras existan
+        # servicios antiguos que todavía lo utilicen.
+        normalized["id_interno"] = (
+            id_interno
+        )
+
+        normalized["preview"] = {
+            "type": preview_type,
+            "url": preview_url,
+            "validatedAt": (
+                preview_validated_at
+            ),
+            "countryCode": (
+                preview_country_code
+                or None
+            ),
+        }
+
+        # Compatibilidad con servicios existentes.
+        normalized["preview_type"] = (
+            preview_type
+        )
+
+        normalized["preview_url"] = (
+            preview_url
+        )
+
+        normalized[
+            "preview_validated_at"
+        ] = preview_validated_at
+
+        normalized[
+            "preview_country_code"
+        ] = (
+            preview_country_code
+            or None
+        )
+
+        free_courses.append(
+            normalized
+        )
+
+        seen_ids.add(
+            identity_key
+        )
+
+    # =========================================================
+    # ORDEN
+    # =========================================================
+    #
+    # No filtramos ni limitamos por nivel.
+    #
+    # routeLevel/order solamente determinan la posición visual
+    # dentro de la ruta.
+    # =========================================================
+
+    def _sort_key(course):
+        try:
+            route_level = int(
+                course.get("routeLevel")
+                or course.get("route_level")
+                or 1
+            )
+        except (TypeError, ValueError):
+            route_level = 1
+
+        try:
+            order = int(
+                course.get("order")
+                or 1
+            )
+        except (TypeError, ValueError):
+            order = 1
+
+        return (
+            route_level,
+            order,
+        )
+
+    free_courses.sort(
+        key=_sort_key
+    )
+
+    return free_courses
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteCreateView(APIView):
+    """
+    Crea el lead inicial de StartNow y conserva:
+
+    - La ruta completa recomendada para Colombia.
+    - Las experiencias elegibles para Free Tier.
+    - La intención inicial de plan seleccionada por el usuario.
+    - El snapshot V1 de la ruta.
+
+    IMPORTANTE:
+
+    `recommended_courses`
+        Representa la ruta completa del usuario.
+        Puede contener hasta MAX_RECOMMENDED_COURSES cursos.
+
+    `free_courses`
+        Representa únicamente experiencias provenientes del
+        catálogo oficial:
+
+            /v1/b2c/free-preview-courses
+
+        Ya NO existe la regla contractual de exactamente tres cursos.
+        Puede contener una o más experiencias Free elegibles.
+
+    La selección definitiva que se envía a México se realizará
+    posteriormente durante CompleteSignup dependiendo del plan.
+    """
+
     authentication_classes = []
     permission_classes = [AllowAny]
+
+    # =========================================================
+    # ESTADO INICIAL DEL LEAD
+    # =========================================================
 
     FREE_PACKAGE_CODE = "TOP_EDUCATION_FREE"
     FREE_TIER = "FREE"
 
-    FREE_COURSES_REQUIRED = 3
+    # =========================================================
+    # LÍMITES
+    # =========================================================
+
+    # Ruta completa almacenada en Colombia.
     MAX_RECOMMENDED_COURSES = 150
 
-    ALLOWED_FREE_PROVIDERS = {
-        "COURSERA",
-        "EDX",
-    }
+    # El endpoint Free Tier admite hasta 200 elementos por página.
+    # No significa que debamos enviar siempre 200; simplemente
+    # evita una restricción artificial dentro de este endpoint.
+    MAX_FREE_COURSES = 200
+
+    # El contrato de México acepta una o más experiencias Free.
+    MIN_FREE_COURSES = 1
+
+    # =========================================================
+    # HELPERS GENERALES
+    # =========================================================
 
     @staticmethod
     def _normalize_provider(value):
+        """
+        Normaliza únicamente la representación del proveedor.
+
+        NO se utiliza como allowlist de Free.
+
+        La elegibilidad Free viene determinada exclusivamente por
+        /v1/b2c/free-preview-courses y por los services que hidratan
+        ese catálogo.
+        """
+
         normalized = (
             str(value or "")
             .strip()
@@ -8621,6 +8813,7 @@ class LearningRouteCreateView(APIView):
             "COURSERA": "COURSERA",
             "EDX": "EDX",
             "ED-X": "EDX",
+            "MASTERCLASS": "MASTERCLASS",
         }
 
         return provider_aliases.get(
@@ -8645,6 +8838,19 @@ class LearningRouteCreateView(APIView):
 
     @staticmethod
     def _extract_internal_id(item):
+        """
+        Conserva idInterno exactamente como se recibió.
+
+        No se aplica lower(), slugify(), recorte ni conversión
+        al valor que finalmente se almacena.
+
+        lower() únicamente se utiliza posteriormente como clave
+        temporal para detectar duplicados.
+        """
+
+        if not isinstance(item, dict):
+            return ""
+
         return str(
             item.get("idInterno")
             or item.get("id_interno")
@@ -8654,7 +8860,10 @@ class LearningRouteCreateView(APIView):
         ).strip()
 
     @staticmethod
-    def _extract_route_level(item, default=1):
+    def _extract_route_level(
+        item,
+        default=1,
+    ):
         try:
             route_level = int(
                 item.get("routeLevel")
@@ -8664,10 +8873,16 @@ class LearningRouteCreateView(APIView):
         except (TypeError, ValueError):
             route_level = default
 
-        return max(1, min(route_level, 3))
+        return max(
+            1,
+            min(route_level, 3),
+        )
 
     @staticmethod
-    def _extract_order(item, default=1):
+    def _extract_order(
+        item,
+        default=1,
+    ):
         try:
             order = int(
                 item.get("order")
@@ -8678,6 +8893,10 @@ class LearningRouteCreateView(APIView):
 
         return max(1, order)
 
+    # =========================================================
+    # NORMALIZACIÓN DE CURSO
+    # =========================================================
+
     def _normalize_course_payload(
         self,
         item,
@@ -8685,17 +8904,25 @@ class LearningRouteCreateView(APIView):
         route_level,
         order,
         require_preview=False,
-        require_allowed_provider=False,
     ):
         """
-        Normaliza un curso conservando los campos usados por:
+        Normaliza un curso conservando los campos utilizados por:
 
         - create_initial_learning_route()
         - LearningRouteItem
         - serialize_route_snapshot()
-        - payload enviado a México
-        - cards del StartNow y Plan de carrera
+        - payload enviado posteriormente a México
+        - StartNow
+        - Plan de carrera
+        - Cursos disponibles
+
+        `require_preview=True` se utiliza para free_courses.
+
+        No valida proveedores específicos porque la elegibilidad
+        del catálogo Free debe venir exclusivamente del endpoint
+        oficial Free Tier.
         """
+
         if not isinstance(item, dict):
             return None, {
                 "error": "invalid_recommended_course",
@@ -8704,6 +8931,10 @@ class LearningRouteCreateView(APIView):
                     "tiene una estructura válida."
                 ),
             }
+
+        # -----------------------------------------------------
+        # IDENTIFICADOR CANÓNICO
+        # -----------------------------------------------------
 
         id_interno = self._extract_internal_id(
             item
@@ -8720,6 +8951,10 @@ class LearningRouteCreateView(APIView):
                 ),
             }
 
+        # -----------------------------------------------------
+        # PROVEEDOR
+        # -----------------------------------------------------
+
         provider = self._normalize_provider(
             item.get("provider")
             or item.get("plataforma_nombre")
@@ -8727,37 +8962,26 @@ class LearningRouteCreateView(APIView):
             or item.get("plataforma")
         )
 
-        if (
-            require_allowed_provider
-            and provider
-            not in self.ALLOWED_FREE_PROVIDERS
-        ):
-            return None, {
-                "error": (
-                    "free_course_provider_not_allowed"
-                ),
-                "message": (
-                    "Los cursos gratuitos solo pueden "
-                    "pertenecer a Coursera o edX."
-                ),
-                "provider": provider,
-                "idInterno": id_interno,
-            }
+        if provider == "EDX":
+            provider_display = "edX"
 
-        provider_display = (
-            "edX"
-            if provider == "EDX"
-            else (
-                "Coursera"
-                if provider == "COURSERA"
-                else str(
-                    item.get("provider")
-                    or item.get("platform")
-                    or provider
-                    or ""
-                ).strip()
-            )
-        )
+        elif provider == "COURSERA":
+            provider_display = "Coursera"
+
+        elif provider == "MASTERCLASS":
+            provider_display = "MasterClass"
+
+        else:
+            provider_display = str(
+                item.get("provider")
+                or item.get("platform")
+                or provider
+                or ""
+            ).strip()
+
+        # -----------------------------------------------------
+        # PREVIEW FREE
+        # -----------------------------------------------------
 
         preview = item.get("preview")
 
@@ -8796,6 +9020,7 @@ class LearningRouteCreateView(APIView):
             and (
                 not preview_type
                 or not preview_url
+                or not preview_validated_at
             )
         ):
             return None, {
@@ -8804,10 +9029,14 @@ class LearningRouteCreateView(APIView):
                 ),
                 "message": (
                     f"El curso {id_interno} no contiene "
-                    "un preview gratuito válido."
+                    "un preview Free válido."
                 ),
                 "idInterno": id_interno,
             }
+
+        # -----------------------------------------------------
+        # INFORMACIÓN PRINCIPAL
+        # -----------------------------------------------------
 
         title = str(
             item.get("title")
@@ -8816,6 +9045,10 @@ class LearningRouteCreateView(APIView):
         ).strip()
 
         normalized = {
+            # =================================================
+            # IDENTIDAD
+            # =================================================
+
             "idInterno": id_interno,
             "id_interno": id_interno,
 
@@ -8823,19 +9056,31 @@ class LearningRouteCreateView(APIView):
                 title
                 or "Curso recomendado"
             ),
+
             "nombre": (
                 title
                 or "Curso recomendado"
             ),
 
+            # =================================================
+            # PROVEEDOR / IDIOMA
+            # =================================================
+
             "provider": provider_display,
+
             "language": str(
                 item.get("language")
+                or item.get(
+                    "lenguaje_certificacion"
+                )
                 or item.get("lenguaje")
                 or ""
             ).strip(),
 
-            # La posición debe ser única dentro de cada nivel.
+            # =================================================
+            # POSICIÓN EN LA RUTA
+            # =================================================
+
             "order": order,
             "routeLevel": route_level,
             "route_level": route_level,
@@ -8843,8 +9088,15 @@ class LearningRouteCreateView(APIView):
             "available": (
                 item.get("available")
                 if item.get("available") is not None
-                else item.get("is_available", True)
+                else item.get(
+                    "is_available",
+                    True,
+                )
             ),
+
+            # =================================================
+            # FREE PREVIEW
+            # =================================================
 
             "preview": {
                 "type": preview_type,
@@ -8860,37 +9112,54 @@ class LearningRouteCreateView(APIView):
 
             "preview_type": preview_type,
             "preview_url": preview_url,
+
             "preview_validated_at": (
                 preview_validated_at
             ),
+
             "preview_country_code": (
                 preview_country_code
                 or None
             ),
 
-            # Compatibilidad con servicios actuales.
+            # =================================================
+            # IDS COLOMBIA
+            # =================================================
+
             "id": (
                 item.get("id")
-                or item.get("certificationId")
+                or item.get(
+                    "certificationId"
+                )
                 or item.get(
                     "colombiaCertificationId"
                 )
                 or id_interno
             ),
+
             "certificationId": (
-                item.get("certificationId")
+                item.get(
+                    "certificationId"
+                )
                 or item.get(
                     "colombiaCertificationId"
                 )
                 or item.get("id")
             ),
+
             "colombiaCertificationId": (
                 item.get(
                     "colombiaCertificationId"
                 )
-                or item.get("certificationId")
+                or item.get(
+                    "certificationId"
+                )
                 or item.get("id")
             ),
+
+            # =================================================
+            # INFORMACIÓN ACADÉMICA
+            # =================================================
 
             "level": (
                 item.get("level")
@@ -8899,13 +9168,46 @@ class LearningRouteCreateView(APIView):
                 )
                 or "Recomendado"
             ),
+
+            "nivel_certificacion": (
+                item.get(
+                    "nivel_certificacion"
+                )
+                or item.get("level")
+                or "Recomendado"
+            ),
+
             "hours": (
                 item.get("hours")
+                or item.get("duration")
                 or item.get(
                     "tiempo_certificacion"
                 )
                 or "Duración flexible"
             ),
+
+            "duration": (
+                item.get("duration")
+                or item.get("hours")
+                or item.get(
+                    "tiempo_certificacion"
+                )
+                or ""
+            ),
+
+            "tiempo_certificacion": (
+                item.get(
+                    "tiempo_certificacion"
+                )
+                or item.get("duration")
+                or item.get("hours")
+                or ""
+            ),
+
+            # =================================================
+            # INSTITUCIÓN
+            # =================================================
+
             "institution": (
                 item.get("institution")
                 or item.get(
@@ -8917,22 +9219,41 @@ class LearningRouteCreateView(APIView):
                 or provider_display
             ),
 
+            # =================================================
+            # PLATAFORMA
+            # =================================================
+
             "platform": provider_display,
+
             "platform_id": (
                 item.get("platform_id")
-                or item.get("plataforma_id")
+                or item.get(
+                    "plataforma_id"
+                )
+                or item.get(
+                    "plataforma_certificacion_id"
+                )
                 or (
                     1
                     if provider == "EDX"
                     else (
                         2
-                        if provider == "COURSERA"
-                        else None
+                        if provider
+                        == "COURSERA"
+                        else (
+                            3
+                            if provider
+                            == "MASTERCLASS"
+                            else None
+                        )
                     )
                 )
             ),
+
             "platform_logo": (
-                item.get("platform_logo")
+                item.get(
+                    "platform_logo"
+                )
                 or item.get("plat_ico")
                 or (
                     "/assets/platforms/icons/"
@@ -8941,26 +9262,75 @@ class LearningRouteCreateView(APIView):
                     else (
                         "/assets/platforms/icons/"
                         "icon-coursera.png"
-                        if provider == "COURSERA"
+                        if provider
+                        == "COURSERA"
                         else ""
                     )
                 )
             ),
 
+            # =================================================
+            # PRESENTACIÓN
+            # =================================================
+
             "image": (
                 item.get("image")
-                or item.get("imagen_final")
+                or item.get(
+                    "imagen_final"
+                )
                 or (
                     "/assets/content/courses/"
                     "course-1.jpg"
                 )
             ),
-            "description": (
-                item.get("description")
-                or item.get("descripcion")
+
+            "imagen_final": (
+                item.get(
+                    "imagen_final"
+                )
+                or item.get("image")
                 or ""
             ),
-            "slug": item.get("slug") or "",
+
+            "description": (
+                item.get("description")
+                or item.get(
+                    "metadescripcion_certificacion"
+                )
+                or item.get(
+                    "descripcion"
+                )
+                or ""
+            ),
+
+            "metadescripcion_certificacion": (
+                item.get(
+                    "metadescripcion_certificacion"
+                )
+                or item.get(
+                    "description"
+                )
+                or ""
+            ),
+
+            "slug": (
+                item.get("slug")
+                or ""
+            ),
+
+            "originalUrl": (
+                item.get(
+                    "originalUrl"
+                )
+                or item.get(
+                    "url_certificacion_original"
+                )
+                or ""
+            ),
+
+            # =================================================
+            # TAXONOMÍA
+            # =================================================
 
             "topic": (
                 item.get("topic")
@@ -8970,6 +9340,7 @@ class LearningRouteCreateView(APIView):
                 )
                 else None
             ),
+
             "topics": (
                 item.get("topics")
                 if isinstance(
@@ -8978,6 +9349,7 @@ class LearningRouteCreateView(APIView):
                 )
                 else []
             ),
+
             "skills": (
                 item.get("skills")
                 if isinstance(
@@ -8986,22 +9358,35 @@ class LearningRouteCreateView(APIView):
                 )
                 else []
             ),
+
+            # =================================================
+            # RELACIONES
+            # =================================================
+
             "platformData": (
-                item.get("platformData")
+                item.get(
+                    "platformData"
+                )
                 if isinstance(
-                    item.get("platformData"),
+                    item.get(
+                        "platformData"
+                    ),
                     dict,
                 )
                 else {}
             ),
+
             "university": (
                 item.get("university")
                 if isinstance(
-                    item.get("university"),
+                    item.get(
+                        "university"
+                    ),
                     dict,
                 )
                 else None
             ),
+
             "company": (
                 item.get("company")
                 if isinstance(
@@ -9010,9 +9395,83 @@ class LearningRouteCreateView(APIView):
                 )
                 else None
             ),
+
+            "specialization": (
+                item.get(
+                    "specialization"
+                )
+            ),
+
+            # =================================================
+            # CAMPOS ADICIONALES
+            # =================================================
+
+            "type": (
+                item.get("type")
+                or item.get(
+                    "tipo_certificacion"
+                )
+                or ""
+            ),
+
+            "keywords": (
+                item.get("keywords")
+                or item.get(
+                    "palabra_clave_certificacion"
+                )
+                or ""
+            ),
+
+            "learning": (
+                item.get("learning")
+                or item.get(
+                    "aprendizaje_certificacion"
+                )
+                or ""
+            ),
+
+            "experience": (
+                item.get(
+                    "experience"
+                )
+                or item.get(
+                    "experiencia_certificacion"
+                )
+                or ""
+            ),
+
+            "content": (
+                item.get("content")
+                or item.get(
+                    "contenido_certificacion"
+                )
+                or ""
+            ),
+
+            "modules": (
+                item.get("modules")
+                or item.get(
+                    "modulos_certificacion"
+                )
+                or ""
+            ),
+
+            "instructors": (
+                item.get(
+                    "instructors"
+                )
+                or item.get(
+                    "instructores_certificacion"
+                )
+                or ""
+            ),
         }
 
         return normalized, None
+
+    # =========================================================
+    # RUTA COMPLETA
+    # =========================================================
 
     def _normalize_recommended_courses(
         self,
@@ -9021,10 +9480,10 @@ class LearningRouteCreateView(APIView):
         """
         Normaliza la ruta completa del usuario.
 
-        Permite hasta MAX_RECOMMENDED_COURSES cursos,
-        distribuidos entre los niveles 1, 2 y 3.
-
-        No limita a tres cursos por nivel.
+        - Máximo 150.
+        - No limita a tres por nivel.
+        - Elimina duplicados por idInterno.
+        - Conserva el idInterno original.
         """
 
         if not isinstance(courses, list):
@@ -9048,7 +9507,10 @@ class LearningRouteCreateView(APIView):
         }
 
         for item in courses:
-            if not isinstance(item, dict):
+            if not isinstance(
+                item,
+                dict,
+            ):
                 continue
 
             id_interno = (
@@ -9060,8 +9522,10 @@ class LearningRouteCreateView(APIView):
             if not id_interno:
                 continue
 
+            # Solo para comparación.
+            # El valor original no se modifica.
             identity_key = (
-                id_interno.lower()
+                id_interno.casefold()
             )
 
             if (
@@ -9077,8 +9541,6 @@ class LearningRouteCreateView(APIView):
                 )
             )
 
-            # El orden se asigna automáticamente
-            # dentro de cada nivel.
             requested_order = (
                 level_counts[
                     route_level
@@ -9089,14 +9551,23 @@ class LearningRouteCreateView(APIView):
             normalized, error = (
                 self._normalize_course_payload(
                     item,
-                    route_level=route_level,
-                    order=requested_order,
+                    route_level=(
+                        route_level
+                    ),
+                    order=(
+                        requested_order
+                    ),
                     require_preview=False,
-                    require_allowed_provider=False,
                 )
             )
 
             if error:
+                logger.warning(
+                    "Curso descartado de ruta completa. "
+                    "idInterno=%s error=%s",
+                    id_interno,
+                    error.get("error"),
+                )
                 continue
 
             normalized_courses.append(
@@ -9112,19 +9583,227 @@ class LearningRouteCreateView(APIView):
             ] += 1
 
             if (
-                len(normalized_courses)
-                >= self.MAX_RECOMMENDED_COURSES
+                len(
+                    normalized_courses
+                )
+                >= self
+                .MAX_RECOMMENDED_COURSES
             ):
                 break
 
-        if len(normalized_courses) < 3:
+        # Ya no es necesario exigir tres.
+        # Lo importante es que exista una ruta.
+        if not normalized_courses:
             return None, {
                 "error": (
                     "insufficient_recommended_courses"
                 ),
                 "message": (
-                    "La ruta debe contener al menos "
-                    "tres cursos recomendados."
+                    "No fue posible construir "
+                    "la ruta de aprendizaje."
+                ),
+                "received": 0,
+            }
+
+        normalized_courses.sort(
+            key=lambda course: (
+                int(
+                    course.get(
+                        "routeLevel",
+                        1,
+                    )
+                ),
+                int(
+                    course.get(
+                        "order",
+                        1,
+                    )
+                ),
+            )
+        )
+
+        return (
+            normalized_courses,
+            None,
+        )
+
+    # =========================================================
+    # CURSOS FREE
+    # =========================================================
+
+    def _normalize_free_courses(
+        self,
+        courses,
+    ):
+        """
+        Normaliza experiencias elegibles para Free Tier.
+
+        NUEVO CONTRATO:
+
+        - Una o más experiencias.
+        - Sin obligación de tres.
+        - Sin obligación de una por nivel.
+        - Sin restricción local de idioma.
+        - Sin inferir proveedor permitido.
+        - No permite idInterno repetidos.
+        - Requiere preview.
+        - Conserva preview.validatedAt.
+
+        La validación de que el elemento realmente pertenece al
+        catálogo Free y de la vigencia de validatedAt debe venir
+        de los services de Free Tier.
+        """
+
+        if not isinstance(courses, list):
+            return None, {
+                "error": (
+                    "invalid_free_courses"
+                ),
+                "message": (
+                    "free_courses debe ser "
+                    "una lista."
+                ),
+            }
+
+        if (
+            len(courses)
+            < self.MIN_FREE_COURSES
+        ):
+            return None, {
+                "error": (
+                    "insufficient_free_courses"
+                ),
+                "message": (
+                    "La ruta gratuita debe "
+                    "contener al menos una "
+                    "experiencia elegible."
+                ),
+                "minimum": (
+                    self.MIN_FREE_COURSES
+                ),
+                "received": len(courses),
+            }
+
+        normalized_courses = []
+        used_internal_ids = set()
+
+        level_counts = {
+            1: 0,
+            2: 0,
+            3: 0,
+        }
+
+        for index, item in enumerate(
+            courses,
+            start=1,
+        ):
+            if not isinstance(
+                item,
+                dict,
+            ):
+                return None, {
+                    "error": (
+                        "invalid_free_course"
+                    ),
+                    "message": (
+                        f"El curso en la posición "
+                        f"{index} no tiene una "
+                        "estructura válida."
+                    ),
+                }
+
+            id_interno = (
+                self._extract_internal_id(
+                    item
+                )
+            )
+
+            if not id_interno:
+                return None, {
+                    "error": (
+                        "free_course_missing_internal_id"
+                    ),
+                    "message": (
+                        f"El curso en la posición "
+                        f"{index} no contiene "
+                        "idInterno."
+                    ),
+                }
+
+            identity_key = (
+                id_interno.casefold()
+            )
+
+            # Un idInterno no puede repetirse.
+            if (
+                identity_key
+                in used_internal_ids
+            ):
+                continue
+
+            route_level = (
+                self._extract_route_level(
+                    item,
+                    default=(
+                        ((index - 1) % 3)
+                        + 1
+                    ),
+                )
+            )
+
+            level_counts[
+                route_level
+            ] += 1
+
+            normalized, error = (
+                self._normalize_course_payload(
+                    item,
+                    route_level=(
+                        route_level
+                    ),
+                    order=(
+                        level_counts[
+                            route_level
+                        ]
+                    ),
+                    require_preview=True,
+                )
+            )
+
+            if error:
+                return None, error
+
+            normalized_courses.append(
+                normalized
+            )
+
+            used_internal_ids.add(
+                identity_key
+            )
+
+            if (
+                len(
+                    normalized_courses
+                )
+                >= self.MAX_FREE_COURSES
+            ):
+                break
+
+        if (
+            len(normalized_courses)
+            < self.MIN_FREE_COURSES
+        ):
+            return None, {
+                "error": (
+                    "insufficient_free_courses"
+                ),
+                "message": (
+                    "No existen experiencias "
+                    "Free elegibles para crear "
+                    "la ruta."
+                ),
+                "minimum": (
+                    self.MIN_FREE_COURSES
                 ),
                 "received": len(
                     normalized_courses
@@ -9148,216 +9827,148 @@ class LearningRouteCreateView(APIView):
             )
         )
 
-        return normalized_courses, None
-
-    def _normalize_free_courses(
-        self,
-        courses,
-    ):
-        """
-        Valida y normaliza los tres cursos reservados
-        para TOP_EDUCATION_FREE.
-
-        Debe existir exactamente uno por cada nivel.
-        """
-        if not isinstance(courses, list):
-            return None, {
-                "error": "invalid_free_courses",
-                "message": (
-                    "free_courses debe ser una lista."
-                ),
-            }
-
-        if (
-            len(courses)
-            != self.FREE_COURSES_REQUIRED
-        ):
-            return None, {
-                "error": (
-                    "invalid_free_courses_amount"
-                ),
-                "message": (
-                    "La ruta gratuita debe contener "
-                    "exactamente tres cursos."
-                ),
-                "required": (
-                    self.FREE_COURSES_REQUIRED
-                ),
-                "received": len(courses),
-            }
-
-        normalized_courses = []
-        used_internal_ids = set()
-        used_levels = set()
-
-        for index, item in enumerate(
-            courses,
-            start=1,
-        ):
-            if not isinstance(item, dict):
-                return None, {
-                    "error": (
-                        "invalid_free_course"
-                    ),
-                    "message": (
-                        f"El curso en la posición "
-                        f"{index} no tiene una "
-                        "estructura válida."
-                    ),
-                }
-
-            id_interno = (
-                self._extract_internal_id(item)
-            )
-
-            if not id_interno:
-                return None, {
-                    "error": (
-                        "free_course_missing_internal_id"
-                    ),
-                    "message": (
-                        f"El curso en la posición "
-                        f"{index} no contiene "
-                        "idInterno."
-                    ),
-                }
-
-            identity_key = id_interno.lower()
-
-            if identity_key in used_internal_ids:
-                return None, {
-                    "error": (
-                        "duplicated_free_course"
-                    ),
-                    "message": (
-                        "La ruta gratuita no puede "
-                        "contener cursos repetidos."
-                    ),
-                    "idInterno": id_interno,
-                }
-
-            route_level = (
-                self._extract_route_level(
-                    item,
-                    default=index,
-                )
-            )
-
-            if route_level in used_levels:
-                return None, {
-                    "error": (
-                        "duplicated_free_route_level"
-                    ),
-                    "message": (
-                        "La ruta gratuita debe "
-                        "contener un solo curso "
-                        "por nivel."
-                    ),
-                    "routeLevel": route_level,
-                }
-
-            normalized, error = (
-                self._normalize_course_payload(
-                    item,
-                    route_level=route_level,
-                    # Dentro del snapshot completo,
-                    # cada curso Free ocupa el primer
-                    # lugar de su nivel.
-                    order=1,
-                    require_preview=True,
-                    require_allowed_provider=True,
-                )
-            )
-
-            if error:
-                return None, error
-
-            normalized_courses.append(
-                normalized
-            )
-            used_internal_ids.add(
-                identity_key
-            )
-            used_levels.add(
-                route_level
-            )
-
-        required_levels = {1, 2, 3}
-
-        if used_levels != required_levels:
-            return None, {
-                "error": (
-                    "invalid_free_route_levels"
-                ),
-                "message": (
-                    "La ruta gratuita debe incluir "
-                    "exactamente un curso de cada "
-                    "nivel: 1, 2 y 3."
-                ),
-                "received_levels": sorted(
-                    used_levels
-                ),
-            }
-
-        normalized_courses.sort(
-            key=lambda course: int(
-                course.get(
-                    "routeLevel",
-                    1,
-                )
-            )
+        return (
+            normalized_courses,
+            None,
         )
 
-        return normalized_courses, None
+    # =========================================================
+    # FALLBACK PARA CLIENTES ANTIGUOS
+    # =========================================================
 
     def _build_free_courses_from_recommended(
         self,
         recommended_courses,
     ):
         """
-        Respaldo para clientes antiguos que todavía
-        no envíen free_courses por separado.
+        Compatibilidad temporal con versiones anteriores
+        del frontend que no envían `free_courses`.
 
-        Selecciona el primer curso elegible de cada nivel.
+        Ya NO selecciona exactamente tres.
+
+        Únicamente considera como candidato Free un curso
+        que tenga información explícita de preview.
+
+        Esto evita inferir Free basándonos solamente en
+        proveedor, título o plataforma.
         """
-        selected = []
 
-        for route_level in (1, 2, 3):
-            candidate = next(
-                (
+        selected = []
+        seen_ids = set()
+
+        for course in (
+            recommended_courses
+            or []
+        ):
+            if not isinstance(
+                course,
+                dict,
+            ):
+                continue
+
+            id_interno = (
+                self._extract_internal_id(
                     course
-                    for course
-                    in recommended_courses
-                    if int(
-                        course.get(
-                            "routeLevel",
-                            1,
-                        )
-                    ) == route_level
-                ),
-                None,
+                )
             )
 
-            if candidate:
-                selected.append(
-                    candidate
+            if not id_interno:
+                continue
+
+            identity_key = (
+                id_interno.casefold()
+            )
+
+            if identity_key in seen_ids:
+                continue
+
+            preview = course.get(
+                "preview"
+            )
+
+            if not isinstance(
+                preview,
+                dict,
+            ):
+                continue
+
+            preview_type = str(
+                preview.get("type")
+                or course.get(
+                    "preview_type"
                 )
+                or ""
+            ).strip()
+
+            preview_url = str(
+                preview.get("url")
+                or course.get(
+                    "preview_url"
+                )
+                or ""
+            ).strip()
+
+            validated_at = (
+                preview.get(
+                    "validatedAt"
+                )
+                or course.get(
+                    "preview_validated_at"
+                )
+            )
+
+            if (
+                not preview_type
+                or not preview_url
+                or not validated_at
+            ):
+                continue
+
+            selected.append(
+                course
+            )
+
+            seen_ids.add(
+                identity_key
+            )
+
+            if (
+                len(selected)
+                >= self.MAX_FREE_COURSES
+            ):
+                break
 
         return selected
 
+    # =========================================================
+    # POST
+    # =========================================================
+
     @transaction.atomic
-    def post(self, request):
+    def post(
+        self,
+        request,
+    ):
+        # -----------------------------------------------------
+        # DATOS PERSONALES
+        # -----------------------------------------------------
+
         email = str(
-            request.data.get("email") or ""
+            request.data.get("email")
+            or ""
         ).strip().lower()
 
         first_name = str(
-            request.data.get("first_name")
+            request.data.get(
+                "first_name"
+            )
             or ""
         ).strip()
 
         last_name = str(
-            request.data.get("last_name")
+            request.data.get(
+                "last_name"
+            )
             or ""
         ).strip()
 
@@ -9376,33 +9987,48 @@ class LearningRouteCreateView(APIView):
         ).strip()
 
         phone_e164 = str(
-            request.data.get("phone_e164")
+            request.data.get(
+                "phone_e164"
+            )
             or ""
         ).strip()
 
-        age = request.data.get("age")
+        age = request.data.get(
+            "age"
+        )
 
         gender = str(
-            request.data.get("gender")
+            request.data.get(
+                "gender"
+            )
             or ""
         ).strip()
 
         country = str(
-            request.data.get("country")
+            request.data.get(
+                "country"
+            )
             or ""
         ).strip()
 
         topics_raw = (
-            request.data.get("topics")
+            request.data.get(
+                "topics"
+            )
             or []
         )
 
         goal = str(
-            request.data.get("goal")
+            request.data.get(
+                "goal"
+            )
             or ""
         ).strip()
 
-        # Ruta completa: hasta 150 cursos.
+        # -----------------------------------------------------
+        # RUTA COMPLETA
+        # -----------------------------------------------------
+
         recommended_courses_raw = (
             request.data.get(
                 "recommended_courses"
@@ -9413,18 +10039,26 @@ class LearningRouteCreateView(APIView):
             or []
         )
 
-        # Selección contractual Free:
-        # exactamente tres, uno por nivel.
+        # -----------------------------------------------------
+        # FREE TIER
+        # -----------------------------------------------------
+
+        # Puede contener una o más experiencias elegibles.
         free_courses_raw = (
-            request.data.get("free_courses")
+            request.data.get(
+                "free_courses"
+            )
             or []
         )
 
-        # En este endpoint se conserva la intención,
-        # pero el lead permanece provisionalmente Free
-        # hasta completar signup/Stripe.
+        # -----------------------------------------------------
+        # INTENCIÓN DE PLAN
+        # -----------------------------------------------------
+
         requested_plan = str(
-            request.data.get("selected_plan")
+            request.data.get(
+                "selected_plan"
+            )
             or ""
         ).strip().lower()
 
@@ -9443,19 +10077,25 @@ class LearningRouteCreateView(APIView):
             return Response(
                 {
                     "ok": False,
-                    "error": "email_required",
+                    "error": (
+                        "email_required"
+                    ),
                     "message": (
-                        "El correo es obligatorio."
+                        "El correo es "
+                        "obligatorio."
                     ),
                 },
                 status=(
-                    status.HTTP_400_BAD_REQUEST
+                    status
+                    .HTTP_400_BAD_REQUEST
                 ),
             )
 
         existing_user = (
             User.objects
-            .filter(email__iexact=email)
+            .filter(
+                email__iexact=email
+            )
             .first()
         )
 
@@ -9467,14 +10107,15 @@ class LearningRouteCreateView(APIView):
                         "email_already_registered"
                     ),
                     "message": (
-                        "Ya existe una cuenta con "
-                        "este correo."
+                        "Ya existe una cuenta "
+                        "con este correo."
                     ),
                     "redirect": "/login",
                     "email": email,
                 },
                 status=(
-                    status.HTTP_409_CONFLICT
+                    status
+                    .HTTP_409_CONFLICT
                 ),
             )
 
@@ -9486,11 +10127,13 @@ class LearningRouteCreateView(APIView):
                         "first_name_required"
                     ),
                     "message": (
-                        "El nombre es obligatorio."
+                        "El nombre es "
+                        "obligatorio."
                     ),
                 },
                 status=(
-                    status.HTTP_400_BAD_REQUEST
+                    status
+                    .HTTP_400_BAD_REQUEST
                 ),
             )
 
@@ -9507,7 +10150,8 @@ class LearningRouteCreateView(APIView):
                     ),
                 },
                 status=(
-                    status.HTTP_400_BAD_REQUEST
+                    status
+                    .HTTP_400_BAD_REQUEST
                 ),
             )
 
@@ -9524,7 +10168,8 @@ class LearningRouteCreateView(APIView):
                     ),
                 },
                 status=(
-                    status.HTTP_400_BAD_REQUEST
+                    status
+                    .HTTP_400_BAD_REQUEST
                 ),
             )
 
@@ -9532,36 +10177,58 @@ class LearningRouteCreateView(APIView):
             return Response(
                 {
                     "ok": False,
-                    "error": "goal_required",
+                    "error": (
+                        "goal_required"
+                    ),
                     "message": (
-                        "El objetivo es obligatorio."
+                        "El objetivo es "
+                        "obligatorio."
                     ),
                 },
                 status=(
-                    status.HTTP_400_BAD_REQUEST
+                    status
+                    .HTTP_400_BAD_REQUEST
                 ),
             )
 
-        topics = self._normalize_topics(
-            topics_raw
+        # =====================================================
+        # TOPICS
+        # =====================================================
+
+        topics = (
+            self._normalize_topics(
+                topics_raw
+            )
         )
 
         if topics is None:
             return Response(
                 {
                     "ok": False,
-                    "error": "invalid_topics",
+                    "error": (
+                        "invalid_topics"
+                    ),
                     "message": (
-                        "topics debe ser una lista."
+                        "topics debe ser "
+                        "una lista."
                     ),
                 },
                 status=(
-                    status.HTTP_400_BAD_REQUEST
+                    status
+                    .HTTP_400_BAD_REQUEST
                 ),
             )
 
-        recommended_courses, recommendations_error = (
-            self._normalize_recommended_courses(
+        # =====================================================
+        # NORMALIZAR RUTA COMPLETA
+        # =====================================================
+
+        (
+            recommended_courses,
+            recommendations_error,
+        ) = (
+            self
+            ._normalize_recommended_courses(
                 recommended_courses_raw
             )
         )
@@ -9573,11 +10240,20 @@ class LearningRouteCreateView(APIView):
                     **recommendations_error,
                 },
                 status=(
-                    status.HTTP_400_BAD_REQUEST
+                    status
+                    .HTTP_400_BAD_REQUEST
                 ),
             )
 
+        # =====================================================
+        # NORMALIZAR FREE COURSES
+        # =====================================================
+
         # Compatibilidad con clientes anteriores.
+        #
+        # No inferimos Free por proveedor:
+        # únicamente utilizamos elementos que tengan
+        # preview explícito.
         if not free_courses_raw:
             free_courses_raw = (
                 self
@@ -9586,7 +10262,10 @@ class LearningRouteCreateView(APIView):
                 )
             )
 
-        free_courses, free_courses_error = (
+        (
+            free_courses,
+            free_courses_error,
+        ) = (
             self._normalize_free_courses(
                 free_courses_raw
             )
@@ -9599,9 +10278,14 @@ class LearningRouteCreateView(APIView):
                     **free_courses_error,
                 },
                 status=(
-                    status.HTTP_400_BAD_REQUEST
+                    status
+                    .HTTP_400_BAD_REQUEST
                 ),
             )
+
+        # =====================================================
+        # TELÉFONO E164
+        # =====================================================
 
         if not phone_e164:
             country_digits = "".join(
@@ -9618,66 +10302,119 @@ class LearningRouteCreateView(APIView):
                 )
             )
 
-            phone_e164 = (
-                f"+{country_digits}"
-                f"{phone_digits}"
-            )
+            if (
+                country_digits
+                and phone_digits
+            ):
+                phone_e164 = (
+                    f"+{country_digits}"
+                    f"{phone_digits}"
+                )
 
         # =====================================================
-        # CREAR LEAD EN ESTADO FREE PROVISIONAL
+        # CREAR LEAD
         # =====================================================
 
         route = (
-            LearningRouteLead.objects.create(
+            LearningRouteLead.objects
+            .create(
                 user=None,
+
                 email=email,
-                first_name=first_name,
-                last_name=last_name,
+
+                first_name=(
+                    first_name
+                ),
+
+                last_name=(
+                    last_name
+                ),
+
                 phone_country_code=(
                     phone_country_code
                 ),
-                phone_number=phone_number,
-                phone_e164=phone_e164,
+
+                phone_number=(
+                    phone_number
+                ),
+
+                phone_e164=(
+                    phone_e164
+                ),
+
                 age=age,
                 gender=gender,
                 country=country,
                 topics=topics,
                 goal=goal,
 
-                # Se conservan ambas colecciones:
-                # - ruta completa de hasta 150;
-                # - selección Free de tres.
+                # =============================================
+                # RUTAS
+                # =============================================
+
                 recommended_certifications={
+                    # Ruta completa Colombia.
                     "recommended_courses": (
                         recommended_courses
                     ),
+
+                    # Catálogo Free elegible.
                     "free_courses": (
                         free_courses
                     ),
                 },
 
-                # Hasta completar signup o confirmar
-                # Stripe, el lead permanece Free.
+                # =============================================
+                # ESTADO PROVISIONAL
+                # =============================================
+
+                # Hasta CompleteSignup el lead permanece
+                # provisionalmente en Free.
                 selected_plan="free",
+
                 package_code=(
                     self.FREE_PACKAGE_CODE
                 ),
-                tier=self.FREE_TIER,
+
+                tier=(
+                    self.FREE_TIER
+                ),
+
                 billing_period=None,
+
                 access_status="ALLOWED",
+
                 lifecycle_status="FREE",
+
                 pending_action="NONE",
 
+                # =============================================
+                # VERSIONAMIENTO
+                # =============================================
+
                 route_version=1,
+
                 mx_route_version=None,
+
                 mx_entitlement_status=None,
+
                 mx_last_sync_at=None,
 
+                # =============================================
+                # ESTADO MX
+                # =============================================
+
                 status="route_created",
+
                 mx_status="pending",
+
                 mx_response=None,
             )
         )
+
+        # -----------------------------------------------------
+        # COMPATIBILIDAD CON MODELO
+        # -----------------------------------------------------
 
         if hasattr(
             route,
@@ -9696,55 +10433,85 @@ class LearningRouteCreateView(APIView):
         # CREAR SNAPSHOT COMPLETO V1
         # =====================================================
         #
-        # Colombia conserva la ruta completa.
-        # CompleteSignup decidirá:
+        # Colombia SIEMPRE guarda la ruta completa.
         #
-        # - Free: enviar a MX uno por nivel (3).
-        # - Basic/X/Plus: enviar a MX toda la ruta.
+        # CompleteSignup decidirá después qué conjunto se
+        # provisiona en México de acuerdo con el plan.
+        #
+        # Free:
+        #   experiencias Free elegibles según producto.
+        #
+        # Basic / X / Plus:
+        #   ruta correspondiente al entitlement del plan.
+        #
         # =====================================================
 
         try:
             snapshot = (
                 create_initial_learning_route(
                     lead=route,
+
                     courses=(
                         recommended_courses
                     ),
+
                     source="START_NOW",
+
                     change_reason=(
                         "START_NOW_ROUTE_CREATED"
                     ),
+
                     metadata={
                         "catalog": (
                             "free-preview-courses"
                         ),
+
                         "goal": goal,
+
                         "topics": topics,
-                        "country": country,
-                        "providersAllowed": [
-                            "COURSERA",
-                            "EDX",
-                        ],
+
+                        "country": (
+                            country
+                        ),
+
+                        # Ya no declaramos proveedores
+                        # manualmente permitidos.
+                        #
+                        # La elegibilidad viene del
+                        # catálogo Free oficial.
+                        "freeCatalogSource": (
+                            "/v1/b2c/"
+                            "free-preview-courses"
+                        ),
+
                         "requestedPlan": (
                             requested_plan
                             or None
                         ),
+
                         "requestedPaidPlan": (
                             requested_paid_plan
                             or None
                         ),
+
                         "initialPackageCode": (
-                            self.FREE_PACKAGE_CODE
+                            self
+                            .FREE_PACKAGE_CODE
                         ),
+
                         "recommendedCoursesCount": (
                             len(
                                 recommended_courses
                             )
                         ),
+
                         "freeCoursesCount": (
-                            len(free_courses)
+                            len(
+                                free_courses
+                            )
                         ),
                     },
+
                     require_certification=False,
                 )
             )
@@ -9757,7 +10524,9 @@ class LearningRouteCreateView(APIView):
                 route.id,
             )
 
-            transaction.set_rollback(True)
+            transaction.set_rollback(
+                True
+            )
 
             return Response(
                 {
@@ -9773,58 +10542,93 @@ class LearningRouteCreateView(APIView):
                 ),
             )
 
+        # =====================================================
+        # SERIALIZAR SNAPSHOT
+        # =====================================================
+
         snapshot_data = (
             serialize_route_snapshot(
                 snapshot
             )
         )
 
+        # =====================================================
+        # RESPUESTA
+        # =====================================================
+
         return Response(
             {
                 "ok": True,
+
                 "id": route.id,
                 "route_id": route.id,
+
                 "email": route.email,
+
                 "first_name": (
                     route.first_name
                 ),
+
                 "last_name": (
                     route.last_name
                 ),
+
                 "phone_country_code": (
                     route.phone_country_code
                 ),
+
                 "phone_number": (
                     route.phone_number
                 ),
+
                 "phone_e164": (
                     route.phone_e164
                 ),
-                "status": route.status,
+
+                "status": (
+                    route.status
+                ),
+
+                # =============================================
+                # PLAN
+                # =============================================
 
                 "selected_plan": (
                     route.selected_plan
                 ),
+
                 "package_code": (
                     route.package_code
                 ),
-                "tier": route.tier,
+
+                "tier": (
+                    route.tier
+                ),
+
                 "billing_period": (
                     route.billing_period
                 ),
+
                 "lifecycle_status": (
                     route.lifecycle_status
                 ),
+
                 "access_status": (
                     route.access_status
                 ),
+
                 "pending_action": (
                     route.pending_action
                 ),
 
+                # =============================================
+                # RUTA
+                # =============================================
+
                 "route_version": (
                     snapshot.version
                 ),
+
                 "learning_route": (
                     snapshot_data
                 ),
@@ -9832,28 +10636,52 @@ class LearningRouteCreateView(APIView):
                 "recommended_courses": (
                     recommended_courses
                 ),
-                "free_courses": free_courses,
+
+                "free_courses": (
+                    free_courses
+                ),
+
+                # =============================================
+                # META
+                # =============================================
 
                 "meta": {
                     "catalog": (
                         "free-preview-courses"
                     ),
-                    "providers": [
-                        "COURSERA",
-                        "EDX",
-                    ],
+
+                    "free_catalog_source": (
+                        "/v1/b2c/"
+                        "free-preview-courses"
+                    ),
+
                     "recommended_courses_count": (
                         len(
                             recommended_courses
                         )
                     ),
+
                     "free_courses_count": (
-                        len(free_courses)
+                        len(
+                            free_courses
+                        )
                     ),
-                    "expected_maximum": (
+
+                    "recommended_courses_limit": (
                         self
                         .MAX_RECOMMENDED_COURSES
                     ),
+
+                    "free_courses_limit": (
+                        self
+                        .MAX_FREE_COURSES
+                    ),
+
+                    "free_courses_minimum": (
+                        self
+                        .MIN_FREE_COURSES
+                    ),
+
                     "courses_per_level": {
                         str(level): sum(
                             1
@@ -9864,10 +10692,45 @@ class LearningRouteCreateView(APIView):
                                     "routeLevel",
                                     1,
                                 )
-                            ) == level
+                            )
+                            == level
                         )
-                        for level in (1, 2, 3)
+                        for level
+                        in (1, 2, 3)
                     },
+
+                    "free_courses_per_level": {
+                        str(level): sum(
+                            1
+                            for course
+                            in free_courses
+                            if int(
+                                course.get(
+                                    "routeLevel",
+                                    1,
+                                )
+                            )
+                            == level
+                        )
+                        for level
+                        in (1, 2, 3)
+                    },
+
+                    "free_internal_ids": [
+                        course.get(
+                            "idInterno"
+                        )
+                        for course
+                        in free_courses
+                    ],
+
+                    "recommended_internal_ids": [
+                        course.get(
+                            "idInterno"
+                        )
+                        for course
+                        in recommended_courses
+                    ],
                 },
             },
             status=(
@@ -11931,67 +12794,218 @@ def select_courses_for_mx_plan(
     """
     Decide qué cursos recibe México según el plan.
 
-    Free:
-    - exactamente 3 cursos únicos;
-    - prioriza los cursos del Nivel 1;
-    - si faltan cursos de Nivel 1, completa con los
-      siguientes cursos únicos disponibles.
+    PLANES DE PAGO
+    --------------
+    - Conservan la ruta completa recibida.
+    - Eliminan duplicados por idInterno.
+    - No existe límite artificial de tres cursos.
 
-    Pago:
-    - conserva la ruta completa;
-    - elimina duplicados por idInterno.
+    FREE
+    ----
+    - Conserva únicamente experiencias Free explícitamente
+      elegibles.
+    - No limita a exactamente tres cursos.
+    - No exige un curso por nivel.
+    - No exige que pertenezcan al Nivel 1.
+    - No infiere elegibilidad por proveedor.
+    - No aplica restricción de idioma.
+    - Elimina duplicados por idInterno.
+    - Conserva idInterno exactamente como fue recibido.
+
+    IMPORTANTE:
+    Para Free, `courses` debe contener la colección que previamente
+    fue construida desde el catálogo oficial:
+
+        /v1/b2c/free-preview-courses
+
+    o una colección persistida que conserve su bloque `preview`.
+
+    Este helper NO debe convertir una ruta paga/general en Free
+    basándose en routeLevel o provider.
     """
-    unique_courses = get_unique_recommended_courses(
-        courses
+
+    unique_courses = (
+        get_unique_recommended_courses(
+            courses
+        )
     )
 
     normalized_plan = str(
         plan_value or "free"
     ).strip().lower()
 
+    # =========================================================
+    # PLAN DE PAGO
+    # =========================================================
+    #
+    # Para cualquier plan diferente de Free conservamos
+    # toda la ruta.
+    # =========================================================
+
     if normalized_plan != "free":
         return unique_courses
 
-    level_one_courses = [
-        course
-        for course in unique_courses
-        if normalize_route_level(
-            course.get("routeLevel")
-            or course.get("route_level")
-            or course.get("level_route")
-        ) == 1
-    ]
+    # =========================================================
+    # FREE
+    # =========================================================
 
-    selected_courses = level_one_courses[:3]
+    selected_courses = []
+    selected_ids = set()
 
-    if len(selected_courses) < 3:
-        selected_ids = {
+    for course in unique_courses:
+        if not isinstance(course, dict):
+            continue
+
+        # -----------------------------------------------------
+        # ID INTERNO
+        # -----------------------------------------------------
+
+        internal_id = (
             get_recommended_course_internal_id(
                 course
-            ).lower()
-            for course in selected_courses
+            )
+        )
+
+        internal_id = str(
+            internal_id or ""
+        ).strip()
+
+        if not internal_id:
+            continue
+
+        identity_key = (
+            internal_id.casefold()
+        )
+
+        if identity_key in selected_ids:
+            continue
+
+        # -----------------------------------------------------
+        # PREVIEW
+        # -----------------------------------------------------
+
+        preview = course.get(
+            "preview"
+        )
+
+        if not isinstance(
+            preview,
+            dict,
+        ):
+            preview = {}
+
+        preview_type = str(
+            preview.get("type")
+            or course.get(
+                "preview_type"
+            )
+            or ""
+        ).strip().upper()
+
+        preview_url = str(
+            preview.get("url")
+            or course.get(
+                "preview_url"
+            )
+            or ""
+        ).strip()
+
+        preview_validated_at = (
+            preview.get(
+                "validatedAt"
+            )
+            or course.get(
+                "preview_validated_at"
+            )
+        )
+
+        preview_country_code = str(
+            preview.get(
+                "countryCode"
+            )
+            or course.get(
+                "preview_country_code"
+            )
+            or ""
+        ).strip().upper()
+
+        # -----------------------------------------------------
+        # VALIDACIÓN FREE
+        # -----------------------------------------------------
+        #
+        # No usamos routeLevel como criterio.
+        # No usamos provider como criterio.
+        #
+        # Si no conserva preview explícito, este helper no puede
+        # asumir que el curso es Free.
+        # -----------------------------------------------------
+
+        if (
+            not preview_type
+            or not preview_url
+            or not preview_validated_at
+        ):
+            continue
+
+        # -----------------------------------------------------
+        # NORMALIZAR
+        # -----------------------------------------------------
+
+        normalized_course = dict(
+            course
+        )
+
+        normalized_course[
+            "idInterno"
+        ] = internal_id
+
+        normalized_course[
+            "id_interno"
+        ] = internal_id
+
+        normalized_course[
+            "preview"
+        ] = {
+            "type": preview_type,
+            "url": preview_url,
+            "validatedAt": (
+                preview_validated_at
+            ),
+            "countryCode": (
+                preview_country_code
+                or None
+            ),
         }
 
-        for course in unique_courses:
-            internal_id = (
-                get_recommended_course_internal_id(
-                    course
-                ).lower()
-            )
+        # Alias para compatibilidad con servicios existentes.
+        normalized_course[
+            "preview_type"
+        ] = preview_type
 
-            if not internal_id:
-                continue
+        normalized_course[
+            "preview_url"
+        ] = preview_url
 
-            if internal_id in selected_ids:
-                continue
+        normalized_course[
+            "preview_validated_at"
+        ] = preview_validated_at
 
-            selected_courses.append(course)
-            selected_ids.add(internal_id)
+        normalized_course[
+            "preview_country_code"
+        ] = (
+            preview_country_code
+            or None
+        )
 
-            if len(selected_courses) == 3:
-                break
+        selected_courses.append(
+            normalized_course
+        )
 
-    return selected_courses[:3]
+        selected_ids.add(
+            identity_key
+        )
+
+    return selected_courses
 
 
 LEVEL_RULES = {
@@ -12001,7 +13015,10 @@ LEVEL_RULES = {
         "badge": "DISPONIBLE",
         "platform_ids": [2],
         "nivel": "BEGINNER",
-        "limit": 3,
+
+        # Solo para visualización.
+        "visual_limit": 3,
+
         "one_per_platform": False,
     },
     "level_2": {
@@ -12010,7 +13027,10 @@ LEVEL_RULES = {
         "badge": "PLAN X / PLUS",
         "platform_ids": [1, 3],
         "nivel": "INTERMEDIATE",
-        "limit": 3,
+
+        # Solo para visualización.
+        "visual_limit": 3,
+
         "one_per_platform": True,
     },
     "level_3": {
@@ -12019,7 +13039,10 @@ LEVEL_RULES = {
         "badge": "PLAN PLUS",
         "platform_ids": [1, 2, 3],
         "nivel": "ADVANCED",
-        "limit": 3,
+
+        # Solo para visualización.
+        "visual_limit": 3,
+
         "one_per_platform": True,
     },
 }
@@ -12725,26 +13748,53 @@ def build_level_recommendations(
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteRecommendationsAPIView(APIView):
     """
-    Devuelve hasta nueve recomendaciones elegibles, distribuidas en
-    tres niveles con un máximo de tres cursos por nivel.
+    Genera recomendaciones de ruta de aprendizaje utilizando
+    exclusivamente experiencias elegibles provenientes del catálogo
+    oficial Free Tier:
 
-    Fuente única:
         /v1/b2c/free-preview-courses
 
-    Proveedores permitidos:
-        - Coursera
-        - edX
+    La respuesta separa tres conceptos:
 
-    La respuesta separa:
-        - recommended_courses: hasta nueve cursos para visualización y
-          rutas de planes pagos.
-        - free_courses: exactamente tres cursos, uno por cada nivel,
-          para el aprovisionamiento del plan Free en México.
+    1. recommended_courses
+       Ruta completa recomendada para el usuario.
+       Puede contener hasta MAX_COMPLETE_RECOMMENDATIONS cursos.
+
+    2. visual_recommended_courses
+       Selección visual utilizada por StartNow.
+       Mantiene un máximo de nueve cursos:
+       tres por cada bloque visual de la ruta.
+
+    3. free_courses
+       Experiencias elegibles para TOP_EDUCATION_FREE.
+
+       El contrato actual NO exige exactamente tres cursos.
+       Puede enviarse una o más experiencias Free elegibles.
+
+    Reglas importantes:
+
+    - No se infiere elegibilidad Free desde el catálogo general.
+    - No se infiere elegibilidad por proveedor.
+    - No se infiere elegibilidad por routeLevel.
+    - No existe restricción contractual de idioma para Free.
+    - No se repite idInterno.
+    - idInterno se conserva exactamente como fue recibido.
+    - El bloque preview se conserva para provisión a México.
     """
 
     authentication_classes = []
     permission_classes = []
 
+    # =========================================================
+    # CONFIGURACIÓN
+    # =========================================================
+
+    # Esta lista NO determina elegibilidad Free.
+    # Solo se conserva como información de compatibilidad /
+    # auditoría mientras los servicios existentes la utilicen.
+    #
+    # La fuente real de elegibilidad es exclusivamente:
+    # /v1/b2c/free-preview-courses
     FREE_PROVIDERS = (
         "COURSERA",
         "EDX",
@@ -12757,14 +13807,11 @@ class LearningRouteRecommendationsAPIView(APIView):
     # Cantidad máxima de cursos de la ruta completa.
     MAX_COMPLETE_RECOMMENDATIONS = 150
 
-    # Cantidad contractual para TOP_EDUCATION_FREE.
-    FREE_MX_RECOMMENDATION_AMOUNT = 3
-
     LEVEL_PRESENTATION = {
         "level_1": {
             "label": "Comienza aquí",
             "subtitle": (
-                "Una experiencia gratuita para construir "
+                "Una experiencia para construir "
                 "las bases de tu ruta."
             ),
             "badge": "Fundamentos",
@@ -12773,7 +13820,7 @@ class LearningRouteRecommendationsAPIView(APIView):
         "level_2": {
             "label": "Continúa aprendiendo",
             "subtitle": (
-                "Una experiencia gratuita relacionada con "
+                "Experiencias relacionadas con "
                 "tus intereses y objetivo."
             ),
             "badge": "Desarrollo",
@@ -12782,13 +13829,17 @@ class LearningRouteRecommendationsAPIView(APIView):
         "level_3": {
             "label": "Da el siguiente paso",
             "subtitle": (
-                "Una experiencia gratuita para ampliar "
+                "Experiencias para ampliar "
                 "tu perfil profesional."
             ),
             "badge": "Proyección",
             "nivel": "ADVANCED",
         },
     }
+
+    # =========================================================
+    # HELPERS
+    # =========================================================
 
     @staticmethod
     def _normalize_list(value):
@@ -12798,9 +13849,14 @@ class LearningRouteRecommendationsAPIView(APIView):
         result = []
 
         for item in value:
-            clean = str(item or "").strip()
+            clean = str(
+                item or ""
+            ).strip()
 
-            if clean and clean not in result:
+            if (
+                clean
+                and clean not in result
+            ):
                 result.append(clean)
 
         return result
@@ -12811,16 +13867,127 @@ class LearningRouteRecommendationsAPIView(APIView):
         Convierte textos en tokens comparables usando slugify,
         eliminando diferencias de mayúsculas, acentos y signos.
         """
+
         tokens = set()
 
         for value in values:
-            clean = slugify(str(value or "")).replace("-", " ")
+            clean = slugify(
+                str(value or "")
+            ).replace("-", " ")
 
             for token in clean.split():
                 if len(token) >= 3:
                     tokens.add(token)
 
         return tokens
+
+    @staticmethod
+    def _get_internal_id(course):
+        """
+        Obtiene idInterno sin modificar el valor original.
+
+        La normalización casefold() se utiliza únicamente
+        en los puntos donde sea necesario comparar duplicados.
+        """
+
+        if not isinstance(course, dict):
+            return ""
+
+        return str(
+            course.get("idInterno")
+            or course.get("id_interno")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _get_preview(course):
+        """
+        Recupera y normaliza el bloque preview conservando
+        los campos necesarios para la provisión Free.
+        """
+
+        if not isinstance(course, dict):
+            return {}
+
+        preview = (
+            course.get("preview")
+            if isinstance(
+                course.get("preview"),
+                dict,
+            )
+            else {}
+        )
+
+        preview_type = str(
+            preview.get("type")
+            or course.get("preview_type")
+            or ""
+        ).strip().upper()
+
+        preview_url = str(
+            preview.get("url")
+            or course.get("preview_url")
+            or ""
+        ).strip()
+
+        preview_validated_at = (
+            preview.get("validatedAt")
+            or course.get(
+                "preview_validated_at"
+            )
+        )
+
+        preview_country_code = str(
+            preview.get("countryCode")
+            or course.get(
+                "preview_country_code"
+            )
+            or ""
+        ).strip().upper()
+
+        return {
+            "type": preview_type or None,
+            "url": preview_url or None,
+            "validatedAt": (
+                preview_validated_at
+            ),
+            "countryCode": (
+                preview_country_code
+                or None
+            ),
+        }
+
+    @classmethod
+    def _is_free_eligible_course(
+        cls,
+        course,
+    ):
+        """
+        Valida que el curso conserve evidencia explícita
+        del catálogo Free.
+
+        IMPORTANTE:
+        Esta validación NO sustituye al catálogo remoto.
+        El curso ya debió haber sido obtenido mediante
+        get_free_eligible_queryset().
+        """
+
+        id_interno = cls._get_internal_id(
+            course
+        )
+
+        if not id_interno:
+            return False
+
+        preview = cls._get_preview(
+            course
+        )
+
+        return bool(
+            preview.get("type")
+            and preview.get("url")
+            and preview.get("validatedAt")
+        )
 
     def _score_course(
         self,
@@ -12832,19 +13999,29 @@ class LearningRouteRecommendationsAPIView(APIView):
         language=None,
     ):
         """
-        Puntúa únicamente cursos que ya fueron declarados elegibles
-        por el catálogo Free y encontrados en Certificaciones.
+        Puntúa únicamente cursos que ya fueron declarados
+        elegibles por el catálogo Free y encontrados en
+        Certificaciones.
+
+        El idioma puede mejorar la puntuación cuando coincide,
+        pero NO determina elegibilidad Free.
         """
 
         topic = (
             course.get("topic")
-            if isinstance(course.get("topic"), dict)
+            if isinstance(
+                course.get("topic"),
+                dict,
+            )
             else {}
         )
 
         skills = (
             course.get("skills")
-            if isinstance(course.get("skills"), list)
+            if isinstance(
+                course.get("skills"),
+                list,
+            )
             else []
         )
 
@@ -12856,7 +14033,10 @@ class LearningRouteRecommendationsAPIView(APIView):
         skill_names = []
 
         for skill in skills:
-            if not isinstance(skill, dict):
+            if not isinstance(
+                skill,
+                dict,
+            ):
                 continue
 
             skill_names.extend([
@@ -12879,15 +14059,24 @@ class LearningRouteRecommendationsAPIView(APIView):
             *skill_names,
         )
 
-        topic_tokens = self._tokenize(*topics)
-        goal_tokens = self._tokenize(goal)
+        topic_tokens = self._tokenize(
+            *topics
+        )
+
+        goal_tokens = self._tokenize(
+            goal
+        )
 
         topic_matches = len(
-            searchable_tokens.intersection(topic_tokens)
+            searchable_tokens.intersection(
+                topic_tokens
+            )
         )
 
         goal_matches = len(
-            searchable_tokens.intersection(goal_tokens)
+            searchable_tokens.intersection(
+                goal_tokens
+            )
         )
 
         score = (
@@ -12907,15 +14096,21 @@ class LearningRouteRecommendationsAPIView(APIView):
 
         if (
             local_topic_id
-            and local_topic_id in normalized_topic_ids
+            and local_topic_id
+            in normalized_topic_ids
         ):
             score += 100
 
         skill_ids = {
-            str(skill.get("id")).strip()
+            str(
+                skill.get("id")
+            ).strip()
             for skill in skills
-            if isinstance(skill, dict)
-            and skill.get("id") is not None
+            if (
+                isinstance(skill, dict)
+                and skill.get("id")
+                is not None
+            )
         }
 
         score += (
@@ -12932,17 +14127,22 @@ class LearningRouteRecommendationsAPIView(APIView):
         ).strip().lower()
 
         course_language = str(
-            course.get("language") or ""
+            course.get("language")
+            or ""
         ).strip().lower()
 
+        # El idioma solamente mejora relevancia.
+        # No elimina cursos Free de otros idiomas.
         if (
             requested_language
             and course_language
-            and requested_language == course_language
+            and requested_language
+            == course_language
         ):
             score += 20
 
-        # Premia cursos con información visual y académica completa.
+        # Premia cursos con información visual
+        # y académica completa.
         if course.get("image"):
             score += 5
 
@@ -12950,9 +14150,16 @@ class LearningRouteRecommendationsAPIView(APIView):
             score += 5
 
         if skills:
-            score += min(len(skills), 5)
+            score += min(
+                len(skills),
+                5,
+            )
 
-        if course.get("preview", {}).get("url"):
+        preview = self._get_preview(
+            course
+        )
+
+        if preview.get("url"):
             score += 10
 
         return score
@@ -12967,42 +14174,66 @@ class LearningRouteRecommendationsAPIView(APIView):
     ):
         preview = (
             course.get("preview")
-            if isinstance(course.get("preview"), dict)
+            if isinstance(
+                course.get("preview"),
+                dict,
+            )
             else {}
         )
 
         platform = (
             course.get("platform")
-            if isinstance(course.get("platform"), dict)
+            if isinstance(
+                course.get("platform"),
+                dict,
+            )
             else {}
         )
 
         university = (
             course.get("university")
-            if isinstance(course.get("university"), dict)
+            if isinstance(
+                course.get("university"),
+                dict,
+            )
             else {}
         )
 
         company = (
             course.get("company")
-            if isinstance(course.get("company"), dict)
+            if isinstance(
+                course.get("company"),
+                dict,
+            )
             else {}
         )
 
         topic = (
             course.get("topic")
-            if isinstance(course.get("topic"), dict)
+            if isinstance(
+                course.get("topic"),
+                dict,
+            )
             else None
         )
 
         skills = (
             course.get("skills")
-            if isinstance(course.get("skills"), list)
+            if isinstance(
+                course.get("skills"),
+                list,
+            )
             else []
         )
 
+        # =====================================================
+        # ID INTERNO
+        # =====================================================
+
         id_interno = str(
-            course.get("idInterno") or ""
+            course.get("idInterno")
+            or course.get("id_interno")
+            or ""
         ).strip()
 
         certification_id = course.get(
@@ -13024,162 +14255,384 @@ class LearningRouteRecommendationsAPIView(APIView):
 
         main_skill = (
             skills[0]
-            if skills
-            and isinstance(skills[0], dict)
+            if (
+                skills
+                and isinstance(
+                    skills[0],
+                    dict,
+                )
+            )
             else {}
         )
 
+        # =====================================================
+        # PREVIEW
+        # =====================================================
+
+        preview_type = (
+            preview.get("type")
+            or course.get("preview_type")
+        )
+
+        preview_url = (
+            preview.get("url")
+            or course.get("preview_url")
+        )
+
+        preview_validated_at = (
+            preview.get("validatedAt")
+            or course.get(
+                "preview_validated_at"
+            )
+        )
+
+        preview_country_code = (
+            preview.get("countryCode")
+            or course.get(
+                "preview_country_code"
+            )
+        )
+
         return {
-            # Identidad
-            "id": certification_id or id_interno,
-            "certificationId": certification_id,
-            "colombiaCertificationId": certification_id,
+            # =================================================
+            # IDENTIDAD
+            # =================================================
+
+            "id": (
+                certification_id
+                or id_interno
+            ),
+
+            "certificationId": (
+                certification_id
+            ),
+
+            "colombiaCertificationId": (
+                certification_id
+            ),
+
+            # Se conserva exactamente como llega.
             "idInterno": id_interno,
+
+            # Alias interno temporal.
             "id_interno": id_interno,
-            "slug": course.get("slug") or "",
 
-            # Ruta
+            "slug": (
+                course.get("slug")
+                or ""
+            ),
+
+            # =================================================
+            # RUTA
+            # =================================================
+
             "order": order,
-            "routeLevel": route_level,
-            "route_level": route_level,
+
+            "routeLevel": (
+                route_level
+            ),
+
+            "route_level": (
+                route_level
+            ),
+
             "available": bool(
-                preview.get("available", True)
+                preview_url
             ),
 
-            # Información principal
-            "title": course.get("title") or "",
-            "nombre": course.get("title") or "",
+            # =================================================
+            # INFORMACIÓN PRINCIPAL
+            # =================================================
+
+            "title": (
+                course.get("title")
+                or ""
+            ),
+
+            "nombre": (
+                course.get("title")
+                or ""
+            ),
+
             "description": (
-                course.get("description") or ""
+                course.get("description")
+                or ""
             ),
+
             "metadescripcion_certificacion": (
-                course.get("description") or ""
+                course.get("description")
+                or ""
             ),
-            "keywords": course.get("keywords") or "",
 
-            "image": course.get("image") or "",
-            "imagen_final": course.get("image") or "",
-            "video": course.get("video") or "",
+            "keywords": (
+                course.get("keywords")
+                or ""
+            ),
+
+            "image": (
+                course.get("image")
+                or ""
+            ),
+
+            "imagen_final": (
+                course.get("image")
+                or ""
+            ),
+
+            "video": (
+                course.get("video")
+                or ""
+            ),
+
             "originalUrl": (
-                course.get("originalUrl") or ""
+                course.get("originalUrl")
+                or ""
             ),
 
-            # Nivel y duración reales
+            # =================================================
+            # NIVEL Y DURACIÓN
+            # =================================================
+
             "level": (
                 course.get("level")
                 or level_name
             ),
+
             "nivel_certificacion": (
                 course.get("level")
                 or level_name
             ),
-            "routeLevelName": level_name,
 
-            "duration": course.get("duration") or "",
-            "hours": course.get("duration") or "",
+            "routeLevelName": (
+                level_name
+            ),
+
+            "duration": (
+                course.get("duration")
+                or ""
+            ),
+
+            "hours": (
+                course.get("duration")
+                or ""
+            ),
+
             "tiempo_certificacion": (
-                course.get("duration") or ""
+                course.get("duration")
+                or ""
             ),
 
-            "language": course.get("language") or "",
+            "language": (
+                course.get("language")
+                or ""
+            ),
+
             "lenguaje_certificacion": (
-                course.get("language") or ""
+                course.get("language")
+                or ""
             ),
-            "type": course.get("type") or "",
 
-            # Proveedor
-            "provider": provider,
-            "platform": platform.get("name") or provider,
-            "plataforma_nombre": (
-                platform.get("name") or provider
+            "type": (
+                course.get("type")
+                or ""
             ),
-            "platform_id": platform.get("id"),
+
+            # =================================================
+            # PROVEEDOR
+            # =================================================
+
+            "provider": provider,
+
+            "platform": (
+                platform.get("name")
+                or provider
+            ),
+
+            "plataforma_nombre": (
+                platform.get("name")
+                or provider
+            ),
+
+            "platform_id": (
+                platform.get("id")
+            ),
+
             "plataforma_certificacion_id": (
                 platform.get("id")
             ),
+
             "platform_logo": (
                 platform.get("icon")
                 or platform.get("image")
                 or ""
             ),
+
             "plat_ico": (
                 platform.get("icon")
                 or platform.get("image")
                 or ""
             ),
-            "platformData": platform,
 
-            # Institución
+            "platformData": (
+                platform
+            ),
+
+            # =================================================
+            # INSTITUCIÓN
+            # =================================================
+
             "institution": institution,
+
             "universidad_nombre": (
                 university.get("name")
                 or company.get("name")
                 or ""
             ),
-            "university": university or None,
-            "company": company or None,
-            "specialization": (
-                course.get("specialization")
+
+            "university": (
+                university or None
             ),
 
-            # Clasificación
+            "company": (
+                company or None
+            ),
+
+            "specialization": (
+                course.get(
+                    "specialization"
+                )
+            ),
+
+            # =================================================
+            # CLASIFICACIÓN
+            # =================================================
+
             "topic": topic,
+
             "topics": (
                 course.get("topics")
                 if isinstance(
                     course.get("topics"),
                     list,
                 )
-                else ([topic] if topic else [])
+                else (
+                    [topic]
+                    if topic
+                    else []
+                )
             ),
+
             "skills": skills,
+
             "main_skill": (
-                main_skill.get("name") or ""
+                main_skill.get("name")
+                or ""
             ),
+
             "main_skill_icon": (
-                main_skill.get("icon") or ""
+                main_skill.get("icon")
+                or ""
             ),
 
-            # Información académica
-            "learning": course.get("learning") or "",
+            # =================================================
+            # INFORMACIÓN ACADÉMICA
+            # =================================================
+
+            "learning": (
+                course.get("learning")
+                or ""
+            ),
+
             "experience": (
-                course.get("experience") or ""
-            ),
-            "content": course.get("content") or "",
-            "modules": course.get("modules") or "",
-            "instructors": (
-                course.get("instructors") or ""
+                course.get("experience")
+                or ""
             ),
 
-            # Preview Free
+            "content": (
+                course.get("content")
+                or ""
+            ),
+
+            "modules": (
+                course.get("modules")
+                or ""
+            ),
+
+            "instructors": (
+                course.get("instructors")
+                or ""
+            ),
+
+            # =================================================
+            # PREVIEW FREE
+            # =================================================
+
             "preview": {
-                "type": preview.get("type"),
-                "url": preview.get("url"),
+                "type": (
+                    preview_type
+                ),
+                "url": (
+                    preview_url
+                ),
                 "validatedAt": (
-                    preview.get("validatedAt")
+                    preview_validated_at
+                ),
+                "countryCode": (
+                    preview_country_code
                 ),
                 "available": bool(
-                    preview.get("url")
+                    preview_url
                 ),
             },
-            "preview_type": preview.get("type"),
-            "preview_url": preview.get("url"),
-            "preview_validated_at": (
-                preview.get("validatedAt")
+
+            "preview_type": (
+                preview_type
             ),
 
-            # Auditoría
-            "freeCatalog": (
-                course.get("freeCatalog") or {}
+            "preview_url": (
+                preview_url
             ),
+
+            "preview_validated_at": (
+                preview_validated_at
+            ),
+
+            "preview_country_code": (
+                preview_country_code
+            ),
+
+            # =================================================
+            # AUDITORÍA
+            # =================================================
+
+            "freeCatalog": (
+                course.get(
+                    "freeCatalog"
+                )
+                or {}
+            ),
+
             "mappingStatus": (
-                course.get("mappingStatus") or ""
+                course.get(
+                    "mappingStatus"
+                )
+                or ""
             ),
         }
 
-    def post(self, request, *args, **kwargs):
+    # =========================================================
+    # POST
+    # =========================================================
+
+    def post(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         topics = self._normalize_list(
-            request.data.get("topics") or []
+            request.data.get("topics")
+            or []
         )
 
         topic_ids = (
@@ -13188,21 +14641,30 @@ class LearningRouteRecommendationsAPIView(APIView):
         )
 
         goal = str(
-            request.data.get("goal") or ""
+            request.data.get("goal")
+            or ""
         ).strip()
 
         country_code = str(
-            request.data.get("country_code")
-            or request.data.get("countryCode")
+            request.data.get(
+                "country_code"
+            )
+            or request.data.get(
+                "countryCode"
+            )
             or "CO"
         ).strip().upper()[:2]
 
         language = str(
-            request.data.get("language") or ""
+            request.data.get("language")
+            or ""
         ).strip().lower() or None
 
         force_refresh = str(
-            request.data.get("force_refresh") or ""
+            request.data.get(
+                "force_refresh"
+            )
+            or ""
         ).strip().lower() in {
             "1",
             "true",
@@ -13210,26 +14672,50 @@ class LearningRouteRecommendationsAPIView(APIView):
             "on",
         }
 
-        if not isinstance(topic_ids, list):
+        if not isinstance(
+            topic_ids,
+            list,
+        ):
             return Response(
                 {
                     "ok": False,
-                    "error": "invalid_topic_ids",
+                    "error": (
+                        "invalid_topic_ids"
+                    ),
                     "message": (
-                        "topic_ids debe ser una lista."
+                        "topic_ids debe ser "
+                        "una lista."
                     ),
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=(
+                    status
+                    .HTTP_400_BAD_REQUEST
+                ),
             )
 
+        # =====================================================
+        # CATÁLOGO FREE OFICIAL
+        # =====================================================
+
         try:
-            eligible_queryset, hydrated_map = (
-                get_free_eligible_queryset(
-                    force_refresh=force_refresh,
-                    provider=None,
-                    language=language,
-                    country_code=country_code,
-                )
+            (
+                eligible_queryset,
+                hydrated_map,
+            ) = get_free_eligible_queryset(
+                force_refresh=(
+                    force_refresh
+                ),
+                provider=None,
+
+                # El idioma puede utilizarse para mejorar
+                # personalización si el servicio lo soporta,
+                # pero NO constituye una regla contractual
+                # de elegibilidad.
+                language=language,
+
+                country_code=(
+                    country_code
+                ),
             )
 
         except (
@@ -13237,46 +14723,59 @@ class LearningRouteRecommendationsAPIView(APIView):
             FreePreviewProviderError,
         ) as exc:
             logger.exception(
-                "No fue posible preparar el catálogo Free."
+                "No fue posible preparar "
+                "el catálogo Free."
             )
 
             return Response(
                 {
                     "ok": False,
-                    "error": "free_catalog_unavailable",
+                    "error": (
+                        "free_catalog_unavailable"
+                    ),
                     "message": str(exc),
                 },
                 status=(
-                    status.HTTP_503_SERVICE_UNAVAILABLE
+                    status
+                    .HTTP_503_SERVICE_UNAVAILABLE
                 ),
             )
 
         except Exception as exc:
             logger.exception(
-                "Error inesperado preparando recomendaciones Free."
+                "Error inesperado preparando "
+                "recomendaciones Free."
             )
 
             return Response(
                 {
                     "ok": False,
-                    "error": "free_recommendation_failed",
+                    "error": (
+                        "free_recommendation_failed"
+                    ),
                     "message": str(exc),
                 },
                 status=(
-                    status.HTTP_500_INTERNAL_SERVER_ERROR
+                    status
+                    .HTTP_500_INTERNAL_SERVER_ERROR
                 ),
             )
 
         # =====================================================
-        # FILTROS LOCALES SOBRE CERTIFICACIONES ELEGIBLES
+        # FILTROS LOCALES
         # =====================================================
 
         clean_topic_ids = []
 
         for value in topic_ids:
             try:
-                clean_topic_ids.append(int(value))
-            except (TypeError, ValueError):
+                clean_topic_ids.append(
+                    int(value)
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
                 continue
 
         relevant_ids = set()
@@ -13296,18 +14795,24 @@ class LearningRouteRecommendationsAPIView(APIView):
                         )
                     )
                 )
-                .values_list("id", flat=True)
+                .values_list(
+                    "id",
+                    flat=True,
+                )
                 .distinct()
             )
 
-            relevant_ids.update(direct_matches)
+            relevant_ids.update(
+                direct_matches
+            )
 
         if topics:
             text_filter = Q()
 
             for topic_name in topics:
                 clean_topic = str(
-                    topic_name or ""
+                    topic_name
+                    or ""
                 ).strip()
 
                 if not clean_topic:
@@ -13335,7 +14840,9 @@ class LearningRouteRecommendationsAPIView(APIView):
                         )
                     )
                     | Q(
-                        nombre__icontains=clean_topic
+                        nombre__icontains=(
+                            clean_topic
+                        )
                     )
                     | Q(
                         palabra_clave_certificacion__icontains=(
@@ -13347,29 +14854,58 @@ class LearningRouteRecommendationsAPIView(APIView):
             if text_filter:
                 text_matches = (
                     eligible_queryset
-                    .filter(text_filter)
-                    .values_list("id", flat=True)
+                    .filter(
+                        text_filter
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )
                     .distinct()
                 )
 
-                relevant_ids.update(text_matches)
+                relevant_ids.update(
+                    text_matches
+                )
 
-        # Primero se recomiendan coincidencias directas.
+        # =====================================================
+        # RANKING
+        # =====================================================
+
         preferred_courses = []
         fallback_courses = []
 
-        for certification_key, course in (
-            hydrated_map.items()
-        ):
-            if not isinstance(course, dict):
+        for (
+            certification_key,
+            course,
+        ) in hydrated_map.items():
+
+            if not isinstance(
+                course,
+                dict,
+            ):
+                continue
+
+            id_interno = (
+                self._get_internal_id(
+                    course
+                )
+            )
+
+            if not id_interno:
                 continue
 
             try:
                 certification_id = int(
-                    course.get("certificationId")
+                    course.get(
+                        "certificationId"
+                    )
                     or certification_key
                 )
-            except (TypeError, ValueError):
+            except (
+                TypeError,
+                ValueError,
+            ):
                 continue
 
             score = self._score_course(
@@ -13382,46 +14918,61 @@ class LearningRouteRecommendationsAPIView(APIView):
 
             ranked_item = {
                 **course,
-                "_recommendationScore": score,
+                "_recommendationScore": (
+                    score
+                ),
             }
 
-            if certification_id in relevant_ids:
-                preferred_courses.append(ranked_item)
-            else:
-                fallback_courses.append(ranked_item)
-
-        sort_key = lambda course: (
-            -int(
-                course.get(
-                    "_recommendationScore",
-                    0,
+            if (
+                certification_id
+                in relevant_ids
+            ):
+                preferred_courses.append(
+                    ranked_item
                 )
-            ),
-            str(
-                course.get("provider") or ""
-            ).upper(),
-            str(
-                course.get("title") or ""
-            ).lower(),
-            str(
-                course.get("idInterno") or ""
-            ),
+            else:
+                fallback_courses.append(
+                    ranked_item
+                )
+
+        def sort_key(course):
+            return (
+                -int(
+                    course.get(
+                        "_recommendationScore",
+                        0,
+                    )
+                    or 0
+                ),
+                str(
+                    course.get("provider")
+                    or ""
+                ).upper(),
+                str(
+                    course.get("title")
+                    or ""
+                ).lower(),
+                self._get_internal_id(
+                    course
+                ),
+            )
+
+        preferred_courses.sort(
+            key=sort_key
         )
 
-        preferred_courses.sort(key=sort_key)
-        fallback_courses.sort(key=sort_key)
+        fallback_courses.sort(
+            key=sort_key
+        )
 
         # =====================================================
-        # PREPARAR RUTA COMPLETA Y RECOMENDACIONES VISUALES
+        # RUTA COMPLETA
         # =====================================================
 
-        # Además de las coincidencias directas por tema/skill,
-        # incluimos cursos que obtuvieron puntuación positiva
-        # por título, descripción, keywords, objetivo, idioma,
-        # tema o habilidades.
         scored_related_courses = [
             course
-            for course in fallback_courses
+            for course
+            in fallback_courses
             if int(
                 course.get(
                     "_recommendationScore",
@@ -13431,68 +14982,77 @@ class LearningRouteRecommendationsAPIView(APIView):
             ) > 0
         ]
 
-        # La ruta completa contiene:
-        # 1. coincidencias directas;
-        # 2. coincidencias relacionadas por puntuación.
         complete_source_courses = (
             preferred_courses
             + scored_related_courses
         )
 
-        # Si no hubo ninguna coincidencia relevante, usamos
-        # el catálogo ordenado como respaldo para no impedir
-        # la creación de la ruta.
+        # Si no hubo coincidencias relevantes,
+        # utilizamos el catálogo elegible ordenado.
         if not complete_source_courses:
-            complete_source_courses = (
+            complete_source_courses = list(
                 fallback_courses
             )
 
-        # La visualización puede usar todo el catálogo ordenado
-        # para completar hasta nueve recomendaciones.
+        # Los nueve visuales sí pueden completarse
+        # utilizando todo el catálogo elegible.
         visual_source_courses = (
             preferred_courses
             + fallback_courses
         )
 
         # =====================================================
-        # RUTA COMPLETA: HASTA 150 CURSOS ÚNICOS
+        # DEDUPLICAR RUTA COMPLETA
         # =====================================================
 
         complete_ranked_courses = []
         complete_ids = set()
 
         for course in complete_source_courses:
-            if not isinstance(course, dict):
+            if not isinstance(
+                course,
+                dict,
+            ):
                 continue
 
-            id_interno = str(
-                course.get("idInterno")
-                or course.get("id_interno")
-                or ""
-            ).strip()
+            id_interno = (
+                self._get_internal_id(
+                    course
+                )
+            )
 
             if not id_interno:
                 continue
 
-            identity_key = id_interno.lower()
+            identity_key = (
+                id_interno.casefold()
+            )
 
-            if identity_key in complete_ids:
+            if (
+                identity_key
+                in complete_ids
+            ):
                 continue
 
-            complete_ids.add(identity_key)
+            complete_ids.add(
+                identity_key
+            )
 
             complete_ranked_courses.append(
                 course
             )
 
             if (
-                len(complete_ranked_courses)
-                >= self.MAX_COMPLETE_RECOMMENDATIONS
+                len(
+                    complete_ranked_courses
+                )
+                >= self
+                .MAX_COMPLETE_RECOMMENDATIONS
             ):
                 break
 
         # =====================================================
-        # SELECCIÓN VISUAL: MÁXIMO NUEVE
+        # SELECCIÓN VISUAL
         # =====================================================
 
         selected_courses = []
@@ -13500,16 +15060,19 @@ class LearningRouteRecommendationsAPIView(APIView):
         selected_providers = set()
 
         # Primera pasada:
-        # intenta incluir al menos un curso por proveedor.
+        # diversidad de proveedores cuando sea posible.
         for course in visual_source_courses:
-            if not isinstance(course, dict):
+            if not isinstance(
+                course,
+                dict,
+            ):
                 continue
 
-            id_interno = str(
-                course.get("idInterno")
-                or course.get("id_interno")
-                or ""
-            ).strip()
+            id_interno = (
+                self._get_internal_id(
+                    course
+                )
+            )
 
             provider = str(
                 course.get("provider")
@@ -13519,19 +15082,30 @@ class LearningRouteRecommendationsAPIView(APIView):
             if not id_interno:
                 continue
 
-            identity_key = id_interno.lower()
+            identity_key = (
+                id_interno.casefold()
+            )
 
-            if identity_key in selected_ids:
+            if (
+                identity_key
+                in selected_ids
+            ):
                 continue
 
             if (
                 provider
-                and provider in selected_providers
+                and provider
+                in selected_providers
             ):
                 continue
 
-            selected_courses.append(course)
-            selected_ids.add(identity_key)
+            selected_courses.append(
+                course
+            )
+
+            selected_ids.add(
+                identity_key
+            )
 
             if provider:
                 selected_providers.add(
@@ -13540,34 +15114,44 @@ class LearningRouteRecommendationsAPIView(APIView):
 
             if (
                 len(selected_courses)
-                >= self.MAX_VISUAL_RECOMMENDATIONS
+                >= self
+                .MAX_VISUAL_RECOMMENDATIONS
             ):
                 break
 
         # Segunda pasada:
-        # completa hasta nueve por relevancia.
+        # completar hasta nueve por relevancia.
         if (
             len(selected_courses)
-            < self.MAX_VISUAL_RECOMMENDATIONS
+            < self
+            .MAX_VISUAL_RECOMMENDATIONS
         ):
-            for course in visual_source_courses:
-                if not isinstance(course, dict):
+            for course in (
+                visual_source_courses
+            ):
+                if not isinstance(
+                    course,
+                    dict,
+                ):
                     continue
 
-                id_interno = str(
-                    course.get("idInterno")
-                    or course.get("id_interno")
-                    or ""
-                ).strip()
+                id_interno = (
+                    self._get_internal_id(
+                        course
+                    )
+                )
 
                 if not id_interno:
                     continue
 
                 identity_key = (
-                    id_interno.lower()
+                    id_interno.casefold()
                 )
 
-                if identity_key in selected_ids:
+                if (
+                    identity_key
+                    in selected_ids
+                ):
                     continue
 
                 selected_courses.append(
@@ -13580,14 +15164,22 @@ class LearningRouteRecommendationsAPIView(APIView):
 
                 if (
                     len(selected_courses)
-                    >= self.MAX_VISUAL_RECOMMENDATIONS
+                    >= self
+                    .MAX_VISUAL_RECOMMENDATIONS
                 ):
                     break
 
-        if (
-            len(selected_courses)
-            < self.FREE_MX_RECOMMENDATION_AMOUNT
-        ):
+        # =====================================================
+        # VALIDACIÓN MÍNIMA
+        # =====================================================
+        #
+        # Ya NO exigimos tres.
+        #
+        # Para generar una ruta necesitamos como mínimo
+        # una experiencia elegible.
+        # =====================================================
+
+        if not selected_courses:
             return Response(
                 {
                     "ok": False,
@@ -13595,29 +15187,22 @@ class LearningRouteRecommendationsAPIView(APIView):
                         "insufficient_recommendations"
                     ),
                     "message": (
-                        "No fue posible seleccionar al menos "
-                        "tres cursos elegibles."
+                        "No fue posible seleccionar "
+                        "experiencias Free elegibles."
                     ),
                     "meta": {
-                        "minimum_required": (
-                            self
-                            .FREE_MX_RECOMMENDATION_AMOUNT
+                        "minimum_required": 1,
+                        "available": 0,
+                        "complete_available": (
+                            len(
+                                complete_ranked_courses
+                            )
                         ),
-                        "visual_expected": (
-                            self
-                            .MAX_VISUAL_RECOMMENDATIONS
+                        "hydrated": (
+                            len(hydrated_map)
                         ),
-                        "available": len(
-                            selected_courses
-                        ),
-                        "complete_available": len(
-                            complete_ranked_courses
-                        ),
-                        "hydrated": len(
-                            hydrated_map
-                        ),
-                        "topic_matches": len(
-                            relevant_ids
+                        "topic_matches": (
+                            len(relevant_ids)
                         ),
                     },
                 },
@@ -13628,7 +15213,7 @@ class LearningRouteRecommendationsAPIView(APIView):
             )
 
         # =====================================================
-        # DISTRIBUIR LOS NUEVE CURSOS VISUALES
+        # DISTRIBUCIÓN VISUAL
         # =====================================================
 
         level_course_map = {
@@ -13647,7 +15232,8 @@ class LearningRouteRecommendationsAPIView(APIView):
             ]
         ):
             level_key = level_keys[
-                index % len(level_keys)
+                index
+                % len(level_keys)
             ]
 
             if (
@@ -13656,14 +15242,17 @@ class LearningRouteRecommendationsAPIView(APIView):
                         level_key
                     ]
                 )
-                < self.RECOMMENDATIONS_PER_LEVEL
+                < self
+                .RECOMMENDATIONS_PER_LEVEL
             ):
                 level_course_map[
                     level_key
-                ].append(course)
+                ].append(
+                    course
+                )
 
         # =====================================================
-        # SERIALIZAR LOS NUEVE CURSOS VISUALES
+        # SERIALIZAR VISUALES
         # =====================================================
 
         data = {}
@@ -13722,7 +15311,8 @@ class LearningRouteRecommendationsAPIView(APIView):
                 )
 
                 if (
-                    platform_id is not None
+                    platform_id
+                    is not None
                     and platform_id
                     not in platform_ids
                 ):
@@ -13754,7 +15344,7 @@ class LearningRouteRecommendationsAPIView(APIView):
             }
 
         # =====================================================
-        # SERIALIZAR LA RUTA COMPLETA
+        # SERIALIZAR RUTA COMPLETA
         # =====================================================
 
         complete_serialized_courses = []
@@ -13794,9 +15384,13 @@ class LearningRouteRecommendationsAPIView(APIView):
                             route_level
                         ]
                     ),
-                    route_level=route_level,
+                    route_level=(
+                        route_level
+                    ),
                     level_name=(
-                        presentation["nivel"]
+                        presentation[
+                            "nivel"
+                        ]
                     ),
                 )
             )
@@ -13805,36 +15399,89 @@ class LearningRouteRecommendationsAPIView(APIView):
                 serialized
             )
 
-        # Si la ruta completa no alcanzó tres cursos,
-        # se utilizan los visuales como respaldo.
+        # Protección:
+        # si por alguna razón la ruta completa quedó vacía,
+        # utilizamos las recomendaciones visuales disponibles.
         if (
-            len(complete_serialized_courses)
-            < self.FREE_MX_RECOMMENDATION_AMOUNT
+            not complete_serialized_courses
+            and serialized_courses
         ):
             complete_serialized_courses = list(
                 serialized_courses
             )
 
         # =====================================================
-        # SELECCIÓN CONTRACTUAL PARA FREE
+        # FREE COURSES
+        # =====================================================
+        #
+        # IMPORTANTE:
+        #
+        # Ya NO tomamos:
+        #
+        #     data[level_1]["items"][0]
+        #     data[level_2]["items"][0]
+        #     data[level_3]["items"][0]
+        #
+        # porque eso imponía artificialmente:
+        #
+        #     Free = exactamente tres
+        #
+        # Ahora conservamos todas las experiencias Free
+        # elegibles de la ruta completa.
         # =====================================================
 
         free_courses = []
+        free_ids = set()
 
-        for level_key in level_keys:
-            level_items = (
-                data[level_key]["items"]
+        for course in (
+            complete_serialized_courses
+        ):
+            if not isinstance(
+                course,
+                dict,
+            ):
+                continue
+
+            id_interno = (
+                self._get_internal_id(
+                    course
+                )
             )
 
-            if level_items:
-                free_courses.append(
-                    level_items[0]
-                )
+            if not id_interno:
+                continue
 
-        if (
-            len(free_courses)
-            != self.FREE_MX_RECOMMENDATION_AMOUNT
-        ):
+            identity_key = (
+                id_interno.casefold()
+            )
+
+            if identity_key in free_ids:
+                continue
+
+            if not (
+                self
+                ._is_free_eligible_course(
+                    course
+                )
+            ):
+                continue
+
+            free_ids.add(
+                identity_key
+            )
+
+            free_courses.append(
+                course
+            )
+
+        # =====================================================
+        # VALIDACIÓN FREE
+        # =====================================================
+        #
+        # El contrato acepta UNA O MÁS experiencias.
+        # =====================================================
+
+        if not free_courses:
             return Response(
                 {
                     "ok": False,
@@ -13843,15 +15490,16 @@ class LearningRouteRecommendationsAPIView(APIView):
                     ),
                     "message": (
                         "No fue posible seleccionar "
-                        "un curso Free para cada nivel."
+                        "ninguna experiencia Free "
+                        "elegible."
                     ),
                     "meta": {
-                        "required": (
-                            self
-                            .FREE_MX_RECOMMENDATION_AMOUNT
-                        ),
-                        "available": len(
-                            free_courses
+                        "minimum_required": 1,
+                        "available": 0,
+                        "complete_available": (
+                            len(
+                                complete_serialized_courses
+                            )
                         ),
                     },
                 },
@@ -13860,6 +15508,10 @@ class LearningRouteRecommendationsAPIView(APIView):
                     .HTTP_503_SERVICE_UNAVAILABLE
                 ),
             )
+
+        # =====================================================
+        # LOG
+        # =====================================================
 
         logger.info(
             "Recomendaciones generadas. "
@@ -13870,30 +15522,41 @@ class LearningRouteRecommendationsAPIView(APIView):
             len(
                 complete_serialized_courses
             ),
-            len(serialized_courses),
-            len(free_courses),
-            len(relevant_ids),
+            len(
+                serialized_courses
+            ),
+            len(
+                free_courses
+            ),
+            len(
+                relevant_ids
+            ),
         )
+
+        # =====================================================
+        # RESPUESTA
+        # =====================================================
 
         return Response(
             {
                 "ok": True,
 
-                # Tres por nivel para StartNow.
+                # Estructura visual de StartNow.
+                # Puede seguir mostrando hasta tres
+                # cursos por cada bloque visual.
                 "data": data,
 
-                # Ruta completa para Colombia y
-                # planes Basic, X y Plus en México.
+                # Ruta completa.
                 "recommended_courses": (
                     complete_serialized_courses
                 ),
 
-                # Nueve recomendaciones visuales.
+                # Máximo nueve para la UI.
                 "visual_recommended_courses": (
                     serialized_courses
                 ),
 
-                # Exactamente tres para Free.
+                # Una o más experiencias Free elegibles.
                 "free_courses": (
                     free_courses
                 ),
@@ -13902,18 +15565,44 @@ class LearningRouteRecommendationsAPIView(APIView):
                     "catalog": (
                         "free-preview-courses"
                     ),
+
                     "hydrated": True,
+
                     "topics": topics,
-                    "topic_ids": topic_ids,
+
+                    "topic_ids": (
+                        topic_ids
+                    ),
+
                     "goal": goal,
+
                     "country_code": (
                         country_code
                     ),
-                    "language": language,
 
-                    "providers_allowed": list(
-                        self.FREE_PROVIDERS
+                    "language": (
+                        language
                     ),
+
+                    # Informativo únicamente.
+                    # No representa una whitelist
+                    # contractual de Free.
+                    "providers_seen": sorted({
+                        str(
+                            item.get(
+                                "provider"
+                            )
+                            or ""
+                        ).strip()
+                        for item
+                        in free_courses
+                        if str(
+                            item.get(
+                                "provider"
+                            )
+                            or ""
+                        ).strip()
+                    }),
 
                     "recommendations_per_level": (
                         self
@@ -13938,8 +15627,12 @@ class LearningRouteRecommendationsAPIView(APIView):
                     ),
 
                     "total_free_courses": (
-                        len(free_courses)
+                        len(
+                            free_courses
+                        )
                     ),
+
+                    "minimum_free_courses": 1,
 
                     "complete_route_limit": (
                         self
@@ -13947,15 +15640,18 @@ class LearningRouteRecommendationsAPIView(APIView):
                     ),
 
                     "visual_route_complete": (
-                        len(serialized_courses)
+                        len(
+                            serialized_courses
+                        )
                         == self
                         .MAX_VISUAL_RECOMMENDATIONS
                     ),
 
-                    "free_route_complete": (
-                        len(free_courses)
-                        == self
-                        .FREE_MX_RECOMMENDATION_AMOUNT
+                    "free_route_available": (
+                        len(
+                            free_courses
+                        )
+                        >= 1
                     ),
 
                     "complete_internal_ids": [

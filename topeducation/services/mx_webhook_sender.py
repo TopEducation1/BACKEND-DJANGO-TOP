@@ -145,6 +145,11 @@ def normalize_mx_status(
     if status:
         return str(status).strip().upper()
 
+    # 202 significa que México aceptó el evento para procesamiento,
+    # pero todavía no confirmó que haya sido aplicado.
+    if http_status == 202:
+        return "ACCEPTED"
+
     if 200 <= http_status < 300:
         return "APPLIED"
 
@@ -227,6 +232,13 @@ def extract_response_data(
             response_json,
             "magicLink",
             "magic_link",
+
+            # Compatibilidad defensiva durante transición de contrato.
+            # El nombre canónico sigue siendo magicLink.
+            "loginUrl",
+            "login_url",
+            "accessUrl",
+            "access_url",
         ),
         "entitlement_status": response_value(
             response_json,
@@ -239,6 +251,50 @@ def extract_response_data(
             "route_version",
         ),
     }
+
+
+def sanitize_response_for_log(
+    response_json: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Devuelve una copia segura para logs/errores.
+
+    magicLink es una credencial persistente y no debe terminar
+    expuesta en last_error ni logs visibles.
+    """
+    if not isinstance(response_json, dict):
+        return {}
+
+    def scrub(value):
+        if isinstance(value, dict):
+            result = {}
+
+            for key, item in value.items():
+                normalized_key = str(key).lower()
+
+                if normalized_key in {
+                    "magiclink",
+                    "magic_link",
+                    "loginurl",
+                    "login_url",
+                    "accessurl",
+                    "access_url",
+                }:
+                    result[key] = "[REDACTED]"
+                else:
+                    result[key] = scrub(item)
+
+            return result
+
+        if isinstance(value, list):
+            return [
+                scrub(item)
+                for item in value
+            ]
+
+        return value
+
+    return scrub(response_json)
 
 
 # =========================================================
@@ -379,56 +435,84 @@ def refresh_existing_log(
     route_snapshot=None,
 ):
     """
-    Actualiza el snapshot del log si el evento todavía no fue aceptado.
+    Refresca únicamente relaciones auxiliares del log.
 
-    Un evento ya enviado no debe modificarse.
+    Regla de idempotencia MX:
+    - un retry debe reutilizar el MISMO eventId;
+    - debe reutilizar también el MISMO body.
+
+    Por eso, si ya existe un log para eventId y el payload cambia,
+    se considera un error local en vez de sobrescribir el evento
+    previamente registrado.
     """
-    if log.send_status == "sent":
-        return
+    incoming_hash = payload_sha256(raw_body)
+
+    if (
+        log.payload_hash
+        and log.payload_hash != incoming_hash
+    ):
+        raise ValueError(
+            "event_id_payload_mismatch"
+        )
 
     resolved_snapshot = resolve_route_snapshot(
         route=route,
         route_snapshot=route_snapshot,
     )
 
-    log.user = user or log.user
-    log.learning_route = route or log.learning_route
-    log.route_snapshot = (
-        resolved_snapshot or log.route_snapshot
-    )
-    log.route_version = (
-        get_route_version(payload)
-        or log.route_version
-    )
-    log.event_type = payload["eventType"]
-    log.event_source = (
-        payload.get("source")
-        or "colombia-b2c"
-    )
-    log.payload_json = payload
-    log.raw_body = raw_body
-    log.payload_hash = payload_sha256(raw_body)
+    update_fields = []
 
-    stripe_event_id = get_stripe_event_id(payload)
+    if user and not log.user_id:
+        log.user = user
+        update_fields.append("user")
 
-    if stripe_event_id and not log.stripe_event_id:
+    if route and not log.learning_route_id:
+        log.learning_route = route
+        update_fields.append(
+            "learning_route"
+        )
+
+    if (
+        resolved_snapshot
+        and not log.route_snapshot_id
+    ):
+        log.route_snapshot = resolved_snapshot
+        update_fields.append(
+            "route_snapshot"
+        )
+
+    route_version = get_route_version(payload)
+
+    if (
+        route_version is not None
+        and log.route_version is None
+    ):
+        log.route_version = route_version
+        update_fields.append(
+            "route_version"
+        )
+
+    stripe_event_id = get_stripe_event_id(
+        payload
+    )
+
+    if (
+        stripe_event_id
+        and not log.stripe_event_id
+    ):
         log.stripe_event_id = stripe_event_id
+        update_fields.append(
+            "stripe_event_id"
+        )
 
-    log.save(
-        update_fields=[
-            "user",
-            "learning_route",
-            "route_snapshot",
-            "route_version",
-            "event_type",
-            "event_source",
-            "payload_json",
-            "raw_body",
-            "payload_hash",
-            "stripe_event_id",
-            "updated_at",
-        ]
-    )
+    if update_fields:
+        update_fields.append(
+            "updated_at"
+        )
+
+        log.save(
+            update_fields=update_fields
+        )
 
 
 # =========================================================
@@ -721,19 +805,34 @@ def send_b2c_access_event_to_mx(
         )
 
         pending = (
-            normalized_status in PENDING_MX_STATUSES
+            normalized_status
+            in PENDING_MX_STATUSES
         )
 
+        # La semántica devuelta por MX tiene prioridad sobre
+        # el código HTTP para RETRYABLE_ERROR.
+        #
+        # Ejemplo:
+        # HTTP 400 + status RETRYABLE_ERROR
+        # sigue siendo reintentable según contrato.
         retryable = (
             not accepted
-            and is_retryable_http_status(
-                response.status_code
+            and (
+                normalized_status
+                in RETRYABLE_MX_STATUSES
+                or is_retryable_http_status(
+                    response.status_code
+                )
             )
         )
 
         permanent = (
             not accepted
-            and not retryable
+            and (
+                normalized_status
+                in PERMANENT_MX_STATUSES
+                or not retryable
+            )
         )
 
         log.response_json = response_json
@@ -777,7 +876,9 @@ def send_b2c_access_event_to_mx(
                 or calculate_next_retry(log.attempts)
             )
             log.last_error = json.dumps(
-                response_json,
+                sanitize_response_for_log(
+                    response_json
+                ),
                 ensure_ascii=False,
             )[:10000]
 
@@ -788,7 +889,9 @@ def send_b2c_access_event_to_mx(
             log.is_retryable = False
             log.next_retry_at = None
             log.last_error = json.dumps(
-                response_json,
+                sanitize_response_for_log(
+                    response_json
+                ),
                 ensure_ascii=False,
             )[:10000]
 

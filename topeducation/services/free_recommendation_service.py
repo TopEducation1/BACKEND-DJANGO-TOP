@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from django.db.models import QuerySet
 
-from ..models import Certificaciones, LearningRouteLead
-from .free_course_hydrator import get_hydrated_free_catalog
+from ..models import Certificaciones
+from .free_course_hydrator import (
+    get_hydrated_free_catalog,
+)
 
 
 logger = logging.getLogger(__name__)
-
-
-FREE_COURSES_REQUIRED = 3
 
 
 class FreeRecommendationError(Exception):
@@ -25,15 +24,26 @@ def get_free_eligible_queryset(
     provider: Optional[str] = None,
     language: Optional[str] = None,
     country_code: str = "CO",
-) -> tuple[QuerySet, Dict[str, Dict[str, Any]]]:
+) -> tuple[
+    QuerySet,
+    Dict[str, Dict[str, Any]],
+]:
     """
     Devuelve:
 
-    1. QuerySet de certificaciones elegibles para Free.
+    1. QuerySet de certificaciones locales que están presentes
+       en el catálogo Free Tier de MX.
     2. Mapa del catálogo hidratado por certificationId.
 
-    El mapa permite recuperar después los datos del preview sin
-    tener que consultar nuevamente el endpoint de México.
+    Reglas importantes:
+    - El endpoint /v1/b2c/free-preview-courses es la única
+      fuente de elegibilidad Free.
+    - No se infiere elegibilidad por proveedor, título,
+      plataforma ni por pertenecer al catálogo general.
+    - idInterno y preview se conservan desde la hidratación.
+    - No existe una regla contractual de "exactamente tres".
+      La cantidad que Colombia muestre o seleccione es una
+      decisión de producto.
     """
 
     hydration = get_hydrated_free_catalog(
@@ -43,16 +53,41 @@ def get_free_eligible_queryset(
         country_code=country_code,
     )
 
-    hydrated_by_certification_id: Dict[str, Dict[str, Any]] = {
-        str(course["certificationId"]): course
-        for course in hydration.courses
-        if course.get("certificationId") is not None
-    }
+    hydrated_by_certification_id: Dict[
+        str,
+        Dict[str, Any],
+    ] = {}
 
-    certification_ids = [
-        int(certification_id)
-        for certification_id in hydrated_by_certification_id.keys()
-    ]
+    for course in hydration.courses:
+        if not isinstance(course, dict):
+            continue
+
+        certification_id = course.get(
+            "certificationId"
+        )
+
+        if certification_id is None:
+            continue
+
+        hydrated_by_certification_id[
+            str(certification_id)
+        ] = course
+
+    certification_ids = []
+
+    for certification_id in (
+        hydrated_by_certification_id.keys()
+    ):
+        try:
+            certification_ids.append(
+                int(certification_id)
+            )
+        except (TypeError, ValueError):
+            logger.warning(
+                "CertificationId Free no numérico "
+                "ignorado: %s",
+                certification_id,
+            )
 
     if not certification_ids:
         raise FreeRecommendationError(
@@ -79,9 +114,23 @@ def get_free_eligible_queryset(
     )
 
     logger.info(
-        "Queryset Free preparado. hidratados=%s queryset=%s",
-        hydration.total_matched,
+        "Queryset Free preparado. "
+        "hidratados=%s queryset=%s "
+        "provider=%s language=%s country=%s",
+        getattr(
+            hydration,
+            "total_matched",
+            len(
+                hydrated_by_certification_id
+            ),
+        ),
         queryset.count(),
+        provider or "*",
+        language or "*",
+        country_code,
     )
 
-    return queryset, hydrated_by_certification_id
+    return (
+        queryset,
+        hydrated_by_certification_id,
+    )

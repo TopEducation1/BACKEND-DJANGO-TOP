@@ -279,6 +279,9 @@ def normalize_free_catalog_items(
                 "validatedAt": preview.get(
                     "validatedAt"
                 ),
+                "countryCode": _clean_optional_text(
+                    preview.get("countryCode")
+                ),
             },
         })
 
@@ -752,9 +755,12 @@ def hydrate_free_course(
         request=request,
     )
 
+    # Para Free, el provider del catálogo Free es la referencia
+    # contractual. La información local se utiliza únicamente
+    # como respaldo para visualización/hidratación.
     source_provider = (
-        _clean_text(certification.source_provider)
-        or _clean_text(preview_item.get("provider"))
+        _clean_text(preview_item.get("provider"))
+        or _clean_text(certification.source_provider)
         or (
             platform.get("name")
             if platform
@@ -782,7 +788,14 @@ def hydrate_free_course(
         # IDENTIFICADORES
         # =================================================
         "certificationId": certification.id,
-        "idInterno": certification.id_interno,
+
+        # El identificador contractual debe conservarse exactamente
+        # como llegó desde /v1/b2c/free-preview-courses.
+        # La certificación local sirve para encontrar/enriquecer
+        # el registro, pero no reemplaza el identificador de MX.
+        "idInterno": _normalize_id_interno(
+            preview_item.get("idInterno")
+        ),
         "slug": _clean_text(certification.slug),
 
         # =================================================
@@ -893,6 +906,9 @@ def hydrate_free_course(
             "validatedAt": preview.get(
                 "validatedAt"
             ),
+            "countryCode": _clean_optional_text(
+                preview.get("countryCode")
+            ),
             "available": bool(
                 preview.get("url")
             ),
@@ -902,6 +918,9 @@ def hydrate_free_course(
         # DATOS ORIGINALES PARA AUDITORÍA
         # =================================================
         "freeCatalog": {
+            "idInterno": _normalize_id_interno(
+                preview_item.get("idInterno")
+            ),
             "title": _clean_text(
                 preview_item.get("title")
             ),
@@ -911,6 +930,20 @@ def hydrate_free_course(
             "language": _clean_text(
                 preview_item.get("language")
             ),
+            "preview": {
+                "type": _clean_optional_text(
+                    preview.get("type")
+                ),
+                "url": _clean_optional_text(
+                    preview.get("url")
+                ),
+                "validatedAt": preview.get(
+                    "validatedAt"
+                ),
+                "countryCode": _clean_optional_text(
+                    preview.get("countryCode")
+                ),
+            },
         },
         "reconciliation": _serialize_json_mapping(
             certification.reconciliation_snapshot

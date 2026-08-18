@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -14,7 +14,14 @@ DEFAULT_SCHEMA_VERSION = "1.1"
 
 FREE_PACKAGE_CODE = "TOP_EDUCATION_FREE"
 FREE_TIER = "FREE"
-FREE_MAX_COURSES = 3
+
+# MX 1.1 acepta una o más experiencias Free elegibles.
+# Colombia puede seguir mostrando 3 por decisión de producto,
+# pero el builder no impone un máximo contractual de tres.
+DEFAULT_FREE_COURSES = 3
+MAX_FREE_COURSES = 200
+MAX_FREE_PREVIEW_AGE_DAYS = 30
+FREE_PREVIEW_TYPES = {"AUDIT", "COURSE_PREVIEW"}
 
 SUPPORTED_PACKAGES = {
     "TOP_EDUCATION_FREE": {
@@ -25,12 +32,12 @@ SUPPORTED_PACKAGES = {
     "TOP_EDUCATION_BASIC_MONTHLY": {
         "tier": "BASIC",
         "billingPeriod": "MONTHLY",
-        "trialAllowed": False,
+        "trialAllowed": True,
     },
     "TOP_EDUCATION_BASIC_ANNUAL": {
         "tier": "BASIC",
         "billingPeriod": "ANNUAL",
-        "trialAllowed": False,
+        "trialAllowed": True,
     },
     "TOP_EDUCATION_X_MONTHLY": {
         "tier": "X",
@@ -104,6 +111,51 @@ def now_iso() -> str:
         .astimezone(dt_timezone.utc)
         .isoformat(timespec="milliseconds")
         .replace("+00:00", "Z")
+    )
+
+
+def parse_iso_datetime(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+
+    if not raw:
+        return None
+
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+
+        parsed = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(
+            tzinfo=dt_timezone.utc
+        )
+
+    return parsed.astimezone(
+        dt_timezone.utc
+    )
+
+
+def is_recent_free_preview(
+    value: Any,
+    *,
+    max_age_days: int = MAX_FREE_PREVIEW_AGE_DAYS,
+) -> bool:
+    validated_at = parse_iso_datetime(value)
+
+    if validated_at is None:
+        return False
+
+    age = datetime.now(
+        dt_timezone.utc
+    ) - validated_at
+
+    return (
+        timedelta(0)
+        <= age
+        <= timedelta(days=max_age_days)
     )
 
 
@@ -545,9 +597,17 @@ def build_plan_snapshot(
             end_dt = datetime.fromisoformat(
                 trial_end.replace("Z", "+00:00")
             )
+            duration_seconds = max(
+                0,
+                (end_dt - start_dt).total_seconds(),
+            )
+
             trial_days = max(
                 0,
-                int((end_dt - start_dt).total_seconds() // 86400),
+                int(
+                    (duration_seconds + 86399)
+                    // 86400
+                ),
             )
         except (TypeError, ValueError):
             trial_days = 0
@@ -589,11 +649,9 @@ def extract_stripe_billing_data(
     stripe_subscription_id = obj.get("subscription")
 
     price_id = None
-    period_start = None
-    period_end = None
+    current_period_start = None
+    current_period_end = None
     paid_at = None
-    trial_start = None
-    trial_end = None
     cancel_at_period_end = None
 
     amount_cents = get_first_dict_value(
@@ -610,10 +668,10 @@ def extract_stripe_billing_data(
         stripe_subscription_id = obj.get("subscription")
         price_id = get_invoice_price_id(obj)
 
-        period_start = iso_from_ts(
+        current_period_start = iso_from_ts(
             obj.get("period_start")
         )
-        period_end = iso_from_ts(
+        current_period_end = iso_from_ts(
             obj.get("period_end")
         )
 
@@ -640,10 +698,10 @@ def extract_stripe_billing_data(
         stripe_subscription_id = obj.get("id")
         price_id = get_price_id_from_subscription(obj)
 
-        period_start = iso_from_ts(
+        current_period_start = iso_from_ts(
             obj.get("current_period_start")
         )
-        period_end = iso_from_ts(
+        current_period_end = iso_from_ts(
             obj.get("current_period_end")
         )
 
@@ -685,10 +743,8 @@ def extract_stripe_billing_data(
             amount_cents
         ),
         "paidAt": paid_at,
-        "periodStart": period_start,
-        "periodEnd": period_end,
-        "trialStart": trial_start,
-        "trialEnd": trial_end,
+        "currentPeriodStart": current_period_start,
+        "currentPeriodEnd": current_period_end,
         "cancelAtPeriodEnd": cancel_at_period_end,
     })
 
@@ -736,8 +792,8 @@ def build_billing_snapshot(
         or getattr(local_subscription, "price_id", None)
     )
 
-    stripe_data["periodStart"] = (
-        stripe_data.get("periodStart")
+    stripe_data["currentPeriodStart"] = (
+        stripe_data.get("currentPeriodStart")
         or iso_from_ts(
             getattr(
                 local_subscription,
@@ -747,40 +803,12 @@ def build_billing_snapshot(
         )
     )
 
-    stripe_data["periodEnd"] = (
-        stripe_data.get("periodEnd")
+    stripe_data["currentPeriodEnd"] = (
+        stripe_data.get("currentPeriodEnd")
         or iso_from_ts(
             getattr(
                 local_subscription,
                 "current_period_end",
-                None,
-            )
-        )
-    )
-
-    stripe_data["trialStart"] = (
-        stripe_data.get("trialStart")
-        or iso_from_ts(
-            getattr(route, "trial_start", None)
-        )
-        or iso_from_ts(
-            getattr(
-                local_subscription,
-                "trial_start",
-                None,
-            )
-        )
-    )
-
-    stripe_data["trialEnd"] = (
-        stripe_data.get("trialEnd")
-        or iso_from_ts(
-            getattr(route, "trial_end", None)
-        )
-        or iso_from_ts(
-            getattr(
-                local_subscription,
-                "trial_end",
                 None,
             )
         )
@@ -825,6 +853,11 @@ def serialize_route_item(item: Any) -> Dict[str, Any]:
                 "preview_validated_at",
                 None,
             )
+        ),
+        "countryCode": getattr(
+            item,
+            "preview_country_code",
+            None,
         ),
     })
 
@@ -957,6 +990,12 @@ def serialize_legacy_recommendations(route) -> list:
                             "preview_validated_at"
                         )
                     ),
+                    "countryCode": (
+                        preview_data.get("countryCode")
+                        or item.get(
+                            "preview_country_code"
+                        )
+                    ),
                 }),
             })
         )
@@ -1005,6 +1044,10 @@ def serialize_free_preview_item(
             "validatedAt": preview.get(
                 "validatedAt"
             ),
+            "countryCode": (
+                preview.get("countryCode")
+                or "CO"
+            ),
         },
     })
 
@@ -1012,16 +1055,34 @@ def serialize_free_preview_item(
 def normalize_free_preview_courses(
     items: Optional[Iterable[Mapping[str, Any]]],
     *,
-    limit: int = FREE_MAX_COURSES,
+    limit: Optional[int] = None,
 ) -> list:
     """
-    Elimina duplicados y conserva como máximo tres experiencias.
+    Elimina duplicados y conserva experiencias Free elegibles.
 
-    Esta función no consulta el endpoint. La consulta y el cache deben
-    vivir en un servicio separado, por ejemplo free_preview_catalog.py.
+    MX 1.1 acepta una o más experiencias. El límite opcional existe
+    solamente para decisiones de producto de Colombia y nunca se
+    interpreta como una restricción contractual de tres cursos.
     """
     result = []
     used_ids = set()
+
+    normalized_limit = None
+
+    if limit is not None:
+        try:
+            normalized_limit = int(limit)
+        except (TypeError, ValueError):
+            normalized_limit = None
+
+        if normalized_limit is not None:
+            normalized_limit = max(
+                1,
+                min(
+                    normalized_limit,
+                    MAX_FREE_COURSES,
+                ),
+            )
 
     for item in items or []:
         serialized = serialize_free_preview_item(
@@ -1040,7 +1101,10 @@ def normalize_free_preview_courses(
         used_ids.add(id_interno)
         result.append(serialized)
 
-        if len(result) >= limit:
+        if (
+            normalized_limit is not None
+            and len(result) >= normalized_limit
+        ):
             break
 
     return result
@@ -1119,9 +1183,10 @@ def build_learning_route_snapshot(
         FREE_PACKAGE_CODE,
     )
 
-    # FREE usa exactamente la selección persistida que originalmente
-    # provino del catálogo Free Tier. free_courses permite un override
+    # FREE usa la selección persistida que originalmente provino
+    # del catálogo Free Tier. free_courses permite un override
     # explícito; de lo contrario se reutiliza el snapshot actual.
+    # MX 1.1 acepta una o más experiencias elegibles.
     if package_code == FREE_PACKAGE_CODE:
         if snapshot is not None:
             version = getattr(snapshot, "version", version)
@@ -1137,11 +1202,13 @@ def build_learning_route_snapshot(
         if not selected_free_courses:
             selected_free_courses = get_free_courses_from_route(route)
 
-        courses = normalize_free_preview_courses(selected_free_courses)
+        courses = normalize_free_preview_courses(
+            selected_free_courses
+        )
 
-        if strict_free_courses and len(courses) != FREE_MAX_COURSES:
+        if strict_free_courses and len(courses) < 1:
             raise ValueError(
-                "free_plan_requires_exactly_three_courses"
+                "free_plan_requires_at_least_one_course"
             )
 
     else:
@@ -1234,8 +1301,42 @@ def validate_contract_payload(payload: Mapping[str, Any]) -> None:
         raise ValueError("package_billing_period_mismatch")
 
     trial = mapping_or_empty(plan.get("trial"))
-    if not expected["trialAllowed"] and bool(trial.get("isTrial")):
-        raise ValueError("trial_not_allowed_for_package")
+
+    if (
+        not expected["trialAllowed"]
+        and bool(trial.get("isTrial"))
+    ):
+        raise ValueError(
+            "trial_not_allowed_for_package"
+        )
+
+    if (
+        normalize_upper(
+            plan.get("lifecycleStatus")
+        ) == "TRIALING"
+    ):
+        if not expected["trialAllowed"]:
+            raise ValueError(
+                "trialing_not_allowed_for_package"
+            )
+
+        if not bool(trial.get("isTrial")):
+            raise ValueError(
+                "trialing_requires_trial_block"
+            )
+
+        if (
+            not trial.get("trialStart")
+            or not trial.get("trialEnd")
+        ):
+            raise ValueError(
+                "trial_dates_required"
+            )
+
+        if int(trial.get("trialDays") or 0) != 7:
+            raise ValueError(
+                "trial_days_must_be_seven"
+            )
 
     learning_route = mapping_or_empty(payload.get("learningRoute"))
     if normalize_upper(learning_route.get("mode")) != "SNAPSHOT":
@@ -1256,8 +1357,71 @@ def validate_contract_payload(payload: Mapping[str, Any]) -> None:
         raise ValueError("course_id_interno_required")
     if len(internal_ids) != len(set(internal_ids)):
         raise ValueError("duplicate_course_id_interno")
-    if package_code == FREE_PACKAGE_CODE and len(courses) != FREE_MAX_COURSES:
-        raise ValueError("free_plan_requires_exactly_three_courses")
+    if package_code == FREE_PACKAGE_CODE:
+        if len(courses) < 1:
+            raise ValueError(
+                "free_plan_requires_at_least_one_course"
+            )
+
+        for item in courses:
+            if not isinstance(item, Mapping):
+                raise ValueError(
+                    "free_course_must_be_object"
+                )
+
+            preview = mapping_or_empty(
+                item.get("preview")
+            )
+
+            preview_type = normalize_upper(
+                preview.get("type")
+            )
+
+            if (
+                preview_type
+                not in FREE_PREVIEW_TYPES
+            ):
+                raise ValueError(
+                    "invalid_free_preview_type"
+                )
+
+            if not preview.get("url"):
+                raise ValueError(
+                    "free_preview_url_required"
+                )
+
+            if not is_recent_free_preview(
+                preview.get("validatedAt")
+            ):
+                raise ValueError(
+                    "free_preview_validation_expired"
+                )
+
+            country_code = normalize_upper(
+                preview.get("countryCode")
+            )
+
+            if country_code != "CO":
+                raise ValueError(
+                    "free_preview_country_code_must_be_co"
+                )
+
+    billing = mapping_or_empty(
+        payload.get("billing")
+    )
+
+    if "periodEnd" in billing:
+        raise ValueError(
+            "billing_period_end_is_not_supported"
+        )
+
+    if (
+        "trialStart" in billing
+        or "trialEnd" in billing
+    ):
+        raise ValueError(
+            "billing_trial_fields_are_not_supported"
+        )
 
     redirects = mapping_or_empty(payload.get("redirects"))
     if not redirects.get("subscriptionManagementUrl"):
@@ -1381,8 +1545,6 @@ def build_mx_access_payload(
             or "active"
         ).strip().lower()
     )
-    billing["currentPeriodEnd"] = billing.get("periodEnd")
-
     learning_route = build_learning_route_snapshot(
         route=route,
         route_snapshot=route_snapshot,

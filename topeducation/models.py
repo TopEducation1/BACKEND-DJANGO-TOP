@@ -919,20 +919,34 @@ class LearningRouteLead(models.Model):
     # Compatibilidad con el flujo anterior
     # =========================================================
 
+    PLAN_CHOICES = [
+        ("free", "Free"),
+        ("basic", "Basic"),
+        ("x", "X"),
+        ("plus", "Plus"),
+    ]
+
+    PAID_PLAN_CHOICES = [
+        ("monthly_basic", "Basic mensual"),
+        ("yearly_basic", "Basic anual"),
+        ("monthly_x", "X mensual"),
+        ("yearly_x", "X anual"),
+        ("monthly_plus", "Plus mensual"),
+        ("yearly_plus", "Plus anual"),
+    ]
+
     selected_plan = models.CharField(
+        max_length=20,
+        choices=PLAN_CHOICES,
+        default="free",
+        db_index=True,
+    )
+
+    selected_paid_plan = models.CharField(
         max_length=30,
-        choices=[
-            ("free", "Free"),
-            ("pro", "Pro"),
-            ("monthly_basic", "Basic mensual"),
-            ("yearly_basic", "Basic anual"),
-            ("monthly_x", "X mensual"),
-            ("yearly_x", "X anual"),
-            ("monthly_plus", "Plus mensual"),
-            ("yearly_plus", "Plus anual"),
-        ],
-        blank=True,
+        choices=PAID_PLAN_CHOICES,
         null=True,
+        blank=True,
     )
 
     status = models.CharField(

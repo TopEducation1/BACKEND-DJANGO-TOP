@@ -25,6 +25,12 @@ DEFAULT_ROUTE_MODE = "SNAPSHOT"
 DEFAULT_ROUTE_SOURCE = "COLOMBIA"
 DEFAULT_ROUTE_LEVEL = 1
 
+# Decisión de producto Colombia:
+# por defecto se pueden seleccionar 3 experiencias Free para mostrar,
+# pero el contrato MX acepta una o más experiencias elegibles.
+DEFAULT_FREE_ROUTE_SIZE = 3
+MAX_FREE_ROUTE_SIZE = 200
+
 
 # =========================================================
 # EXCEPCIONES
@@ -81,7 +87,20 @@ def normalize_optional_string(value: Any) -> Optional[str]:
 
 
 def normalize_id_interno(value: Any) -> str:
-    return normalize_string(value)
+    """
+    Conserva exactamente el identificador recibido.
+
+    No se transforma, no se convierte a minúsculas, no se recorta
+    y no se reemplazan caracteres. Solo se valida que sea un string
+    no vacío después de ignorar espacios para la validación.
+    """
+    if not isinstance(value, str):
+        return ""
+
+    if not value.strip():
+        return ""
+
+    return value
 
 
 def normalize_positive_integer(
@@ -1312,6 +1331,9 @@ def build_free_route_metadata(
 ) -> Dict[str, Any]:
     """
     Construye metadata común para snapshots creados desde el catálogo Free.
+
+    courseCount refleja la cantidad realmente seleccionada; no existe
+    una obligación contractual de que sea exactamente tres.
     """
     metadata = {
         "catalog": catalog_source,
@@ -1337,13 +1359,19 @@ def build_free_route_metadata(
 def select_free_courses_for_learning_route(
     *,
     lead: LearningRouteLead,
-    amount: int = 3,
+    amount: int = DEFAULT_FREE_ROUTE_SIZE,
     excluded_id_internos: Optional[Iterable[str]] = None,
     force_catalog_refresh: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Selecciona experiencias elegibles exclusivamente desde el endpoint
     Free Tier y valida que puedan persistirse como LearningRouteItem.
+
+    Importante:
+    - MX acepta una o más experiencias Free elegibles.
+    - DEFAULT_FREE_ROUTE_SIZE=3 es una decisión de producto Colombia,
+      no una restricción contractual.
+    - El catálogo Free sigue siendo la única fuente de elegibilidad.
     """
     if not isinstance(lead, LearningRouteLead):
         raise InvalidLearningRouteError(
@@ -1356,13 +1384,29 @@ def select_free_courses_for_learning_route(
         )
 
     try:
+        normalized_amount = int(amount)
+    except (TypeError, ValueError):
+        normalized_amount = DEFAULT_FREE_ROUTE_SIZE
+
+    normalized_amount = max(
+        1,
+        min(
+            normalized_amount,
+            MAX_FREE_ROUTE_SIZE,
+        ),
+    )
+
+    try:
         courses = select_free_preview_courses_for_lead(
             lead,
-            amount=amount,
+            amount=normalized_amount,
             excluded_id_internos=excluded_id_internos,
             force_refresh=force_catalog_refresh,
         )
-    except (FreePreviewSelectionError, FreePreviewProviderError) as exc:
+    except (
+        FreePreviewSelectionError,
+        FreePreviewProviderError,
+    ) as exc:
         raise InvalidLearningRouteError(
             f"No fue posible construir la ruta Free: {exc}"
         ) from exc
@@ -1372,10 +1416,10 @@ def select_free_courses_for_learning_route(
         require_certification=False,
     )
 
-    if len(normalized) != amount:
+    if not normalized:
         raise InvalidLearningRouteError(
-            "La ruta Free debe contener exactamente "
-            f"{amount} experiencias elegibles."
+            "La ruta Free debe contener al menos una "
+            "experiencia elegible."
         )
 
     result: List[Dict[str, Any]] = []
@@ -1411,6 +1455,7 @@ def select_free_courses_for_learning_route(
 def create_free_learning_route(
     *,
     lead: LearningRouteLead,
+    amount: int = DEFAULT_FREE_ROUTE_SIZE,
     change_reason: str = "FREE_PLAN_CREATED",
     created_by_event_id: Optional[str] = None,
     force_catalog_refresh: bool = False,
@@ -1423,7 +1468,7 @@ def create_free_learning_route(
     """
     courses = select_free_courses_for_learning_route(
         lead=lead,
-        amount=3,
+        amount=amount,
         force_catalog_refresh=force_catalog_refresh,
     )
 
@@ -1444,6 +1489,7 @@ def create_free_learning_route(
 def update_to_free_learning_route(
     *,
     lead: LearningRouteLead,
+    amount: int = DEFAULT_FREE_ROUTE_SIZE,
     change_reason: str = "SUBSCRIPTION_EXPIRED_TO_FREE",
     created_by_event_id: Optional[str] = None,
     force_catalog_refresh: bool = False,
@@ -1475,9 +1521,16 @@ def update_to_free_learning_route(
             or current.source == "MX_FREE_PREVIEW"
         )
 
+        current_ids = [
+            item.id_interno
+            for item in current_items
+            if item.id_interno
+        ]
+
         current_is_valid = (
-            len(current_items) == 3
-            and len({item.id_interno for item in current_items}) == 3
+            len(current_items) >= 1
+            and len(current_ids)
+            == len(set(current_ids))
             and all(
                 item.preview_type
                 and item.preview_url
@@ -1491,7 +1544,7 @@ def update_to_free_learning_route(
 
     courses = select_free_courses_for_learning_route(
         lead=lead,
-        amount=3,
+        amount=amount,
         force_catalog_refresh=force_catalog_refresh,
     )
 
@@ -1512,6 +1565,7 @@ def update_to_free_learning_route(
 def ensure_free_learning_route(
     *,
     lead: LearningRouteLead,
+    amount: int = DEFAULT_FREE_ROUTE_SIZE,
     change_reason: str = "FREE_ROUTE_ENSURED",
     created_by_event_id: Optional[str] = None,
     force_catalog_refresh: bool = False,
@@ -1532,6 +1586,7 @@ def ensure_free_learning_route(
     if not existing:
         return create_free_learning_route(
             lead=lead,
+            amount=amount,
             change_reason=change_reason,
             created_by_event_id=created_by_event_id,
             force_catalog_refresh=force_catalog_refresh,
@@ -1540,6 +1595,7 @@ def ensure_free_learning_route(
 
     return update_to_free_learning_route(
         lead=lead,
+        amount=amount,
         change_reason=change_reason,
         created_by_event_id=created_by_event_id,
         force_catalog_refresh=force_catalog_refresh,

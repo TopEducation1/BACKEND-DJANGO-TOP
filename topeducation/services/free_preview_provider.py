@@ -6,7 +6,9 @@ import logging
 import os
 import random
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
@@ -17,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_ENDPOINT = (
-    "https://api-colombia-dev.universidad.top/"
+    "https://api-colombia.universidad.top/"
     "v1/b2c/free-preview-courses"
 )
 
@@ -27,6 +29,9 @@ DEFAULT_TIMEOUT_SECONDS = 45
 DEFAULT_CACHE_TIMEOUT_SECONDS = 60 * 60 * 6
 DEFAULT_MAX_PAGES = 100
 DEFAULT_SELECTION_SIZE = 3
+MAX_SELECTION_SIZE = 200
+MAX_PREVIEW_AGE_DAYS = 30
+ALLOWED_PREVIEW_TYPES = {"AUDIT", "COURSE_PREVIEW"}
 
 CACHE_KEY_CURRENT = "topeducation:free-preview:catalog:current:v1"
 CACHE_KEY_LAST_VALID = "topeducation:free-preview:catalog:last-valid:v1"
@@ -47,6 +52,21 @@ class FreePreviewConfigurationError(FreePreviewProviderError):
 
 class FreePreviewRequestError(FreePreviewProviderError):
     """No fue posible consultar el catálogo remoto."""
+
+
+class FreePreviewHTTPError(FreePreviewRequestError):
+    """El endpoint respondió HTTP no exitoso."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int,
+        retryable: bool,
+    ):
+        super().__init__(message)
+        self.status_code = int(status_code)
+        self.retryable = bool(retryable)
 
 
 class FreePreviewResponseError(FreePreviewProviderError):
@@ -100,18 +120,17 @@ def get_free_preview_endpoint() -> str:
 
 def get_free_preview_api_key() -> str:
     """
-    Prioridad recomendada:
+    API key del catálogo Free.
 
+    Prioridad:
     1. MX_FREE_PREVIEW_API_KEY
-    2. MX_B2C_API_KEY
-    3. COURSES_EXTERNAL_API_KEY
+    2. COURSES_EXTERNAL_API_KEY (compatibilidad temporal)
 
-    El tercer nombre se conserva como compatibilidad con la
-    configuración existente del proyecto.
+    No se reutiliza MX_B2C_API_KEY porque la credencial B2C y la
+    credencial de catálogo son responsabilidades distintas.
     """
     api_key = (
         _setting("MX_FREE_PREVIEW_API_KEY")
-        or _setting("MX_B2C_API_KEY")
         or _setting("COURSES_EXTERNAL_API_KEY")
     )
 
@@ -190,6 +209,74 @@ def _normalize_page_limit(value: Any) -> int:
         normalized = DEFAULT_PAGE_LIMIT
 
     return max(1, min(normalized, 200))
+
+
+def _is_http_url(value: Any) -> bool:
+    raw = str(value or "").strip()
+
+    if not raw:
+        return False
+
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return False
+
+    return (
+        parsed.scheme.lower() in {"http", "https"}
+        and bool(parsed.netloc)
+    )
+
+
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+
+    if not raw:
+        return None
+
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+
+        parsed = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(
+            tzinfo=dt_timezone.utc
+        )
+
+    return parsed.astimezone(
+        dt_timezone.utc
+    )
+
+
+def _is_preview_validation_current(
+    value: Any,
+    *,
+    max_age_days: int = MAX_PREVIEW_AGE_DAYS,
+) -> bool:
+    """
+    El contrato MX exige que preview.validatedAt tenga una antigüedad
+    máxima de 30 días al momento de provisionar un usuario nuevo.
+    """
+    validated_at = _parse_iso_datetime(value)
+
+    if validated_at is None:
+        return False
+
+    now = datetime.now(
+        dt_timezone.utc
+    )
+
+    age = now - validated_at
+
+    return (
+        timedelta(0)
+        <= age
+        <= timedelta(days=max_age_days)
+    )
 
 
 def _build_headers() -> Dict[str, str]:
@@ -292,13 +379,21 @@ def _extract_response_data(
 
 def normalize_free_preview_item(
     item: Any,
+    *,
+    country_code: str = DEFAULT_COUNTRY_CODE,
+    require_current_validation: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """
     Valida y normaliza un elemento del endpoint Free.
 
-    Regla importante:
-    idInterno se conserva exactamente como fue recibido. No se recorta,
-    reemplaza ni transforma.
+    Reglas contractuales:
+    - idInterno se conserva EXACTAMENTE como fue recibido;
+    - preview.type debe ser elegible;
+    - preview.url debe ser HTTP/HTTPS;
+    - preview.validatedAt debe estar vigente (<= 30 días)
+      para nuevas provisiones;
+    - countryCode se conserva si llega y, si no, se completa
+      con el país usado en la consulta.
     """
     if not isinstance(item, Mapping):
         return None
@@ -311,7 +406,11 @@ def normalize_free_preview_item(
     ):
         return None
 
-    preview = _ensure_mapping(item.get("preview"))
+    # Importante: NO hacemos strip sobre el valor que finalmente
+    # devolvemos. Solo lo usamos para validar que no esté vacío.
+    preview = _ensure_mapping(
+        item.get("preview")
+    )
 
     preview_type = str(
         preview.get("type") or ""
@@ -321,33 +420,85 @@ def normalize_free_preview_item(
         preview.get("url") or ""
     ).strip()
 
-    if not preview_type or not preview_url:
+    validated_at = preview.get(
+        "validatedAt"
+    )
+
+    preview_country_code = (
+        preview.get("countryCode")
+        or country_code
+        or DEFAULT_COUNTRY_CODE
+    )
+
+    preview_country_code = (
+        _normalize_country_code(
+            preview_country_code
+        )
+    )
+
+    if (
+        not preview_type
+        or preview_type
+        not in ALLOWED_PREVIEW_TYPES
+    ):
+        return None
+
+    if not _is_http_url(preview_url):
+        return None
+
+    if (
+        require_current_validation
+        and not _is_preview_validation_current(
+            validated_at
+        )
+    ):
         return None
 
     return {
+        "id": item.get("id"),
         "idInterno": id_interno,
-        "title": str(item.get("title") or "").strip(),
-        "provider": str(item.get("provider") or "").strip(),
-        "language": str(item.get("language") or "").strip(),
+        "title": str(
+            item.get("title") or ""
+        ).strip(),
+        "provider": str(
+            item.get("provider") or ""
+        ).strip(),
+        "language": str(
+            item.get("language") or ""
+        ).strip(),
         "preview": {
             "type": preview_type,
             "url": preview_url,
-            "validatedAt": preview.get("validatedAt"),
+            "validatedAt": validated_at,
+            "countryCode": (
+                preview_country_code
+            ),
         },
     }
 
 
 def normalize_free_preview_items(
     items: Iterable[Any],
+    *,
+    country_code: str = DEFAULT_COUNTRY_CODE,
+    require_current_validation: bool = True,
 ) -> List[Dict[str, Any]]:
     """
     Elimina registros inválidos y duplicados por idInterno.
+
+    Los duplicados se comparan por el identificador exacto recibido.
     """
     normalized_items: List[Dict[str, Any]] = []
     seen_ids = set()
 
     for item in items or []:
-        normalized = normalize_free_preview_item(item)
+        normalized = normalize_free_preview_item(
+            item,
+            country_code=country_code,
+            require_current_validation=(
+                require_current_validation
+            ),
+        )
 
         if normalized is None:
             continue
@@ -425,11 +576,23 @@ def fetch_free_preview_page(
         ) from exc
 
     if response.status_code < 200 or response.status_code >= 300:
-        preview = (response.text or "")[:1000]
+        response_preview = (
+            response.text or ""
+        )[:1000]
 
-        raise FreePreviewRequestError(
-            "El endpoint del catálogo Free respondió "
-            f"HTTP {response.status_code}: {preview}"
+        retryable = (
+            response.status_code
+            in {500, 502, 503, 504}
+        )
+
+        raise FreePreviewHTTPError(
+            (
+                "El endpoint del catálogo Free respondió "
+                f"HTTP {response.status_code}: "
+                f"{response_preview}"
+            ),
+            status_code=response.status_code,
+            retryable=retryable,
         )
 
     try:
@@ -448,38 +611,20 @@ def fetch_free_preview_page(
         ) from exc
 
 
-    # =========================================================
-    # LOG TEMPORAL: RESPUESTA COMPLETA DEL CATÁLOGO FREE
-    # =========================================================
-
-    try:
-        logger.warning(
-            "\n"
-            "============================================================\n"
-            "FREE PREVIEW - RESPUESTA COMPLETA DEL ENDPOINT\n"
-            "endpoint=%s\n"
-            "status_code=%s\n"
-            "params=%s\n"
-            "payload=\n%s\n"
-            "============================================================",
-            endpoint,
-            response.status_code,
-            params,
-            json.dumps(
-                payload,
-                indent=2,
-                ensure_ascii=False,
-                default=str,
-            ),
-        )
-    except Exception:
-        logger.exception(
-            "No fue posible imprimir la respuesta completa "
-            "del catálogo Free."
-        )
-
-
     data = _extract_response_data(payload)
+
+    logger.info(
+        "Free Preview consultado. "
+        "status=%s provider=%s language=%s "
+        "country=%s items=%s next_cursor=%s total=%s",
+        response.status_code,
+        params.get("provider"),
+        params.get("language"),
+        params.get("countryCode"),
+        len(data.get("items") or []),
+        data.get("nextCursor"),
+        data.get("total"),
+    )
 
     return {
         "items": data.get("items") or [],
@@ -552,7 +697,9 @@ def fetch_complete_free_preview_catalog(
             )
 
     normalized_items = normalize_free_preview_items(
-        all_items
+        all_items,
+        country_code=country_code,
+        require_current_validation=True,
     )
 
     metadata = {
@@ -659,7 +806,9 @@ def _load_cached_catalog(
         return None
 
     items = normalize_free_preview_items(
-        payload.get("items") or []
+        payload.get("items") or [],
+        country_code=country_code,
+        require_current_validation=True,
     )
 
     if not items:
@@ -731,12 +880,32 @@ def get_free_preview_catalog(
 
         return remote
 
-    except FreePreviewProviderError:
+    except FreePreviewProviderError as exc:
         logger.exception(
             "Falló la actualización del catálogo Free."
         )
 
-        if not allow_stale:
+        retryable = (
+            isinstance(
+                exc,
+                (
+                    FreePreviewRequestError,
+                    FreePreviewResponseError,
+                ),
+            )
+            and (
+                not isinstance(
+                    exc,
+                    FreePreviewHTTPError,
+                )
+                or exc.retryable
+            )
+        )
+
+        if (
+            not allow_stale
+            or not retryable
+        ):
             raise
 
         stale_result = _load_cached_catalog(
@@ -747,6 +916,12 @@ def get_free_preview_catalog(
         )
 
         if stale_result:
+            logger.warning(
+                "Se utilizará el último catálogo Free válido. "
+                "source=%s total=%s",
+                stale_result.source,
+                stale_result.total,
+            )
             return stale_result
 
         raise
@@ -812,13 +987,16 @@ def select_free_preview_courses(
     - No repite idInterno.
     - Conserva idInterno exactamente.
     - Agrega order y routeLevel para el contrato de la ruta.
+    - DEFAULT_SELECTION_SIZE=3 es una decisión de producto por defecto,
+      no una restricción contractual de MX.
+    - El contrato permite de 1 a MAX_SELECTION_SIZE experiencias.
     """
     try:
         amount = int(amount)
     except (TypeError, ValueError):
         amount = DEFAULT_SELECTION_SIZE
 
-    amount = max(1, min(amount, DEFAULT_SELECTION_SIZE))
+    amount = max(1, min(amount, MAX_SELECTION_SIZE))
 
     catalog = get_free_preview_catalog(
         force_refresh=force_refresh,
@@ -875,6 +1053,14 @@ def select_free_preview_courses(
                 "validatedAt": (
                     item.get("preview") or {}
                 ).get("validatedAt"),
+                "countryCode": (
+                    item.get("preview") or {}
+                ).get(
+                    "countryCode",
+                    _normalize_country_code(
+                        country_code
+                    ),
+                ),
             },
             "available": True,
         })

@@ -18,6 +18,7 @@ urlpatterns = [
     path('',login_required(views.dashboard,login_url='/signin/'), name='inicio'),
     path("select2/", include("django_select2.urls")),
     path('dashboard/',login_required(views.dashboard,login_url='/signin/'), name='dashboard'),
+    path("api/auth/csrf/", csrf_token_view, name="auth-csrf",),
     path('signin/',views.signin, name='signin'),
     path('logout/',views.signout, name='logout'),
     path('certifications/',login_required(views.certifications,login_url='/signin/'), name='certifications'),
@@ -93,6 +94,7 @@ urlpatterns = [
     path("api/account/cv/analyze/", AccountCVAnalysisAPIView.as_view(), name="account_cv_analyze",),
     path("api/account/cv/last-analysis/", AccountCVLastAnalysisAPIView.as_view(), name="account_cv_last_analysis",),
     path("api/account/career-plan/", AccountCareerPlanAPIView.as_view(), name="account-career-plan",),
+    path("api/account/available-courses/", AccountAvailableCoursesAPIView.as_view(),name="account-available-courses",),
     path("originals/slider/", OriginalsSliderView.as_view(), name="originals-slider"),
     
     path('originals/<slug:slug>/', OriginalDetailView.as_view(), name='original-detail'),
