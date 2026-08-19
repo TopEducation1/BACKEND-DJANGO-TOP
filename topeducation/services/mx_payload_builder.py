@@ -831,86 +831,35 @@ def build_billing_snapshot(
 # =========================================================
 
 def serialize_route_item(item: Any) -> Dict[str, Any]:
-    certification = getattr(
-        item,
-        "certification",
-        None,
-    )
+    """
+    Serializa un curso de una ruta pagada con el payload mínimo:
+    idInterno, order y routeLevel.
+
+    La metadata descriptiva se omite porque México puede resolverla
+    mediante idInterno y no es necesaria para representar el snapshot.
+    """
+    certification = getattr(item, "certification", None)
 
     id_interno = (
         getattr(item, "id_interno", None)
         or getattr(certification, "id_interno", None)
     )
 
-    preview = compact_dict({
-        "type": normalize_upper(
-            getattr(item, "preview_type", None)
-        ),
-        "url": getattr(item, "preview_url", None),
-        "validatedAt": iso_from_ts(
-            getattr(
-                item,
-                "preview_validated_at",
-                None,
-            )
-        ),
-        "countryCode": getattr(
-            item,
-            "preview_country_code",
-            None,
-        ),
-    })
-
-    course = {
+    return compact_dict({
         "idInterno": (
             str(id_interno)
             if id_interno not in (None, "")
             else None
         ),
         "order": getattr(item, "order", 1),
-        "routeLevel": getattr(
-            item,
-            "route_level",
-            1,
-        ),
-        "title": (
-            getattr(item, "title", None)
-            or getattr(certification, "nombre", None)
-            or ""
-        ),
-        "provider": (
-            getattr(item, "provider", None)
-            or getattr(
-                certification,
-                "source_provider",
-                None,
-            )
-            or ""
-        ),
-        "language": (
-            getattr(item, "language", None)
-            or getattr(
-                certification,
-                "lenguaje_certificacion",
-                None,
-            )
-            or ""
-        ),
-        "available": bool(
-            getattr(item, "is_available", True)
-        ),
-    }
-
-    if preview:
-        course["preview"] = preview
-
-    return compact_dict(course)
+        "routeLevel": getattr(item, "route_level", 1),
+    })
 
 
 def serialize_legacy_recommendations(route) -> list:
     """
-    Compatibilidad temporal para registros históricos.
-    No determina por sí sola la elegibilidad Free.
+    Compatibilidad temporal para rutas pagadas históricas.
+    Conserva únicamente idInterno, order y routeLevel.
     """
     if route is None:
         return []
@@ -923,10 +872,7 @@ def serialize_legacy_recommendations(route) -> list:
 
     result = []
 
-    for index, item in enumerate(
-        recommendations,
-        start=1,
-    ):
+    for index, item in enumerate(recommendations, start=1):
         if not isinstance(item, dict):
             continue
 
@@ -939,66 +885,15 @@ def serialize_legacy_recommendations(route) -> list:
         if not id_interno:
             continue
 
-        preview_data = mapping_or_empty(
-            item.get("preview")
-        )
-
-        preview_type = (
-            preview_data.get("type")
-            or item.get("previewType")
-            or item.get("preview_type")
-        )
-
-        preview_url = (
-            preview_data.get("url")
-            or item.get("previewUrl")
-            or item.get("preview_url")
-        )
-
-        result.append(
-            compact_dict({
-                "idInterno": str(id_interno),
-                "order": item.get("order") or index,
-                "routeLevel": (
-                    item.get("routeLevel")
-                    or item.get("route_level")
-                    or 1
-                ),
-                "title": (
-                    item.get("title")
-                    or item.get("nombre")
-                    or ""
-                ),
-                "provider": (
-                    item.get("provider")
-                    or item.get("source_provider")
-                    or ""
-                ),
-                "language": (
-                    item.get("language")
-                    or item.get("lenguaje")
-                    or ""
-                ),
-                "preview": compact_dict({
-                    "type": normalize_upper(
-                        preview_type
-                    ),
-                    "url": preview_url,
-                    "validatedAt": (
-                        preview_data.get("validatedAt")
-                        or item.get(
-                            "preview_validated_at"
-                        )
-                    ),
-                    "countryCode": (
-                        preview_data.get("countryCode")
-                        or item.get(
-                            "preview_country_code"
-                        )
-                    ),
-                }),
-            })
-        )
+        result.append(compact_dict({
+            "idInterno": str(id_interno),
+            "order": item.get("order") or index,
+            "routeLevel": (
+                item.get("routeLevel")
+                or item.get("route_level")
+                or 1
+            ),
+        }))
 
     return result
 
@@ -1035,7 +930,6 @@ def serialize_free_preview_item(
         "idInterno": str(id_interno),
         "title": item.get("title") or "",
         "provider": item.get("provider") or "",
-        "language": item.get("language") or "",
         "order": order,
         "routeLevel": item.get("routeLevel") or 1,
         "preview": {
@@ -1175,7 +1069,6 @@ def build_learning_route_snapshot(
     )
 
     mode = "SNAPSHOT"
-    snapshot_id = None
     courses = []
 
     package_code = normalize_upper(
@@ -1191,7 +1084,6 @@ def build_learning_route_snapshot(
         if snapshot is not None:
             version = getattr(snapshot, "version", version)
             mode = getattr(snapshot, "mode", "SNAPSHOT")
-            snapshot_id = getattr(snapshot, "pk", None)
 
         selected_free_courses = (
             list(free_courses)
@@ -1223,7 +1115,6 @@ def build_learning_route_snapshot(
                 "mode",
                 "SNAPSHOT",
             )
-            snapshot_id = getattr(snapshot, "pk", None)
 
             courses = serialize_snapshot_courses(snapshot)
 
@@ -1239,19 +1130,6 @@ def build_learning_route_snapshot(
             "SNAPSHOT",
         ),
         "courses": courses,
-        "metadata": {
-            "leadId": (
-                str(route.pk)
-                if route
-                and getattr(route, "pk", None)
-                else None
-            ),
-            "snapshotId": (
-                str(snapshot_id)
-                if snapshot_id
-                else None
-            ),
-        },
     })
 
 
