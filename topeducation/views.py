@@ -14,6 +14,9 @@ from django.conf import settings
 from django.contrib import messages
 
 
+from django.db.models import Q, Window, F
+from django.db.models.functions import RowNumber
+
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth import authenticate, get_backends, get_user_model, login, logout
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -3154,28 +3157,177 @@ def normalize_explore_filter_ids(raw_values):
 
     return sorted(normalized_ids)
 
+# =========================================================
+# NORMALIZADORES
+# =========================================================
+
+def normalize_explore_filter_ids(values):
+    """
+    Recibe una colección de valores y devuelve IDs enteros únicos.
+
+    Ejemplo:
+        ["12", 12, "18", None, ""] -> [12, 18]
+    """
+
+    result = []
+    seen = set()
+
+    for value in values or []:
+        try:
+            clean_value = int(value)
+        except (
+            TypeError,
+            ValueError,
+        ):
+            continue
+
+        if clean_value <= 0:
+            continue
+
+        if clean_value in seen:
+            continue
+
+        seen.add(clean_value)
+        result.append(clean_value)
+
+    return result
+
 
 def normalize_explore_filter_strings(
-    raw_values,
+    values,
     *,
     lower=False,
 ):
-    normalized_values = set()
+    """
+    Limpia strings, elimina vacíos y duplicados.
 
-    for raw_value in raw_values or []:
+    Si lower=True:
+        normaliza a minúsculas.
+    """
+
+    result = []
+    seen = set()
+
+    for value in values or []:
         clean_value = str(
-            raw_value or ""
+            value or ""
         ).strip()
 
         if not clean_value:
             continue
 
         if lower:
-            clean_value = clean_value.lower()
+            clean_value = (
+                clean_value.lower()
+            )
 
-        normalized_values.add(clean_value)
+        identity_key = (
+            clean_value.lower()
+        )
 
-    return sorted(normalized_values)
+        if identity_key in seen:
+            continue
+
+        seen.add(identity_key)
+        result.append(clean_value)
+
+    return result
+
+# =========================================================
+# SKILL SLUG -> ID
+# =========================================================
+
+SKILL_SLUG_CACHE_TIMEOUT = 60 * 60
+
+
+def get_skill_ids_from_slugs(
+    skill_slugs,
+):
+    """
+    Convierte slugs de Skills a IDs.
+
+    Importante:
+    - la consulta a Skills ocurre una sola vez;
+    - los resultados quedan cacheados;
+    - el filtro grande sobre certificaciones ya no necesita
+      hacer JOIN con Skills.
+
+    Ejemplo:
+        [
+            "communication",
+            "innovation",
+        ]
+
+    devuelve:
+        [12, 27]
+    """
+
+    clean_slugs = (
+        normalize_explore_filter_strings(
+            skill_slugs,
+            lower=True,
+        )
+    )
+
+    if not clean_slugs:
+        return []
+
+    # El orden de los parámetros no debe producir
+    # caches diferentes.
+    normalized_slugs = sorted(
+        clean_slugs
+    )
+
+    raw_cache_key = "|".join(
+        normalized_slugs
+    )
+
+    digest = hashlib.md5(
+        raw_cache_key.encode("utf-8")
+    ).hexdigest()
+
+    cache_key = (
+        f"explore:"
+        f"skill-slug-ids:"
+        f"{digest}"
+    )
+
+    cached_ids = cache.get(
+        cache_key
+    )
+
+    if cached_ids is not None:
+        return list(cached_ids)
+
+    skill_ids = list(
+        Skills.objects
+        .filter(
+            estado=True,
+            slug__in=normalized_slugs,
+        )
+        .values_list(
+            "id",
+            flat=True,
+        )
+    )
+
+    skill_ids = (
+        normalize_explore_filter_ids(
+            skill_ids
+        )
+    )
+
+    cache.set(
+        cache_key,
+        skill_ids,
+        SKILL_SLUG_CACHE_TIMEOUT,
+    )
+
+    return skill_ids
+
+# =========================================================
+# FILTRO POR SKILLS / DOMINIOS
+# =========================================================
 
 def apply_skills_domain_filter(
     queryset,
@@ -3183,40 +3335,82 @@ def apply_skills_domain_filter(
     skill_ids=None,
     skill_slugs=None,
 ):
-    skill_ids = normalize_explore_filter_ids(
-        skill_ids
-    )
+    """
+    Filtra Certificaciones relacionadas con cualquiera de
+    las skills seleccionadas.
 
-    skill_slugs = (
-        normalize_explore_filter_strings(
-            skill_slugs
+    Antes:
+        SkillsCertification
+            JOIN Skills
+            WHERE Skills.slug IN (...)
+
+    Ahora:
+        1. Convertimos los slugs a skill_id.
+        2. Filtramos directamente SkillsCertification.skill_id.
+        3. Subquery devuelve solamente certificacion_id.
+
+    SQL esperado:
+
+        Certificaciones.id IN (
+            SELECT certificacion_id
+            FROM SkillsCertification
+            WHERE skill_id IN (...)
+        )
+
+    Esto evita el JOIN a Skills dentro de la consulta pesada.
+    """
+
+    normalized_skill_ids = set(
+        normalize_explore_filter_ids(
+            skill_ids or []
         )
     )
 
-    if not skill_ids and not skill_slugs:
+    normalized_skill_slugs = (
+        normalize_explore_filter_strings(
+            skill_slugs or [],
+            lower=True,
+        )
+    )
+
+    # =====================================================
+    # RESOLVER SLUGS
+    # =====================================================
+
+    if normalized_skill_slugs:
+        slug_skill_ids = (
+            get_skill_ids_from_slugs(
+                normalized_skill_slugs
+            )
+        )
+
+        normalized_skill_ids.update(
+            slug_skill_ids
+        )
+
+    # =====================================================
+    # SIN SKILLS
+    # =====================================================
+
+    if not normalized_skill_ids:
         return queryset
 
-    relation_queryset = (
-        SkillsCertification.objects
-        .order_by()
+    final_skill_ids = sorted(
+        normalized_skill_ids
     )
 
-    if skill_ids:
-        relation_queryset = (
-            relation_queryset.filter(
-                skill_id__in=skill_ids
-            )
-        )
-    else:
-        relation_queryset = (
-            relation_queryset.filter(
-                skill__slug__in=skill_slugs
-            )
-        )
+    # =====================================================
+    # SUBQUERY OPTIMIZADA
+    # =====================================================
 
     certification_ids_subquery = (
-        relation_queryset
-        .values("certificacion_id")
+        SkillsCertification.objects
+        .filter(
+            skill_id__in=final_skill_ids
+        )
+        .values(
+            "certificacion_id"
+        )
     )
 
     return queryset.filter(
@@ -3224,6 +3418,9 @@ def apply_skills_domain_filter(
             certification_ids_subquery
         )
     )
+# =========================================================
+# PRIORIDAD PARA UNA SOLA SKILL
+# =========================================================
 
 def apply_single_skill_priority(
     queryset,
@@ -3232,22 +3429,50 @@ def apply_single_skill_priority(
     skill_slug=None,
 ):
     """
-    Conserva la prioridad anterior para una sola habilidad:
-    primero aparecen las certificaciones cuya habilidad
-    principal coincide con el filtro.
+    Cuando el usuario selecciona una sola habilidad,
+    prioriza las certificaciones donde esa skill aparece
+    primero según SkillsCertification.orden.
 
-    No se utiliza en dominios de varias habilidades.
+    El slug, si llega, se convierte primero a ID.
     """
-    if not skill_id and not skill_slug:
+
+    normalized_skill_ids = []
+
+    if skill_id is not None:
+        normalized_skill_ids = (
+            normalize_explore_filter_ids(
+                [skill_id]
+            )
+        )
+
+    if (
+        not normalized_skill_ids
+        and skill_slug
+    ):
+        normalized_skill_ids = (
+            get_skill_ids_from_slugs(
+                [skill_slug]
+            )
+        )
+
+    if not normalized_skill_ids:
         return queryset.order_by(
             "-fecha_creado_cert",
             "-id",
         )
 
+    target_skill_id = (
+        normalized_skill_ids[0]
+    )
+
+    # Primera relación de skill asociada
+    # a cada certificación.
     first_skill_relation = (
         SkillsCertification.objects
         .filter(
-            certificacion_id=OuterRef("pk")
+            certificacion_id=OuterRef(
+                "pk"
+            )
         )
         .order_by(
             "orden",
@@ -3255,55 +3480,32 @@ def apply_single_skill_priority(
         )
     )
 
-    priority_condition = Q()
-
-    annotations = {}
-
-    if skill_id:
-        annotations["first_skill_id"] = (
-            Subquery(
-                first_skill_relation
-                .values("skill_id")[:1]
-            )
-        )
-
-        priority_condition |= Q(
-            first_skill_id=skill_id
-        )
-
-    else:
-        annotations["first_skill_slug"] = (
-            Subquery(
-                first_skill_relation
-                .values("skill__slug")[:1]
-            )
-        )
-
-        priority_condition |= Q(
-            first_skill_slug=skill_slug
-        )
-
     queryset = queryset.annotate(
-        **annotations
+        first_skill_id=Subquery(
+            first_skill_relation
+            .values(
+                "skill_id"
+            )[:1]
+        )
     )
 
-    return (
-        queryset
-        .annotate(
-            skill_priority=Case(
-                When(
-                    priority_condition,
-                    then=Value(0),
-                ),
-                default=Value(1),
-                output_field=IntegerField(),
-            )
+    queryset = queryset.annotate(
+        skill_priority=Case(
+            When(
+                first_skill_id=
+                target_skill_id,
+                then=Value(0),
+            ),
+            default=Value(1),
+            output_field=
+            IntegerField(),
         )
-        .order_by(
-            "skill_priority",
-            "-fecha_creado_cert",
-            "-id",
-        )
+    )
+
+    return queryset.order_by(
+        "skill_priority",
+        "-fecha_creado_cert",
+        "-id",
     )
 
 def load_explore_certification_page(
@@ -3418,7 +3620,6 @@ def load_explore_certification_page(
         )
         .order_by(order_expression)
     )
-
 @method_decorator(
     cache_page(60 * 15),
     name="dispatch",
@@ -3459,7 +3660,7 @@ class filter_by_tags(APIView):
 
             for key, value_list in params.lists():
 
-                # Parámetros que no modifican el queryset filtrado.
+                # Parámetros de control que NO afectan filtros.
                 if key in {
                     "page",
                     "page_size",
@@ -3469,7 +3670,7 @@ class filter_by_tags(APIView):
                     continue
 
                 # -------------------------------------------------
-                # TEMAS
+                # TEMAS POR SLUG
                 # -------------------------------------------------
 
                 if key in {
@@ -3483,7 +3684,7 @@ class filter_by_tags(APIView):
                     )
 
                 # -------------------------------------------------
-                # HABILIDADES
+                # HABILIDADES POR SLUG
                 # -------------------------------------------------
 
                 elif key in {
@@ -3662,7 +3863,7 @@ class filter_by_tags(APIView):
                     )
 
             # =====================================================
-            # NORMALIZAR Y QUITAR DUPLICADOS
+            # NORMALIZAR IDS
             # =====================================================
 
             tema_ids = normalize_explore_filter_ids(
@@ -3685,12 +3886,18 @@ class filter_by_tags(APIView):
                 universidad_ids
             )
 
+            # =====================================================
+            # NORMALIZAR STRINGS
+            # =====================================================
+
             tema_slugs = normalize_explore_filter_strings(
-                tema_slugs
+                tema_slugs,
+                lower=True,
             )
 
             habilidad_slugs = normalize_explore_filter_strings(
-                habilidad_slugs
+                habilidad_slugs,
+                lower=True,
             )
 
             plataforma_values = (
@@ -3730,21 +3937,43 @@ class filter_by_tags(APIView):
                 )
             )
 
+            # =====================================================
+            # SKILLS SELECCIONADAS
+            # =====================================================
+
             selected_skill_ids = (
                 normalize_explore_filter_ids(
-                    tema_ids + habilidad_ids
+                    tema_ids
+                    + habilidad_ids
                 )
             )
 
             selected_skill_slugs = (
                 normalize_explore_filter_strings(
                     tema_slugs
-                    + habilidad_slugs
+                    + habilidad_slugs,
+                    lower=True,
                 )
             )
 
-            # Si existen IDs, no usamos slugs.
-            # Evita introducir OR innecesarios.
+            # =====================================================
+            # PREFERIR IDS CUANDO EXISTAN
+            # =====================================================
+            #
+            # Si el frontend ya envió IDs, evitamos resolver slugs.
+            #
+            # Ejemplo preferido:
+            #
+            # ?habilidad_id=12
+            # &habilidad_id=18
+            #
+            # en vez de:
+            #
+            # ?Habilidad=communication
+            # &Habilidad=innovation
+            #
+            # =====================================================
+
             if selected_skill_ids:
                 selected_skill_slugs = []
 
@@ -3752,16 +3981,24 @@ class filter_by_tags(APIView):
             # QUERYSET BASE
             # =====================================================
             #
-            # Mantenerlo ligero es importante:
+            # MUY IMPORTANTE:
             #
-            # - sin select_related;
-            # - sin prefetch_related;
-            # - sin imágenes;
-            # - sin logos;
-            # - sin relaciones pesadas.
+            # Este queryset debe permanecer liviano.
             #
-            # El COUNT y el LIMIT deben trabajar sobre
-            # Certificaciones + filtros simples/subconsultas.
+            # NO:
+            # - select_related
+            # - prefetch_related
+            # - imágenes
+            # - logos
+            # - serializers
+            #
+            # Aquí solamente hacemos:
+            #
+            # filtros
+            # COUNT
+            # ORDER
+            # LIMIT
+            #
             # =====================================================
 
             queryset = (
@@ -3780,7 +4017,10 @@ class filter_by_tags(APIView):
                     language_normalized__in=
                     idioma_codes
                 )
+
             else:
+                # Mantiene comportamiento actual:
+                # español cuando no llega filtro.
                 queryset = queryset.filter(
                     language_normalized="es"
                 )
@@ -3790,12 +4030,14 @@ class filter_by_tags(APIView):
             # =====================================================
 
             if plataforma_ids:
+
                 queryset = queryset.filter(
                     plataforma_certificacion_id__in=
                     plataforma_ids
                 )
 
             elif plataforma_values:
+
                 platform_query = Q()
 
                 for value in plataforma_values:
@@ -3813,12 +4055,14 @@ class filter_by_tags(APIView):
             # =====================================================
 
             if empresa_ids:
+
                 queryset = queryset.filter(
                     empresa_certificacion_id__in=
                     empresa_ids
                 )
 
             elif empresa_values:
+
                 company_query = Q()
 
                 for value in empresa_values:
@@ -3836,12 +4080,14 @@ class filter_by_tags(APIView):
             # =====================================================
 
             if universidad_ids:
+
                 queryset = queryset.filter(
                     universidad_certificacion_id__in=
                     universidad_ids
                 )
 
             elif universidad_values:
+
                 university_query = Q()
 
                 for value in universidad_values:
@@ -3859,6 +4105,7 @@ class filter_by_tags(APIView):
             # =====================================================
 
             if tipo_certificacion_values:
+
                 queryset = queryset.filter(
                     build_certification_type_q(
                         tipo_certificacion_values
@@ -3866,10 +4113,11 @@ class filter_by_tags(APIView):
                 )
 
             # =====================================================
-            # NIVEL
+            # NIVEL DE CERTIFICACIÓN
             # =====================================================
 
             if nivel_certificacion_values:
+
                 queryset = queryset.filter(
                     build_certification_level_q(
                         nivel_certificacion_values
@@ -3877,14 +4125,29 @@ class filter_by_tags(APIView):
                 )
 
             # =====================================================
-            # DOMINIOS / TEMAS / HABILIDADES
+            # TEMAS / HABILIDADES
             # =====================================================
             #
-            # apply_skills_domain_filter() ya utiliza una subconsulta
-            # por certificacion_id en SkillsCertification.
+            # Aquí entra la optimización nueva.
             #
-            # Eso es preferible a un JOIN + DISTINCT sobre todo
-            # el catálogo.
+            # apply_skills_domain_filter():
+            #
+            # 1. recibe IDs directamente cuando existen;
+            #
+            # 2. si recibe slugs:
+            #       slug -> skill_id
+            #
+            # 3. después consulta únicamente:
+            #
+            #       SkillsCertification.skill_id
+            #
+            # evitando:
+            #
+            #       SkillsCertification
+            #       INNER JOIN Skills
+            #
+            # en el COUNT principal.
+            #
             # =====================================================
 
             queryset = apply_skills_domain_filter(
@@ -3906,46 +4169,73 @@ class filter_by_tags(APIView):
             )
 
             if total_selected_skills == 1:
-                # Solo usamos prioridad especial para una skill.
+
+                # ---------------------------------------------
+                # UNA SOLA SKILL
+                # ---------------------------------------------
                 #
-                # No aplicar estas subqueries cuando el usuario
-                # selecciona un dominio completo con varias skills.
-                queryset = apply_single_skill_priority(
-                    queryset,
-                    skill_id=(
-                        selected_skill_ids[0]
-                        if selected_skill_ids
-                        else None
-                    ),
-                    skill_slug=(
-                        selected_skill_slugs[0]
-                        if selected_skill_slugs
-                        else None
-                    ),
+                # Podemos aplicar prioridad especial.
+                #
+                # El helper optimizado también trabaja con
+                # skill_id internamente.
+                #
+                # ---------------------------------------------
+
+                queryset = (
+                    apply_single_skill_priority(
+                        queryset,
+                        skill_id=(
+                            selected_skill_ids[0]
+                            if selected_skill_ids
+                            else None
+                        ),
+                        skill_slug=(
+                            selected_skill_slugs[0]
+                            if selected_skill_slugs
+                            else None
+                        ),
+                    )
                 )
 
             else:
-                # Orden estándar, compatible con índice:
+
+                # ---------------------------------------------
+                # SIN SKILLS O VARIAS SKILLS
+                # ---------------------------------------------
+                #
+                # Usamos únicamente el orden estándar.
+                #
+                # Esto permite aprovechar el índice:
                 #
                 # vigente_certificacion
                 # fecha_creado_cert
                 # id
+                #
+                # ---------------------------------------------
+
                 queryset = queryset.order_by(
                     "-fecha_creado_cert",
                     "-id",
                 )
 
             # =====================================================
-            # PAGINAR ÚNICAMENTE IDs
+            # PAGINAR SOLAMENTE IDS
             # =====================================================
             #
-            # NO agregamos .distinct() aquí por defecto.
+            # Esta parte es clave.
             #
-            # apply_skills_domain_filter() trabaja mediante
-            # subconsulta y no debería duplicar certificaciones.
+            # El COUNT y LIMIT NO deben ejecutarse sobre:
             #
-            # DISTINCT puede obligar a MySQL a crear una operación
-            # extra y empeorar tanto COUNT como ORDER/LIMIT.
+            # universidades
+            # empresas
+            # plataformas
+            # skills
+            # imágenes
+            #
+            # Primero obtenemos únicamente:
+            #
+            # Certificaciones.id
+            #
             # =====================================================
 
             ids_queryset = (
@@ -3972,14 +4262,11 @@ class filter_by_tags(APIView):
             )
 
             # =====================================================
-            # RESPUESTA VACÍA
-            # =====================================================
-            #
-            # Evitamos ejecutar el loader/serializer si esta página
-            # no contiene certificaciones.
+            # PÁGINA VACÍA
             # =====================================================
 
             if not paginated_ids:
+
                 return (
                     paginator
                     .get_paginated_response(
@@ -3988,7 +4275,19 @@ class filter_by_tags(APIView):
                 )
 
             # =====================================================
-            # CARGAR SOLO LAS CARDS DE ESTA PÁGINA
+            # CARGAR ÚNICAMENTE LAS CERTIFICACIONES DE LA PÁGINA
+            # =====================================================
+            #
+            # Aquí sí cargamos:
+            #
+            # universidad
+            # empresa
+            # plataforma
+            # imágenes
+            # skills
+            #
+            # pero solamente para los 16 IDs actuales.
+            #
             # =====================================================
 
             certifications = (
@@ -3996,6 +4295,10 @@ class filter_by_tags(APIView):
                     paginated_ids
                 )
             )
+
+            # =====================================================
+            # SERIALIZAR
+            # =====================================================
 
             serializer = (
                 SuggestedCertificationSerializer(
@@ -4007,6 +4310,10 @@ class filter_by_tags(APIView):
                 )
             )
 
+            # =====================================================
+            # RESPONSE
+            # =====================================================
+
             return (
                 paginator
                 .get_paginated_response(
@@ -4015,9 +4322,9 @@ class filter_by_tags(APIView):
             )
 
         except Exception as error:
-            print(
-                "Error en filter_by_tags:",
-                repr(error),
+
+            logger.exception(
+                "Error en filter_by_tags"
             )
 
             return Response(
@@ -4037,7 +4344,7 @@ class filter_by_tags(APIView):
                     .HTTP_500_INTERNAL_SERVER_ERROR
                 ),
             )
-        
+                
 def get_filter_values(filters, *keys):
     values = []
 
@@ -8283,13 +8590,23 @@ def get_initial(value):
     value = (value or "").strip()
     return value[:1].upper() if value else "T"
 
+
 class HomeSkillsGridAPIView(APIView):
     permission_classes = []
 
     def get(self, request, *args, **kwargs):
+        # =====================================================
+        # CACHE
+        # =====================================================
+
         cached = cache.get(CACHE_KEY)
-        if cached:
+
+        if cached is not None:
             return Response(cached)
+
+        # =====================================================
+        # SKILLS PRINCIPALES
+        # =====================================================
 
         skills = list(
             Skills.objects
@@ -8297,7 +8614,10 @@ class HomeSkillsGridAPIView(APIView):
                 parent__isnull=True,
                 estado=True,
             )
-            .exclude(Q(skill_ico__isnull=True) | Q(skill_ico__exact=""))
+            .exclude(
+                Q(skill_ico__isnull=True)
+                | Q(skill_ico__exact="")
+            )
             .only(
                 "id",
                 "nombre",
@@ -8309,14 +8629,92 @@ class HomeSkillsGridAPIView(APIView):
                 "skill_col",
                 "slug",
             )
-            .order_by("id")[:MAX_SKILLS_ON_HOME]
+            .order_by("id")[
+                :MAX_SKILLS_ON_HOME
+            ]
         )
 
-        skill_ids = [skill.id for skill in skills]
+        if not skills:
+            cache.set(
+                CACHE_KEY,
+                [],
+                CACHE_TIMEOUT,
+            )
+
+            return Response([])
+
+        skill_ids = [
+            skill.id
+            for skill in skills
+        ]
+
+        # =====================================================
+        # RELACIONES LIMITADAS POR SKILL
+        # =====================================================
+        #
+        # La relación real es:
+        #
+        # Skills
+        #   ↓
+        # SkillsCertification
+        #   ↓
+        # Certificaciones
+        #   ├── Universidad
+        #   ├── Empresa
+        #   └── Plataforma
+        #
+        # No traemos TODAS las relaciones.
+        #
+        # Hacemos overscan controlado por skill para obtener
+        # suficiente variedad de universidades / empresas /
+        # certificaciones sin volver a cargar miles de joins.
+        # =====================================================
+
+        scan_limit = max(
+            int(
+                MAX_CERTS_PER_SKILL_SCAN
+                or 120
+            ),
+            120,
+        )
+
+        limited_link_ids = list(
+            SkillsCertification.objects
+            .filter(
+                skill_id__in=skill_ids
+            )
+            .annotate(
+                row_number=Window(
+                    expression=RowNumber(),
+                    partition_by=[
+                        F("skill_id")
+                    ],
+                    order_by=[
+                        F(
+                            "certificacion_id"
+                        ).desc(),
+                        F("id").desc(),
+                    ],
+                )
+            )
+            .filter(
+                row_number__lte=scan_limit
+            )
+            .values_list(
+                "id",
+                flat=True,
+            )
+        )
+
+        # =====================================================
+        # CARGAR SOLO LAS RELACIONES SELECCIONADAS
+        # =====================================================
 
         links = list(
             SkillsCertification.objects
-            .filter(skill_id__in=skill_ids)
+            .filter(
+                id__in=limited_link_ids
+            )
             .select_related(
                 "certificacion",
                 "certificacion__universidad_certificacion",
@@ -8328,6 +8726,7 @@ class HomeSkillsGridAPIView(APIView):
                 "skill_id",
                 "certificacion_id",
 
+                # Certificación
                 "certificacion__id",
                 "certificacion__nombre",
                 "certificacion__slug",
@@ -8335,144 +8734,489 @@ class HomeSkillsGridAPIView(APIView):
                 "certificacion__empresa_certificacion_id",
                 "certificacion__plataforma_certificacion_id",
 
+                # Universidad
                 "certificacion__universidad_certificacion__id",
                 "certificacion__universidad_certificacion__nombre",
                 "certificacion__universidad_certificacion__univ_ico",
                 "certificacion__universidad_certificacion__univ_img",
 
+                # Empresa
                 "certificacion__empresa_certificacion__id",
                 "certificacion__empresa_certificacion__nombre",
                 "certificacion__empresa_certificacion__empr_ico",
                 "certificacion__empresa_certificacion__empr_img",
 
+                # Plataforma
                 "certificacion__plataforma_certificacion__id",
                 "certificacion__plataforma_certificacion__nombre",
                 "certificacion__plataforma_certificacion__plat_ico",
                 "certificacion__plataforma_certificacion__plat_img",
             )
-            .order_by("skill_id", "-certificacion_id")
+            .order_by(
+                "skill_id",
+                "-certificacion_id",
+                "-id",
+            )
         )
 
-        grouped_links = {}
+        # =====================================================
+        # AGRUPAR RELACIONES POR SKILL
+        # =====================================================
+
+        grouped_links = defaultdict(list)
 
         for link in links:
-            grouped_links.setdefault(link.skill_id, [])
+            grouped_links[
+                link.skill_id
+            ].append(link)
 
-            if len(grouped_links[link.skill_id]) < MAX_CERTS_PER_SKILL_SCAN:
-                grouped_links[link.skill_id].append(link)
+        # =====================================================
+        # RESPUESTA
+        # =====================================================
 
         response_data = []
 
         for skill in skills:
             related_items = []
+
             seen_universities = set()
             seen_companies = set()
             seen_certs = set()
 
-            skill_type_raw = (skill.skill_type or "").strip()
-            skill_type = skill_type_raw.lower()
+            skill_type_raw = (
+                skill.skill_type or ""
+            ).strip()
 
-            is_topic = skill_type == "tema"
-            filter_key = "tema_id" if is_topic else "habilidad_id"
-            item_type = "topic" if is_topic else "skill"
+            skill_type = (
+                skill_type_raw.lower()
+            )
 
-            skill_links = grouped_links.get(skill.id, [])
+            is_topic = (
+                skill_type == "tema"
+            )
+
+            filter_key = (
+                "tema_id"
+                if is_topic
+                else "habilidad_id"
+            )
+
+            item_type = (
+                "topic"
+                if is_topic
+                else "skill"
+            )
+
+            skill_links = (
+                grouped_links.get(
+                    skill.id,
+                    []
+                )
+            )
+
+            # =================================================
+            # RELACIONES DE ESTA SKILL
+            # =================================================
 
             for link in skill_links:
-                cert = link.certificacion
+
+                # Ya tenemos suficientes elementos visibles.
+                if (
+                    len(related_items)
+                    >= MAX_ITEMS_PER_SKILL
+                ):
+                    break
+
+                cert = getattr(
+                    link,
+                    "certificacion",
+                    None,
+                )
+
                 if not cert:
                     continue
 
-                uni = getattr(cert, "universidad_certificacion", None)
+                # =================================================
+                # UNIVERSIDAD
+                # =================================================
 
-                if uni and uni.id not in seen_universities:
-                    seen_universities.add(uni.id)
+                uni = getattr(
+                    cert,
+                    "universidad_certificacion",
+                    None,
+                )
+
+                if (
+                    uni
+                    and uni.id
+                    not in seen_universities
+                    and len(related_items)
+                    < MAX_ITEMS_PER_SKILL
+                ):
+                    seen_universities.add(
+                        uni.id
+                    )
 
                     uni_img = (
-                        normalize_media_url(request, getattr(uni, "univ_ico", None))
-                        or normalize_media_url(request, getattr(uni, "univ_img", None))
+                        normalize_media_url(
+                            request,
+                            getattr(
+                                uni,
+                                "univ_ico",
+                                None,
+                            ),
+                        )
+                        or
+                        normalize_media_url(
+                            request,
+                            getattr(
+                                uni,
+                                "univ_img",
+                                None,
+                            ),
+                        )
                     )
 
-                    related_items.append({
-                        "id": uni.id,
-                        "name": uni.nombre,
-                        "type": "university",
-                        "img": uni_img,
-                        "initial": get_initial(uni.nombre),
-                        "filter": {
-                            filter_key: skill.id,
-                            "universidad_id": uni.id,
-                        },
-                    })
+                    related_items.append(
+                        {
+                            "id": uni.id,
+                            "name": uni.nombre,
+                            "type": "university",
+                            "img": uni_img,
+                            "initial": get_initial(
+                                uni.nombre
+                            ),
+                            "filter": {
+                                filter_key:
+                                    skill.id,
+                                "universidad_id":
+                                    uni.id,
+                            },
+                        }
+                    )
 
-                emp = getattr(cert, "empresa_certificacion", None)
+                # =================================================
+                # EMPRESA
+                # =================================================
 
-                if emp and emp.id not in seen_companies:
-                    seen_companies.add(emp.id)
+                emp = getattr(
+                    cert,
+                    "empresa_certificacion",
+                    None,
+                )
+
+                if (
+                    emp
+                    and emp.id
+                    not in seen_companies
+                    and len(related_items)
+                    < MAX_ITEMS_PER_SKILL
+                ):
+                    seen_companies.add(
+                        emp.id
+                    )
 
                     emp_img = (
-                        normalize_media_url(request, getattr(emp, "empr_ico", None))
-                        or normalize_media_url(request, getattr(emp, "empr_img", None))
+                        normalize_media_url(
+                            request,
+                            getattr(
+                                emp,
+                                "empr_ico",
+                                None,
+                            ),
+                        )
+                        or
+                        normalize_media_url(
+                            request,
+                            getattr(
+                                emp,
+                                "empr_img",
+                                None,
+                            ),
+                        )
                     )
 
-                    related_items.append({
-                        "id": emp.id,
-                        "name": emp.nombre,
-                        "type": "company",
-                        "img": emp_img,
-                        "initial": get_initial(emp.nombre),
-                        "filter": {
-                            filter_key: skill.id,
-                            "empresa_id": emp.id,
-                        },
-                    })
+                    related_items.append(
+                        {
+                            "id": emp.id,
+                            "name": emp.nombre,
+                            "type": "company",
+                            "img": emp_img,
+                            "initial": get_initial(
+                                emp.nombre
+                            ),
+                            "filter": {
+                                filter_key:
+                                    skill.id,
+                                "empresa_id":
+                                    emp.id,
+                            },
+                        }
+                    )
 
-                plataforma = getattr(cert, "plataforma_certificacion", None)
-                platform_name = (getattr(plataforma, "nombre", "") or "").strip().lower()
+                # =================================================
+                # CERTIFICACIÓN MASTERCLASS
+                # =================================================
 
-                if "masterclass" in platform_name and cert.id not in seen_certs:
-                    seen_certs.add(cert.id)
+                plataforma = getattr(
+                    cert,
+                    "plataforma_certificacion",
+                    None,
+                )
+
+                platform_name = (
+                    getattr(
+                        plataforma,
+                        "nombre",
+                        "",
+                    )
+                    or ""
+                ).strip().lower()
+
+                if (
+                    "masterclass"
+                    in platform_name
+                    and cert.id
+                    not in seen_certs
+                    and len(related_items)
+                    < MAX_ITEMS_PER_SKILL
+                ):
+                    seen_certs.add(
+                        cert.id
+                    )
 
                     platform_img = (
-                        normalize_media_url(request, getattr(plataforma, "plat_ico", None))
-                        or normalize_media_url(request, getattr(plataforma, "plat_img", None))
+                        normalize_media_url(
+                            request,
+                            getattr(
+                                plataforma,
+                                "plat_ico",
+                                None,
+                            ),
+                        )
+                        or
+                        normalize_media_url(
+                            request,
+                            getattr(
+                                plataforma,
+                                "plat_img",
+                                None,
+                            ),
+                        )
                     )
 
-                    related_items.append({
-                        "id": cert.id,
-                        "name": cert.nombre,
-                        "type": "certification",
-                        "img": platform_img,
-                        "initial": get_initial(cert.nombre),
-                        "link": build_cert_link(cert),
-                    })
+                    related_items.append(
+                        {
+                            "id": cert.id,
+                            "name": cert.nombre,
+                            "type": "certification",
+                            "img": platform_img,
+                            "initial": get_initial(
+                                cert.nombre
+                            ),
+                            "link": build_cert_link(
+                                cert
+                            ),
+                        }
+                    )
 
-            random.shuffle(related_items)
-            related_items = related_items[:MAX_ITEMS_PER_SKILL]
+            # =================================================
+            # FALLBACK DE PLATAFORMA
+            # =================================================
+            #
+            # Si después de recorrer certificaciones relacionadas
+            # todavía no tenemos suficientes entidades, agregamos
+            # plataformas reales asociadas a esas certificaciones.
+            #
+            # Esto evita skills vacías sin inventar relaciones.
+            # =================================================
 
-            response_data.append({
-                "id": skill.id,
-                "name": (skill.translate or skill.nombre or "").strip(),
-                "slug": skill.slug,
-                "skill_type": skill_type_raw,
-                "type": item_type,
-                "filter": {
-                    filter_key: skill.id,
-                },
-                "img": (
-                    normalize_media_url(request, skill.skill_ico)
-                    or normalize_media_url(request, skill.skill_img)
-                ),
-                "color": COLOR_MAP.get(skill.skill_col, "#034694"),
-                "description": (skill.descripcion or "").strip(),
-                "items": related_items,
-                "universities": related_items,
-            })
+            if (
+                len(related_items)
+                < MAX_ITEMS_PER_SKILL
+            ):
+                seen_platforms = set()
 
-        random.shuffle(response_data)
+                for link in skill_links:
+                    if (
+                        len(related_items)
+                        >= MAX_ITEMS_PER_SKILL
+                    ):
+                        break
 
-        cache.set(CACHE_KEY, response_data, CACHE_TIMEOUT)
-        return Response(response_data)
+                    cert = getattr(
+                        link,
+                        "certificacion",
+                        None,
+                    )
+
+                    if not cert:
+                        continue
+
+                    plataforma = getattr(
+                        cert,
+                        "plataforma_certificacion",
+                        None,
+                    )
+
+                    if not plataforma:
+                        continue
+
+                    if (
+                        plataforma.id
+                        in seen_platforms
+                    ):
+                        continue
+
+                    seen_platforms.add(
+                        plataforma.id
+                    )
+
+                    platform_img = (
+                        normalize_media_url(
+                            request,
+                            getattr(
+                                plataforma,
+                                "plat_ico",
+                                None,
+                            ),
+                        )
+                        or
+                        normalize_media_url(
+                            request,
+                            getattr(
+                                plataforma,
+                                "plat_img",
+                                None,
+                            ),
+                        )
+                    )
+
+                    related_items.append(
+                        {
+                            "id":
+                                plataforma.id,
+
+                            "name":
+                                plataforma.nombre,
+
+                            "type":
+                                "platform",
+
+                            "img":
+                                platform_img,
+
+                            "initial":
+                                get_initial(
+                                    plataforma.nombre
+                                ),
+
+                            "filter": {
+                                filter_key:
+                                    skill.id,
+
+                                "plataforma_id":
+                                    plataforma.id,
+                            },
+                        }
+                    )
+
+            # =================================================
+            # MEZCLAR ELEMENTOS
+            # =================================================
+
+            random.shuffle(
+                related_items
+            )
+
+            related_items = (
+                related_items[
+                    :MAX_ITEMS_PER_SKILL
+                ]
+            )
+
+            # =================================================
+            # SKILL
+            # =================================================
+
+            response_data.append(
+                {
+                    "id":
+                        skill.id,
+
+                    "name": (
+                        skill.translate
+                        or skill.nombre
+                        or ""
+                    ).strip(),
+
+                    "slug":
+                        skill.slug,
+
+                    "skill_type":
+                        skill_type_raw,
+
+                    "type":
+                        item_type,
+
+                    "filter": {
+                        filter_key:
+                            skill.id,
+                    },
+
+                    "img": (
+                        normalize_media_url(
+                            request,
+                            skill.skill_ico,
+                        )
+                        or
+                        normalize_media_url(
+                            request,
+                            skill.skill_img,
+                        )
+                    ),
+
+                    "color":
+                        COLOR_MAP.get(
+                            skill.skill_col,
+                            "#034694",
+                        ),
+
+                    "description": (
+                        skill.descripcion
+                        or ""
+                    ).strip(),
+
+                    "items":
+                        related_items,
+
+                    # Compatibilidad con el frontend actual.
+                    "universities":
+                        related_items,
+                }
+            )
+
+        # =====================================================
+        # RANDOMIZAR SKILLS
+        # =====================================================
+
+        random.shuffle(
+            response_data
+        )
+
+        # =====================================================
+        # CACHE
+        # =====================================================
+
+        cache.set(
+            CACHE_KEY,
+            response_data,
+            CACHE_TIMEOUT,
+        )
+
+        return Response(
+            response_data
+        )
         
 def get_stripe_price_for_plan(plan):
     plan_normalized = str(plan or "monthly_x").strip().lower()
