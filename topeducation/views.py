@@ -7315,26 +7315,17 @@ def billing_portal_session(request):
 @login_required
 def mx_magic_link_refresh(request):
     """
-    Solicita a México un NUEVO Magic Link single-use.
+    Devuelve el Magic Link persistente entregado por México.
 
-    Flujo:
-    1. Valida POST y usuario autenticado.
-    2. Obtiene la ruta actual del usuario.
-    3. Valida que el acceso siga permitido.
-    4. Genera un eventId nuevo para cada click.
-    5. Registra el intento en mx_access_event_log.
-    6. Construye el payload canónico B2C v1.1 usando
-       build_mx_access_payload().
-    7. Envía USER_ACCESS_PROVISION a México.
-    8. Recupera el nuevo magicLink.
-    9. Actualiza LearningRouteLead.
-    10. Devuelve el enlace al frontend.
+    Contrato vigente:
+    - El Magic Link puede reutilizarse.
+    - No expira dentro de la solución temporal actual.
+    - Un cambio de paquete no requiere generar otro enlace.
+    - No se genera USER_ACCESS_PROVISION por cada click.
+    - No se registra el Magic Link en logs visibles.
 
-    Importante:
-    - NO reutiliza el magicLink anterior.
-    - NO usa USER_ACCESS_UPDATED.
-    - NO construye manualmente el contrato MX.
-    - NO imprime el Magic Link en logs.
+    Se conserva el nombre `mx_magic_link_refresh`
+    únicamente por compatibilidad con el frontend existente.
     """
 
     # =========================================================
@@ -7347,10 +7338,15 @@ def mx_magic_link_refresh(request):
         response["Access-Control-Allow-Origin"] = (
             "https://top.education"
         )
-        response["Access-Control-Allow-Credentials"] = "true"
+
+        response["Access-Control-Allow-Credentials"] = (
+            "true"
+        )
+
         response["Access-Control-Allow-Methods"] = (
             "POST, OPTIONS"
         )
+
         response["Access-Control-Allow-Headers"] = (
             "Content-Type, X-CSRFToken"
         )
@@ -7367,8 +7363,7 @@ def mx_magic_link_refresh(request):
                 "ok": False,
                 "error": "method_not_allowed",
                 "message": (
-                    "Este endpoint solo acepta "
-                    "solicitudes POST."
+                    "Este endpoint solo acepta solicitudes POST."
                 ),
             },
             status=405,
@@ -7377,7 +7372,7 @@ def mx_magic_link_refresh(request):
     user = request.user
 
     # =========================================================
-    # RUTA ACTUAL
+    # ÚLTIMA RUTA
     # =========================================================
 
     route = (
@@ -7404,31 +7399,12 @@ def mx_magic_link_refresh(request):
         )
 
     # =========================================================
-    # SUSCRIPCIÓN LOCAL
-    # =========================================================
-
-    subscription = (
-        StripeSubscription.objects
-        .filter(user=user)
-        .order_by(
-            "-updated_at",
-            "-id",
-        )
-        .first()
-    )
-
-    # =========================================================
-    # ESTADO ACTUAL
+    # VALIDAR ACCESO
     # =========================================================
 
     access_status = str(
         getattr(
             route,
-            "access_status",
-            None,
-        )
-        or getattr(
-            subscription,
             "access_status",
             None,
         )
@@ -7441,58 +7417,24 @@ def mx_magic_link_refresh(request):
             "lifecycle_status",
             None,
         )
-        or getattr(
-            subscription,
-            "lifecycle_status",
-            None,
-        )
-        or getattr(
-            subscription,
-            "status",
-            None,
-        )
         or ""
     ).strip().upper()
 
-    pending_action = str(
-        getattr(
-            route,
-            "pending_action",
-            None,
-        )
-        or getattr(
-            subscription,
-            "pending_action",
-            None,
-        )
-        or "NONE"
-    ).strip().upper()
-
-    blocked_lifecycle_statuses = {
+    blocked_statuses = {
         "CANCELLED",
         "CANCELED",
         "EXPIRED",
-        "PAST_DUE",
-        "UNPAID",
+        "REVOKED",
+        "RESTRICTED",
     }
 
     if (
-        access_status != "ALLOWED"
-        or lifecycle_status
-        in blocked_lifecycle_statuses
+        access_status not in {
+            "",
+            "ALLOWED",
+        }
+        or lifecycle_status in blocked_statuses
     ):
-        logger.warning(
-            (
-                "Magic Link bloqueado por estado de acceso. "
-                "user=%s route=%s "
-                "access=%s lifecycle=%s"
-            ),
-            user.id,
-            route.id,
-            access_status,
-            lifecycle_status,
-        )
-
         return JsonResponse(
             {
                 "ok": False,
@@ -7501,7 +7443,9 @@ def mx_magic_link_refresh(request):
                     "Tu acceso a la plataforma "
                     "no está disponible actualmente."
                 ),
-                "access_status": access_status,
+                "access_status": (
+                    access_status or None
+                ),
                 "lifecycle_status": (
                     lifecycle_status or None
                 ),
@@ -7510,940 +7454,202 @@ def mx_magic_link_refresh(request):
         )
 
     # =========================================================
-    # DATOS DE AUDITORÍA
-    # =========================================================
-
-    selected_plan = str(
-        getattr(
-            route,
-            "selected_plan",
-            None,
-        )
-        or "free"
-    ).strip().lower()
-
-    selected_paid_plan = str(
-        getattr(
-            route,
-            "selected_paid_plan",
-            None,
-        )
-        or ""
-    ).strip().lower()
-
-    package_code = str(
-        getattr(
-            route,
-            "package_code",
-            None,
-        )
-        or getattr(
-            subscription,
-            "package_code",
-            None,
-        )
-        or ""
-    ).strip().upper()
-
-    # =========================================================
-    # EVENTO NUEVO
-    # =========================================================
-    #
-    # Cada click genera un eventId diferente.
-    #
-    # Esto es fundamental porque México utiliza eventId
-    # como llave de idempotencia.
-    # =========================================================
-
-    event_type = "USER_ACCESS_PROVISION"
-
-    event_id = (
-        "evt_col_magic_link_"
-        f"route_{route.id}_"
-        f"user_{user.id}_"
-        f"{uuid.uuid4()}"
-    )
-
-    # =========================================================
-    # LOG PRELIMINAR
-    # =========================================================
-    #
-    # Lo creamos ANTES del builder para que también queden
-    # registrados los errores ocurridos construyendo el payload.
-    #
-    # send_b2c_access_event_to_mx() utiliza stripe_event_id
-    # para localizar su MxAccessEventLog, por eso guardamos
-    # el mismo ID en event_id y stripe_event_id.
-    # =========================================================
-
-    mx_log = None
-
-    try:
-        mx_log = MxAccessEventLog.objects.create(
-            event_id=event_id,
-
-            # Compatibilidad con el sender actual.
-            stripe_event_id=event_id,
-
-            schema_version="1.1",
-
-            user=user,
-            learning_route=route,
-
-            event_type=event_type,
-            event_source="magic_link_refresh",
-
-            payload_json={},
-
-            send_status="pending",
-            attempts=0,
-            is_retryable=False,
-        )
-
-    except Exception:
-        # Un problema escribiendo auditoría NO debe impedir
-        # intentar generar el acceso.
-        logger.exception(
-            (
-                "No fue posible crear log preliminar "
-                "Magic Link. "
-                "event=%s user=%s route=%s"
-            ),
-            event_id,
-            user.id,
-            route.id,
-        )
-
-    # =========================================================
-    # CONSTRUIR PAYLOAD CANÓNICO
-    # =========================================================
-    #
-    # IMPORTANTE:
-    #
-    # Aquí ya NO usamos:
-    #
-    # build_learning_route_mx_payload()
-    #
-    # porque esa función no existe.
-    #
-    # Tampoco necesitamos simular un evento Stripe.
-    #
-    # build_mx_access_payload() permite construir directamente
-    # USER_ACCESS_PROVISION desde:
-    #
-    # user
-    # route
-    # subscription local
-    # snapshot actual
-    #
-    # =========================================================
-
-    try:
-        builder_kwargs = {
-            "event_type": event_type,
-            "event_id": event_id,
-            "user": user,
-            "route": route,
-
-            "extra_metadata": {
-                "trigger": "magic_link_refresh",
-                "colombiaUserId": str(
-                    user.id
-                ),
-                "learningRouteId": str(
-                    route.id
-                ),
-                "selectedPlan": (
-                    selected_plan
-                ),
-                "selectedPaidPlan": (
-                    selected_paid_plan
-                ),
-            },
-
-            "access_status_override": (
-                access_status
-            ),
-
-            "pending_action_override": (
-                pending_action
-            ),
-        }
-
-        # Solo sobrescribimos lifecycleStatus cuando
-        # realmente tenemos uno válido.
-        #
-        # Si viene vacío dejamos que mx_payload_builder
-        # lo determine desde route/subscription.
-        if lifecycle_status:
-            builder_kwargs[
-                "lifecycle_status_override"
-            ] = lifecycle_status
-
-        payload = build_mx_access_payload(
-            **builder_kwargs
-        )
-
-        if not isinstance(
-            payload,
-            dict,
-        ):
-            raise ValueError(
-                "mx_payload_builder_returned_invalid_payload"
-            )
-
-        # Seguridad adicional:
-        # garantizar identidad del evento.
-        payload["eventId"] = (
-            event_id
-        )
-
-        payload["eventType"] = (
-            event_type
-        )
-
-        # =====================================================
-        # GUARDAR PAYLOAD CONSTRUIDO
-        # =====================================================
-
-        if mx_log:
-            try:
-                mx_log.payload_json = payload
-                mx_log.last_error = None
-                mx_log.http_status = None
-                mx_log.is_retryable = False
-
-                mx_log.save(
-                    update_fields=[
-                        "payload_json",
-                        "last_error",
-                        "http_status",
-                        "is_retryable",
-                        "updated_at",
-                    ]
-                )
-
-            except Exception:
-                logger.exception(
-                    (
-                        "No fue posible guardar "
-                        "payload Magic Link. "
-                        "event=%s"
-                    ),
-                    event_id,
-                )
-
-    except Exception as exc:
-        error_text = (
-            f"{type(exc).__name__}: "
-            f"{str(exc)}"
-        )
-
-        logger.exception(
-            (
-                "No fue posible construir payload "
-                "Magic Link. "
-                "event=%s user=%s route=%s"
-            ),
-            event_id,
-            user.id,
-            route.id,
-        )
-
-        # =====================================================
-        # GUARDAR ERROR DEL BUILDER
-        # =====================================================
-
-        if mx_log:
-            try:
-                mx_log.send_status = "failed"
-
-                mx_log.last_error = (
-                    error_text[:10000]
-                )
-
-                mx_log.response_json = {
-                    "stage": "build_payload",
-                    "error_type": (
-                        type(exc).__name__
-                    ),
-                    "error": str(exc),
-
-                    "event_id": event_id,
-                    "event_type": event_type,
-
-                    "selected_plan": (
-                        selected_plan
-                    ),
-
-                    "selected_paid_plan": (
-                        selected_paid_plan
-                    ),
-
-                    "package_code": (
-                        package_code or None
-                    ),
-
-                    "access_status": (
-                        access_status
-                    ),
-
-                    "lifecycle_status": (
-                        lifecycle_status or None
-                    ),
-
-                    "pending_action": (
-                        pending_action
-                    ),
-                }
-
-                mx_log.http_status = 500
-                mx_log.is_retryable = False
-                mx_log.processed_at = (
-                    timezone.now()
-                )
-
-                mx_log.save(
-                    update_fields=[
-                        "send_status",
-                        "last_error",
-                        "response_json",
-                        "http_status",
-                        "is_retryable",
-                        "processed_at",
-                        "updated_at",
-                    ]
-                )
-
-            except Exception:
-                logger.exception(
-                    (
-                        "No fue posible guardar error "
-                        "del builder Magic Link. "
-                        "event=%s"
-                    ),
-                    event_id,
-                )
-
-        response_data = {
-            "ok": False,
-
-            "error": (
-                "mx_magic_link_payload_failed"
-            ),
-
-            "message": (
-                "No fue posible preparar tu "
-                "acceso a la plataforma."
-            ),
-
-            "event_id": event_id,
-        }
-
-        if settings.DEBUG:
-            response_data[
-                "debug_error"
-            ] = error_text
-
-        return JsonResponse(
-            response_data,
-            status=500,
-        )
-
-    # =========================================================
-    # ENVIAR A MÉXICO
-    # =========================================================
-
-    try:
-        mx_result = (
-            send_b2c_access_event_to_mx(
-                payload=payload,
-                user=user,
-                route=route,
-            )
-        )
-
-    except Exception as exc:
-        error_text = (
-            f"{type(exc).__name__}: "
-            f"{str(exc)}"
-        )
-
-        logger.exception(
-            (
-                "Error solicitando nuevo Magic Link "
-                "a México. "
-                "event=%s user=%s route=%s"
-            ),
-            event_id,
-            user.id,
-            route.id,
-        )
-
-        # =====================================================
-        # ACTUALIZAR LOG DE ERROR
-        # =====================================================
-        #
-        # El sender normalmente ya actualiza el registro,
-        # pero dejamos esta protección por si el error ocurrió
-        # antes de que pudiera hacerlo.
-        # =====================================================
-
-        if mx_log:
-            try:
-                mx_log.refresh_from_db()
-
-                if mx_log.send_status != "sent":
-                    mx_log.send_status = (
-                        "failed"
-                    )
-
-                    mx_log.last_error = (
-                        error_text[:10000]
-                    )
-
-                    mx_log.is_retryable = (
-                        True
-                    )
-
-                    mx_log.processed_at = (
-                        timezone.now()
-                    )
-
-                    mx_log.save(
-                        update_fields=[
-                            "send_status",
-                            "last_error",
-                            "is_retryable",
-                            "processed_at",
-                            "updated_at",
-                        ]
-                    )
-
-            except Exception:
-                logger.exception(
-                    (
-                        "No fue posible complementar "
-                        "log de error MX. "
-                        "event=%s"
-                    ),
-                    event_id,
-                )
-
-        return JsonResponse(
-            {
-                "ok": False,
-
-                "error": (
-                    "mx_magic_link_request_failed"
-                ),
-
-                "message": (
-                    "México no respondió al intentar "
-                    "generar tu acceso. "
-                    "Intenta nuevamente."
-                ),
-
-                "event_id": event_id,
-                "retryable": True,
-            },
-            status=503,
-        )
-
-    # =========================================================
-    # VALIDAR RESPUESTA
-    # =========================================================
-
-    if not isinstance(
-        mx_result,
-        dict,
-    ):
-        logger.error(
-            (
-                "Respuesta inválida de México "
-                "generando Magic Link. "
-                "event=%s user=%s route=%s"
-            ),
-            event_id,
-            user.id,
-            route.id,
-        )
-
-        return JsonResponse(
-            {
-                "ok": False,
-                "error": "invalid_mx_response",
-                "message": (
-                    "México devolvió una respuesta "
-                    "no válida."
-                ),
-                "event_id": event_id,
-                "retryable": True,
-            },
-            status=502,
-        )
-
-    # =========================================================
-    # NORMALIZAR POSIBLES ESTRUCTURAS DE RESPUESTA
-    # =========================================================
-
-    response_data = (
-        mx_result.get("data")
-    )
-
-    if not isinstance(
-        response_data,
-        dict,
-    ):
-        response_data = {}
-
-    nested_response = (
-        mx_result.get("response")
-    )
-
-    if not isinstance(
-        nested_response,
-        dict,
-    ):
-        nested_response = {}
-
-    # =========================================================
-    # STATUS
-    # =========================================================
-
-    mx_status = str(
-        response_data.get("status")
-        or mx_result.get("status")
-        or mx_result.get("mxStatus")
-        or nested_response.get("status")
-        or ""
-    ).strip().upper()
-
-    # =========================================================
-    # MAGIC LINK NUEVO
+    # MAGIC LINK PERSISTIDO
     # =========================================================
 
     magic_link = str(
-        response_data.get("magicLink")
-        or response_data.get(
-            "magic_link"
-        )
-        or mx_result.get("magicLink")
-        or mx_result.get(
-            "magic_link"
-        )
-        or nested_response.get(
-            "magicLink"
-        )
-        or nested_response.get(
-            "magic_link"
+        getattr(
+            route,
+            "mx_magic_link",
+            None,
         )
         or ""
     ).strip()
 
     # =========================================================
-    # MX USER ID
+    # FALLBACK A mx_response HISTÓRICO
+    # =========================================================
+    #
+    # Útil para registros creados antes de que mx_magic_link
+    # se persistiera directamente en una columna.
+    # =========================================================
+
+    if not magic_link:
+        mx_response = getattr(
+            route,
+            "mx_response",
+            None,
+        )
+
+        if isinstance(
+            mx_response,
+            dict,
+        ):
+            response_data = (
+                mx_response.get("data")
+            )
+
+            if not isinstance(
+                response_data,
+                dict,
+            ):
+                response_data = {}
+
+            nested_response = (
+                mx_response.get("response")
+            )
+
+            if not isinstance(
+                nested_response,
+                dict,
+            ):
+                nested_response = {}
+
+            magic_link = str(
+                mx_response.get("magicLink")
+                or mx_response.get("magic_link")
+                or response_data.get("magicLink")
+                or response_data.get("magic_link")
+                or nested_response.get("magicLink")
+                or nested_response.get("magic_link")
+                or ""
+            ).strip()
+
+            # Si encontramos un link histórico válido,
+            # persistirlo para las próximas consultas.
+            if magic_link:
+                route.mx_magic_link = magic_link
+
+                route.save(
+                    update_fields=[
+                        "mx_magic_link",
+                        "updated_at",
+                    ]
+                )
+
+    # =========================================================
+    # SIN MAGIC LINK
+    # =========================================================
+
+    if not magic_link:
+        logger.warning(
+            (
+                "Magic Link persistente no encontrado. "
+                "user=%s route=%s"
+            ),
+            user.id,
+            route.id,
+        )
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "mx_magic_link_not_found",
+                "message": (
+                    "Tu acceso a Top Education México "
+                    "todavía no tiene un enlace disponible."
+                ),
+                "requires_provisioning_review": True,
+                "retryable": False,
+            },
+            status=404,
+        )
+
+    # =========================================================
+    # DATOS COMPLEMENTARIOS
     # =========================================================
 
     mx_user_id = str(
-        response_data.get("mxUserId")
-        or response_data.get(
-            "mx_user_id"
-        )
-        or mx_result.get("mxUserId")
-        or mx_result.get(
-            "mx_user_id"
-        )
-        or nested_response.get(
-            "mxUserId"
-        )
-        or nested_response.get(
-            "mx_user_id"
-        )
-        or getattr(
+        getattr(
             route,
             "mx_user_id",
             None,
         )
         or ""
-    ).strip()
+    ).strip() or None
 
-    # =========================================================
-    # ROUTE VERSION
-    # =========================================================
-
-    route_version = (
-        response_data.get(
-            "routeVersion"
-        )
-        or response_data.get(
-            "route_version"
-        )
-        or mx_result.get(
-            "routeVersion"
-        )
-        or mx_result.get(
-            "route_version"
-        )
-        or nested_response.get(
-            "routeVersion"
-        )
-        or nested_response.get(
-            "route_version"
-        )
-    )
-
-    # =========================================================
-    # ENTITLEMENT
-    # =========================================================
-
-    entitlement_status = (
-        response_data.get(
-            "entitlementStatus"
-        )
-        or response_data.get(
-            "entitlement_status"
-        )
-        or mx_result.get(
-            "entitlementStatus"
-        )
-        or mx_result.get(
-            "entitlement_status"
-        )
-        or nested_response.get(
-            "entitlementStatus"
-        )
-        or nested_response.get(
-            "entitlement_status"
-        )
-    )
-
-    # =========================================================
-    # RESULTADO
-    # =========================================================
-
-    accepted = bool(
-        mx_result.get("ok")
-        or mx_result.get("accepted")
-        or mx_status in {
-            "APPLIED",
-            "DUPLICATE",
-        }
-    )
-
-    retryable = bool(
-        mx_result.get("retry")
-        or mx_result.get("retryable")
-        or mx_status
-        == "RETRYABLE_ERROR"
-    )
-
-    # =========================================================
-    # MX NO ACEPTÓ
-    # =========================================================
-
-    if not accepted:
-        logger.warning(
-            (
-                "MX no aceptó generación de "
-                "Magic Link. "
-                "event=%s status=%s "
-                "retryable=%s"
-            ),
-            event_id,
-            mx_status,
-            retryable,
-        )
-
-        return JsonResponse(
-            {
-                "ok": False,
-
-                "error": (
-                    "mx_magic_link_not_generated"
-                ),
-
-                "message": (
-                    mx_result.get("message")
-                    or mx_result.get("error")
-                    or (
-                        "No fue posible generar "
-                        "un nuevo acceso."
-                    )
-                ),
-
-                "event_id": event_id,
-
-                "mx_status": (
-                    mx_status or None
-                ),
-
-                "retryable": retryable,
-            },
-            status=(
-                503
-                if retryable
-                else 400
-            ),
-        )
-
-    # =========================================================
-    # DEBE VENIR UN NUEVO MAGIC LINK
-    # =========================================================
-    #
-    # No hacemos fallback a route.mx_magic_link.
-    #
-    # Si México no devuelve uno, preferimos fallar antes
-    # que devolver accidentalmente un token ya consumido.
-    # =========================================================
-
-    if not magic_link:
-        logger.error(
-            (
-                "MX aceptó USER_ACCESS_PROVISION "
-                "pero no devolvió magicLink. "
-                "event=%s status=%s "
-                "user=%s route=%s"
-            ),
-            event_id,
-            mx_status,
-            user.id,
-            route.id,
-        )
-
-        return JsonResponse(
-            {
-                "ok": False,
-
-                "error": (
-                    "mx_magic_link_missing"
-                ),
-
-                "message": (
-                    "México procesó tu acceso, "
-                    "pero no devolvió un nuevo "
-                    "enlace de ingreso."
-                ),
-
-                "event_id": event_id,
-
-                "mx_status": (
-                    mx_status or None
-                ),
-
-                "retryable": True,
-            },
-            status=502,
-        )
-
-    # =========================================================
-    # ACTUALIZAR LEARNING ROUTE
-    # =========================================================
-
-    update_fields = []
-
-    route.mx_magic_link = (
-        magic_link
-    )
-
-    update_fields.append(
-        "mx_magic_link"
-    )
-
-    if mx_user_id:
-        route.mx_user_id = (
-            mx_user_id
-        )
-
-        update_fields.append(
-            "mx_user_id"
-        )
-
-    if mx_status:
-        route.mx_status = (
-            mx_status
-        )
-
-        update_fields.append(
-            "mx_status"
-        )
-
-    if hasattr(
-        route,
-        "mx_last_sync_at",
-    ):
-        route.mx_last_sync_at = (
-            timezone.now()
-        )
-
-        update_fields.append(
-            "mx_last_sync_at"
-        )
-
-    if (
-        route_version is not None
-        and hasattr(
+    mx_status = str(
+        getattr(
             route,
-            "mx_route_version",
+            "mx_status",
+            None,
         )
-    ):
-        try:
-            route.mx_route_version = int(
-                route_version
-            )
+        or ""
+    ).strip() or None
 
-            update_fields.append(
-                "mx_route_version"
-            )
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-            pass
-
-    if (
-        entitlement_status
-        and hasattr(
+    entitlement_status = str(
+        getattr(
             route,
             "mx_entitlement_status",
+            None,
         )
-    ):
-        route.mx_entitlement_status = (
-            str(
-                entitlement_status
-            ).strip()
-        )
+        or ""
+    ).strip() or None
 
-        update_fields.append(
-            "mx_entitlement_status"
-        )
-
-    update_fields.append(
-        "updated_at"
-    )
-
-    route.save(
-        update_fields=list(
-            dict.fromkeys(
-                update_fields
-            )
-        )
+    route_version = getattr(
+        route,
+        "mx_route_version",
+        None,
     )
 
     # =========================================================
-    # COMPLEMENTAR LOG
+    # LOG
     # =========================================================
     #
-    # send_b2c_access_event_to_mx() ya administra este log,
-    # pero dejamos marcado explícitamente el origen.
-    # =========================================================
-
-    if mx_log:
-        try:
-            mx_log.refresh_from_db()
-
-            if (
-                mx_log.event_source
-                != "magic_link_refresh"
-            ):
-                mx_log.event_source = (
-                    "magic_link_refresh"
-                )
-
-                mx_log.save(
-                    update_fields=[
-                        "event_source",
-                        "updated_at",
-                    ]
-                )
-
-        except Exception:
-            logger.exception(
-                (
-                    "No fue posible complementar "
-                    "log final Magic Link. "
-                    "event=%s"
-                ),
-                event_id,
-            )
-
-    # =========================================================
-    # LOG DE APLICACIÓN
-    # =========================================================
-    #
-    # IMPORTANTE:
-    # NO escribir magic_link aquí.
+    # Nunca imprimir magic_link.
     # =========================================================
 
     logger.info(
         (
-            "Nuevo Magic Link generado. "
-            "event=%s user=%s route=%s "
-            "mx_status=%s"
+            "Magic Link persistente solicitado. "
+            "user=%s route=%s mx_status=%s"
         ),
-        event_id,
         user.id,
         route.id,
         mx_status,
     )
 
     # =========================================================
-    # RESPUESTA FRONTEND
+    # RESPONSE
     # =========================================================
 
     response = JsonResponse(
         {
             "ok": True,
-
             "data": {
                 "magicLink": magic_link,
                 "magic_link": magic_link,
 
-                "mxUserId": (
-                    mx_user_id or None
-                ),
+                "mxUserId": mx_user_id,
+                "mx_user_id": mx_user_id,
 
-                "mx_user_id": (
-                    mx_user_id or None
-                ),
-
-                "mxStatus": (
-                    mx_status or None
-                ),
-
-                "mx_status": (
-                    mx_status or None
-                ),
-
-                "routeVersion": (
-                    route_version
-                ),
-
-                "route_version": (
-                    route_version
-                ),
+                "mxStatus": mx_status,
+                "mx_status": mx_status,
 
                 "entitlementStatus": (
                     entitlement_status
                 ),
-
                 "entitlement_status": (
                     entitlement_status
                 ),
 
-                "eventId": event_id,
-                "event_id": event_id,
+                "routeVersion": route_version,
+                "route_version": route_version,
 
-                "reused": False,
-                "single_use": True,
+                # Indica claramente al frontend
+                # que estamos utilizando el enlace persistente.
+                "reused": True,
+
+                # Según contrato temporal vigente.
+                "persistent": True,
+                "expires": False,
             },
         },
         status=200,
     )
 
     # =========================================================
-    # NO CACHEAR CREDENCIAL
+    # NO CACHEAR LA CREDENCIAL
     # =========================================================
 
     response["Cache-Control"] = (
