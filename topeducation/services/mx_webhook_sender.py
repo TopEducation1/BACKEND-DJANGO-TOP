@@ -37,6 +37,17 @@ RETRYABLE_HTTP_STATUSES = {
     504,
 }
 
+PERMANENT_MX_STATUSES = {
+    400,  # Bad Request / payload inválido
+    401,  # Unauthorized
+    403,  # Forbidden
+    404,  # Endpoint/resource not found
+    405,  # Method Not Allowed
+    409,  # Conflict
+    410,  # Gone
+    415,  # Unsupported Media Type
+    422,  # Unprocessable Entity / validación
+}
 
 # =========================================================
 # SERIALIZACIÓN Y FIRMA
@@ -819,7 +830,7 @@ def send_b2c_access_event_to_mx(
             not accepted
             and (
                 normalized_status
-                in RETRYABLE_MX_STATUSES
+                in RETRYABLE_HTTP_STATUSES
                 or is_retryable_http_status(
                     response.status_code
                 )
