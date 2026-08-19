@@ -1028,7 +1028,14 @@ def get_free_courses_from_route(route) -> list:
 
 
 def serialize_snapshot_courses(snapshot: Any) -> list:
-    """Serializa, en orden estable, los cursos persistidos en un snapshot."""
+    """
+    Serializa cursos de snapshots PAGADOS con el payload mínimo.
+
+    Paid conserva solamente:
+    - idInterno
+    - order
+    - routeLevel
+    """
     if snapshot is None:
         return []
 
@@ -1043,6 +1050,130 @@ def serialize_snapshot_courses(snapshot: Any) -> list:
             .order_by("route_level", "order", "id")
         )
         return [serialize_route_item(item) for item in items]
+    except Exception:
+        return []
+
+
+def serialize_free_snapshot_item(item: Any) -> Optional[Dict[str, Any]]:
+    """
+    Serializa un curso FREE persistido en LearningRouteSnapshotCourse.
+
+    A diferencia de Paid, Free DEBE conservar la evidencia recibida
+    originalmente desde /v1/b2c/free-preview-courses:
+    - idInterno
+    - title
+    - provider
+    - order
+    - routeLevel
+    - preview.type
+    - preview.url
+    - preview.validatedAt
+    - preview.countryCode
+
+    Este serializer separado evita que la optimización del payload Paid
+    elimine los campos necesarios para validar elegibilidad Free.
+    """
+    certification = getattr(item, "certification", None)
+
+    id_interno = (
+        getattr(item, "id_interno", None)
+        or getattr(certification, "id_interno", None)
+    )
+
+    if id_interno in (None, ""):
+        return None
+
+    preview_type = normalize_upper(
+        getattr(item, "preview_type", None)
+    )
+
+    preview_url = str(
+        getattr(item, "preview_url", None)
+        or ""
+    ).strip()
+
+    if not preview_type or not preview_url:
+        return None
+
+    provider = (
+        getattr(item, "provider", None)
+        or getattr(
+            certification,
+            "source_provider",
+            None,
+        )
+        or ""
+    )
+
+    title = (
+        getattr(item, "title", None)
+        or getattr(certification, "nombre", None)
+        or ""
+    )
+
+    return compact_dict({
+        "idInterno": str(id_interno),
+        "title": title,
+        "provider": provider,
+        "order": getattr(item, "order", 1),
+        "routeLevel": getattr(
+            item,
+            "route_level",
+            1,
+        ),
+        "preview": {
+            "type": preview_type,
+            "url": preview_url,
+            "validatedAt": iso_from_ts(
+                getattr(
+                    item,
+                    "preview_validated_at",
+                    None,
+                )
+            ),
+            "countryCode": (
+                getattr(
+                    item,
+                    "preview_country_code",
+                    None,
+                )
+                or "CO"
+            ),
+        },
+    })
+
+
+def serialize_free_snapshot_courses(snapshot: Any) -> list:
+    """
+    Serializa únicamente cursos Free válidos persistidos en el snapshot.
+
+    No usa serialize_snapshot_courses(), porque ese serializer fue
+    intencionalmente reducido para planes pagados.
+    """
+    if snapshot is None:
+        return []
+
+    manager = getattr(snapshot, "courses", None)
+    if manager is None:
+        return []
+
+    try:
+        items = (
+            manager
+            .select_related("certification")
+            .order_by("route_level", "order", "id")
+        )
+
+        result = []
+
+        for item in items:
+            serialized = serialize_free_snapshot_item(item)
+
+            if serialized:
+                result.append(serialized)
+
+        return result
+
     except Exception:
         return []
 
@@ -1088,7 +1219,7 @@ def build_learning_route_snapshot(
         selected_free_courses = (
             list(free_courses)
             if free_courses is not None
-            else serialize_snapshot_courses(snapshot)
+            else serialize_free_snapshot_courses(snapshot)
         )
 
         if not selected_free_courses:
