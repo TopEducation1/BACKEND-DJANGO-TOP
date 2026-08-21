@@ -1923,7 +1923,10 @@ class BlogList(APIView):
         search_query = request.query_params.get('search', '')
         categorias_param = request.query_params.get('categoria_blog', '')
 
-        blogs_queryset = Blog.objects.select_related('autor_blog', 'categoria_blog').all()
+        blogs_queryset = Blog.objects.select_related(
+            'autor_blog',
+            'categoria_blog'
+        ).all()
 
         if search_query:
             blogs_queryset = blogs_queryset.filter(
@@ -1931,22 +1934,40 @@ class BlogList(APIView):
             )
 
         if categorias_param:
-            # Dividir por coma y limpiar espacios
-            categorias = [c.strip() for c in categorias_param.split(',') if c.strip()]
-            
-            # Obtener las categorías que existen en base a nombre
+            categorias = [
+                c.strip()
+                for c in categorias_param.split(',')
+                if c.strip()
+            ]
+
             categorias_objs = CategoriaBlog.objects.filter(
                 nombre_categoria_blog__in=categorias
             )
 
             if categorias_objs.exists():
-                blogs_queryset = blogs_queryset.filter(categoria_blog__in=categorias_objs)
+                blogs_queryset = blogs_queryset.filter(
+                    categoria_blog__in=categorias_objs
+                )
             else:
                 blogs_queryset = Blog.objects.none()
 
+        # Más recientes primero
+        blogs_queryset = blogs_queryset.order_by(
+            '-fecha_redaccion_blog',
+            '-id'
+        )
+
         paginator = self.pagination_class()
-        paginated_queryset = paginator.paginate_queryset(blogs_queryset, request)
-        serializer = BlogSerializer(paginated_queryset, many=True, context={'request': request})
+        paginated_queryset = paginator.paginate_queryset(
+            blogs_queryset,
+            request
+        )
+
+        serializer = BlogSerializer(
+            paginated_queryset,
+            many=True,
+            context={'request': request}
+        )
 
         return paginator.get_paginated_response(serializer.data)
 
