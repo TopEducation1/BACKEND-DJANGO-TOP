@@ -32,9 +32,10 @@ class CertificationsForm(forms.ModelForm):
         }
 
 class BlogsForm(forms.ModelForm):
+
     class Meta:
         model = Blog
-        # Mejor lista explícita. Evitas incluir campos no editables/auto.
+
         fields = [
             "nombre_blog",
             "metadescripcion_blog",
@@ -44,23 +45,63 @@ class BlogsForm(forms.ModelForm):
             "categoria_blog",
             "objetivo_blog",
             "contenido",
-            "miniatura_blog",   # ImageField
-            "url_img_cta",      # ImageField/FileField si aplica
-            #"fecha_redaccion_blog",
-            # agrega los demás campos que SÍ edita el usuario
+            "miniatura_blog",
+            "url_img_cta",
         ]
+
         widgets = {
-            # Textarea para CKEditor/HTML
-            "contenido": forms.Textarea(attrs={
-                "id": "id_contenido",  # que coincida con tu ClassicEditor
-                "rows": 10,
-            }),
-            #"fecha_redaccion_blog": forms.DateInput(attrs={"type": "date"}),
-            # (Opcional) asegurarte de file input nativo
-            # "miniatura_blog": forms.ClearableFileInput(),
-            # "url_img_cta": forms.ClearableFileInput(),
+            "nombre_blog": forms.TextInput(
+                attrs={
+                    "placeholder": "Nombre del blog",
+                }
+            ),
+
+            "metadescripcion_blog": forms.Textarea(
+                attrs={
+                    "rows": 3,
+                    "placeholder": "Meta descripción",
+                }
+            ),
+
+            "slug": forms.TextInput(
+                attrs={
+                    "placeholder": "slug-del-blog",
+                }
+            ),
+
+            "palabra_clave_blog": forms.TextInput(
+                attrs={
+                    "placeholder": "Palabra clave principal",
+                }
+            ),
+
+            "contenido": forms.Textarea(
+                attrs={
+                    "id": "id_contenido",
+                    "rows": 10,
+                }
+            ),
+
+            "miniatura_blog": forms.ClearableFileInput(
+                attrs={
+                    "accept": "image/*",
+                }
+            ),
+
+            "url_img_cta": forms.ClearableFileInput(
+                attrs={
+                    "accept": "image/*",
+                }
+            ),
         }
 
+    def clean_slug(self):
+        slug = self.cleaned_data.get("slug")
+
+        if slug:
+            slug = slug.strip().lower()
+
+        return slug
 
 class UniversitiesForm(forms.ModelForm):
     class Meta:

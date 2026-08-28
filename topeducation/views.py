@@ -241,43 +241,127 @@ def posts(request):
     }
     return render(request, "posts/index.html", context)
 
+
 def createPost(request):
-    if request.method == 'GET':
-        return render(request, 'posts/create.html',{
-            'form':BlogsForm
-        })
+    if request.method == "POST":
+        form = BlogsForm(
+            request.POST,
+            request.FILES,
+        )
+
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    post = form.save()
+
+                messages.success(
+                    request,
+                    f'Blog "{post.nombre_blog}" publicado correctamente.'
+                )
+
+                return redirect("posts")
+
+            except Exception:
+                logger.exception("Error creando blog")
+
+                messages.error(
+                    request,
+                    "Ocurrió un error interno al guardar el blog. "
+                    "Inténtalo nuevamente."
+                )
+
+        else:
+            # Los errores quedan disponibles como form.errors
+            logger.warning(
+                "Formulario de blog inválido: %s",
+                form.errors.as_json()
+            )
+
+            messages.error(
+                request,
+                "Hay errores en el formulario. "
+                "Revisa los campos marcados antes de guardar."
+            )
+
     else:
-        try:
-            form = BlogsForm(request.POST)
-            new_post = form.save(commit=False)
-            created  = new_post.save()
-            messages.success(request, f'Blog: publicada correctamente')
-            return redirect('posts')
-        except Exception as e:
-            messages.warning(request,f"{str(e)}")
+        form = BlogsForm()
+
+    return render(
+        request,
+        "posts/create.html",
+        {
+            "form": form,
+        }
+    )
+
 
 def updatePost(request, post_id):
     post = get_object_or_404(Blog, pk=post_id)
 
     if request.method == "POST":
-        form = BlogsForm(request.POST, request.FILES, instance=post)
+        form = BlogsForm(
+            request.POST,
+            request.FILES,
+            instance=post
+        )
+
         if form.is_valid():
-            form.save()
-            link = reverse("updatePost", args=[post.id])
-            messages.success(
-                request,
-                f'Blog <a class="font-bold" href="{link}">{post.nombre_blog}</a> actualizado correctamente.'
-            )
-            return redirect('posts')
+            try:
+                with transaction.atomic():
+                    post = form.save()
+
+                link = reverse(
+                    "updatePost",
+                    args=[post.pk]
+                )
+
+                messages.success(
+                    request,
+                    (
+                        f'Blog '
+                        f'<a class="font-bold" href="{link}">'
+                        f'{post.nombre_blog}'
+                        f'</a> actualizado correctamente.'
+                    )
+                )
+
+                return redirect("posts")
+
+            except Exception:
+                logger.exception(
+                    "Error actualizando blog ID %s",
+                    post_id
+                )
+
+                messages.error(
+                    request,
+                    "Ocurrió un error interno al actualizar el blog."
+                )
+
         else:
-            # Útil para depurar si algo invalida el form (incluida la imagen)
-            # print("FORM ERRORS:", form.errors.as_json())
-            messages.error(request, "Hay errores en el formulario. Revísalos abajo.")
+            logger.warning(
+                "Formulario de actualización inválido para blog %s: %s",
+                post_id,
+                form.errors.as_json()
+            )
+
+            messages.error(
+                request,
+                "Hay errores en el formulario. "
+                "Revísalos antes de guardar."
+            )
+
     else:
         form = BlogsForm(instance=post)
 
-    return render(request, "posts/update.html", {"post": post, "form": form})
-
+    return render(
+        request,
+        "posts/update.html",
+        {
+            "post": post,
+            "form": form,
+        }
+    )
 
 def deletePost(request,post_id):
     post = Blog.objects.get(id = post_id)
