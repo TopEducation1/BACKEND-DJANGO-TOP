@@ -13,12 +13,12 @@ from django.utils import timezone
 
 from topeducation.models import MxAccessEventLog
 
-
 SUCCESS_MX_STATUSES = {
     "APPLIED",
     "DUPLICATE",
     "READY",
 }
+
 
 PENDING_MX_STATUSES = {
     "ACCEPTED",
@@ -27,6 +27,23 @@ PENDING_MX_STATUSES = {
     "QUEUED",
 }
 
+
+# Estados FUNCIONALES devueltos por MX que deben
+# reintentarse con exactamente el mismo eventId y body.
+RETRYABLE_MX_STATUSES = {
+    "RETRYABLE_ERROR",
+}
+
+
+# Estados FUNCIONALES que MX considera definitivos.
+PERMANENT_MX_STATUSES = {
+    "PERMANENT_ERROR",
+    "REJECTED",
+    "FAILED",
+}
+
+
+# Códigos HTTP que deben tratarse como recuperables.
 RETRYABLE_HTTP_STATUSES = {
     408,
     425,
@@ -37,16 +54,19 @@ RETRYABLE_HTTP_STATUSES = {
     504,
 }
 
-PERMANENT_MX_STATUSES = {
-    400,  # Bad Request / payload inválido
-    401,  # Unauthorized
-    403,  # Forbidden
-    404,  # Endpoint/resource not found
-    405,  # Method Not Allowed
-    409,  # Conflict
-    410,  # Gone
-    415,  # Unsupported Media Type
-    422,  # Unprocessable Entity / validación
+
+# Códigos HTTP que normalmente representan un error
+# permanente del request.
+PERMANENT_HTTP_STATUSES = {
+    400,
+    401,
+    403,
+    404,
+    405,
+    409,
+    410,
+    415,
+    422,
 }
 
 # =========================================================
@@ -603,25 +623,73 @@ def send_b2c_access_event_to_mx(
     """
     Envía un único intento hacia México.
 
-    No implementa un bucle de reintentos dentro de la petición web.
-    Si el error es recuperable, deja next_retry_at listo para que un
-    cron o comando de gestión lo reprocese posteriormente.
-    """
-    if not isinstance(payload, dict):
-        raise TypeError("payload debe ser un diccionario.")
+    REGLAS IMPORTANTES DE IDEMPOTENCIA MX
+    =====================================
 
-    event_id = str(payload.get("eventId") or "").strip()
-    event_type = str(payload.get("eventType") or "").strip()
-    occurred_at = str(payload.get("occurredAt") or "").strip()
+    1. Un evento se identifica por eventId.
+
+    2. Si México responde RETRYABLE_ERROR, HTTP 503, HTTP 504
+       o ocurre un timeout/error de red, el evento puede volver
+       a enviarse.
+
+    3. El retry DEBE utilizar:
+       - exactamente el mismo eventId;
+       - exactamente el mismo payload/body.
+
+    4. No se reconstruye la learningRoute para un retry.
+
+    5. No se divide una learningRoute SNAPSHOT en varios eventos.
+
+    6. Este método realiza UN SOLO intento HTTP.
+       Los siguientes intentos deben ejecutarse mediante el
+       mecanismo de retry/cron correspondiente.
+
+    7. APPLIED y DUPLICATE son estados finales exitosos.
+
+    8. RETRYABLE_ERROR es recuperable aunque el HTTP exterior
+       sea 200/400/etc., porque la semántica funcional de MX
+       tiene prioridad.
+    """
+
+    # =========================================================
+    # VALIDAR PAYLOAD
+    # =========================================================
+
+    if not isinstance(payload, dict):
+        raise TypeError(
+            "payload debe ser un diccionario."
+        )
+
+    event_id = str(
+        payload.get("eventId") or ""
+    ).strip()
+
+    event_type = str(
+        payload.get("eventType") or ""
+    ).strip()
+
+    occurred_at = str(
+        payload.get("occurredAt") or ""
+    ).strip()
 
     if not event_id:
-        raise ValueError("El payload no contiene eventId.")
+        raise ValueError(
+            "El payload no contiene eventId."
+        )
 
     if not event_type:
-        raise ValueError("El payload no contiene eventType.")
+        raise ValueError(
+            "El payload no contiene eventType."
+        )
 
     if not occurred_at:
-        raise ValueError("El payload no contiene occurredAt.")
+        raise ValueError(
+            "El payload no contiene occurredAt."
+        )
+
+    # =========================================================
+    # ENDPOINT MX
+    # =========================================================
 
     endpoint = str(
         getattr(
@@ -634,16 +702,26 @@ def send_b2c_access_event_to_mx(
 
     if not endpoint:
         raise RuntimeError(
-            "No está configurado MX_B2C_ACCESS_EVENT_URL."
+            "No está configurado "
+            "MX_B2C_ACCESS_EVENT_URL."
         )
+
+    # =========================================================
+    # SERIALIZACIÓN DETERMINISTA
+    # =========================================================
+    #
+    # IMPORTANTE:
+    # json_dumps usa sort_keys=True y separators fijos.
+    #
+    # Esto garantiza que el mismo payload produzca exactamente
+    # el mismo raw_body.
+    # =========================================================
 
     raw_body = json_dumps(payload)
 
-    headers = build_mx_headers(
-        raw_body=raw_body,
-        event_id=event_id,
-        occurred_at=occurred_at,
-    )
+    # =========================================================
+    # CREAR / RECUPERAR LOG
+    # =========================================================
 
     log, created = create_or_get_log(
         payload=payload,
@@ -654,6 +732,11 @@ def send_b2c_access_event_to_mx(
     )
 
     if not created:
+        # Esta función valida también que un eventId existente
+        # NO esté intentando utilizar otro payload.
+        #
+        # Si cambia el hash:
+        # event_id_payload_mismatch
         refresh_existing_log(
             log=log,
             payload=payload,
@@ -663,32 +746,74 @@ def send_b2c_access_event_to_mx(
             route_snapshot=route_snapshot,
         )
 
-    if not force and log.send_status == "sent":
-        duplicate = (
-            str(log.mx_status or "").upper()
-            == "DUPLICATE"
-        )
+    # =========================================================
+    # EVENTO YA FINALIZADO
+    # =========================================================
 
-        pending = (
-            str(log.mx_status or "").upper()
-            in PENDING_MX_STATUSES
+    current_mx_status = str(
+        log.mx_status or ""
+    ).strip().upper()
+
+    if (
+        not force
+        and log.send_status == "sent"
+        and current_mx_status in SUCCESS_MX_STATUSES
+    ):
+        duplicate = (
+            current_mx_status == "DUPLICATE"
         )
 
         return {
             "ok": True,
             "accepted": True,
             "duplicate": duplicate,
-            "pending": pending,
+            "pending": False,
             "retry": False,
             "permanent": False,
-            "status": log.mx_status or "DUPLICATE",
+            "status": (
+                log.mx_status
+                or "DUPLICATE"
+            ),
             "http_status": log.http_status,
             "mxUserId": log.mx_user_id,
             "magicLink": log.magic_link,
-            "entitlementStatus": log.entitlement_status,
+            "entitlementStatus": (
+                log.entitlement_status
+            ),
             "eventId": event_id,
             "skipped": True,
         }
+
+    # =========================================================
+    # EVENTO ACEPTADO PERO TODAVÍA PENDIENTE
+    # =========================================================
+
+    if (
+        not force
+        and log.send_status == "sent"
+        and current_mx_status in PENDING_MX_STATUSES
+    ):
+        return {
+            "ok": True,
+            "accepted": True,
+            "duplicate": False,
+            "pending": True,
+            "retry": False,
+            "permanent": False,
+            "status": log.mx_status,
+            "http_status": log.http_status,
+            "mxUserId": log.mx_user_id,
+            "magicLink": log.magic_link,
+            "entitlementStatus": (
+                log.entitlement_status
+            ),
+            "eventId": event_id,
+            "skipped": True,
+        }
+
+    # =========================================================
+    # MÁXIMO DE INTENTOS
+    # =========================================================
 
     max_attempts = int(
         getattr(
@@ -698,14 +823,20 @@ def send_b2c_access_event_to_mx(
         )
     )
 
-    if not force and log.attempts >= max_attempts:
+    if (
+        not force
+        and (log.attempts or 0) >= max_attempts
+    ):
         log.send_status = "permanent_failed"
         log.is_retryable = False
         log.next_retry_at = None
+
         log.last_error = (
             f"Se alcanzó el máximo de "
             f"{max_attempts} intentos."
         )
+
+        log.processed_at = timezone.now()
 
         log.save(
             update_fields=[
@@ -713,6 +844,7 @@ def send_b2c_access_event_to_mx(
                 "is_retryable",
                 "next_retry_at",
                 "last_error",
+                "processed_at",
                 "updated_at",
             ]
         )
@@ -728,6 +860,21 @@ def send_b2c_access_event_to_mx(
             "eventId": event_id,
             "error": log.last_error,
         }
+
+    # =========================================================
+    # IMPORTANTE:
+    # FIRMAR EXACTAMENTE EL BODY QUE SE VA A ENVIAR
+    # =========================================================
+
+    headers = build_mx_headers(
+        raw_body=raw_body,
+        event_id=event_id,
+        occurred_at=occurred_at,
+    )
+
+    # =========================================================
+    # MARCAR INTENTO
+    # =========================================================
 
     log.send_status = "processing"
     log.attempts = (log.attempts or 0) + 1
@@ -746,6 +893,10 @@ def send_b2c_access_event_to_mx(
         ]
     )
 
+    # =========================================================
+    # TIMEOUTS
+    # =========================================================
+
     timeout = int(
         getattr(
             settings,
@@ -762,130 +913,275 @@ def send_b2c_access_event_to_mx(
         )
     )
 
+    # =========================================================
+    # ENVÍO
+    # =========================================================
+
     try:
         response = requests.post(
             endpoint,
             data=raw_body.encode("utf-8"),
             headers=headers,
-            timeout=(connect_timeout, timeout),
+            timeout=(
+                connect_timeout,
+                timeout,
+            ),
         )
+
+        # =====================================================
+        # RESPUESTA JSON
+        # =====================================================
 
         try:
             response_json = response.json()
 
-            if not isinstance(response_json, dict):
+            if not isinstance(
+                response_json,
+                dict,
+            ):
                 response_json = {
                     "data": response_json,
                 }
 
-        except (ValueError, json.JSONDecodeError):
+        except (
+            ValueError,
+            json.JSONDecodeError,
+        ):
             response_json = {
                 "raw": response.text[:10000],
             }
+
+        # =====================================================
+        # EXTRAER INFORMACIÓN
+        # =====================================================
 
         response_data = extract_response_data(
             response_json=response_json,
             http_status=response.status_code,
         )
 
-        mx_status = response_data["mx_status"]
-        mx_user_id = response_data["mx_user_id"]
-        magic_link = response_data["magic_link"]
+        mx_status = response_data[
+            "mx_status"
+        ]
+
+        mx_user_id = response_data[
+            "mx_user_id"
+        ]
+
+        magic_link = response_data[
+            "magic_link"
+        ]
+
         entitlement_status = response_data[
             "entitlement_status"
         ]
+
         response_route_version = response_data[
             "route_version"
         ]
 
         normalized_status = str(
             mx_status or ""
-        ).upper()
+        ).strip().upper()
 
-        accepted = (
-            response.ok
-            and normalized_status
-            in (
-                SUCCESS_MX_STATUSES
-                | PENDING_MX_STATUSES
-            )
+        http_status = response.status_code
+
+        # =====================================================
+        # CLASIFICACIÓN FUNCIONAL
+        # =====================================================
+
+        success_status = (
+            normalized_status
+            in SUCCESS_MX_STATUSES
         )
 
-        duplicate = (
-            normalized_status == "DUPLICATE"
-        )
-
-        pending = (
+        pending_status = (
             normalized_status
             in PENDING_MX_STATUSES
         )
 
-        # La semántica devuelta por MX tiene prioridad sobre
-        # el código HTTP para RETRYABLE_ERROR.
+        retryable_mx_status = (
+            normalized_status
+            in RETRYABLE_MX_STATUSES
+        )
+
+        permanent_mx_status = (
+            normalized_status
+            in PERMANENT_MX_STATUSES
+        )
+
+        retryable_http = (
+            is_retryable_http_status(
+                http_status
+            )
+        )
+
+        permanent_http = (
+            http_status
+            in PERMANENT_HTTP_STATUSES
+        )
+
+        # =====================================================
+        # RESULTADO EXITOSO
+        # =====================================================
+
+        accepted = (
+            response.ok
+            and (
+                success_status
+                or pending_status
+            )
+        )
+
+        duplicate = (
+            normalized_status
+            == "DUPLICATE"
+        )
+
+        pending = (
+            accepted
+            and pending_status
+        )
+
+        # =====================================================
+        # RETRYABLE
+        # =====================================================
+        #
+        # MUY IMPORTANTE:
+        #
+        # RETRYABLE_ERROR tiene prioridad sobre el HTTP.
         #
         # Ejemplo:
-        # HTTP 400 + status RETRYABLE_ERROR
-        # sigue siendo reintentable según contrato.
+        #
+        # HTTP 200
+        # status = RETRYABLE_ERROR
+        #
+        # => RETRY
+        #
+        # HTTP 400
+        # status = RETRYABLE_ERROR
+        #
+        # => RETRY
+        #
+        # HTTP 503
+        # => RETRY
+        #
+        # HTTP 504
+        # => RETRY
+        # =====================================================
+
         retryable = (
             not accepted
             and (
-                normalized_status
-                in RETRYABLE_HTTP_STATUSES
-                or is_retryable_http_status(
-                    response.status_code
-                )
+                retryable_mx_status
+                or retryable_http
             )
         )
+
+        # =====================================================
+        # ERROR PERMANENTE
+        # =====================================================
 
         permanent = (
             not accepted
+            and not retryable
             and (
-                normalized_status
-                in PERMANENT_MX_STATUSES
-                or not retryable
+                permanent_mx_status
+                or permanent_http
+                or not response.ok
+                or bool(normalized_status)
             )
         )
 
+        # =====================================================
+        # ACTUALIZAR LOG
+        # =====================================================
+
         log.response_json = response_json
-        log.http_status = response.status_code
+        log.http_status = http_status
         log.mx_status = mx_status
+
         log.mx_user_id = (
             str(mx_user_id)
             if mx_user_id is not None
             else None
         )
+
         log.magic_link = (
             str(magic_link)
             if magic_link is not None
             else None
         )
+
         log.entitlement_status = (
-            str(entitlement_status).upper()
+            str(
+                entitlement_status
+            ).upper()
             if entitlement_status is not None
             else None
         )
 
+        # =====================================================
+        # ACEPTADO
+        # =====================================================
+
         if accepted:
             log.send_status = "sent"
             log.sent_at = timezone.now()
+
             log.processed_at = (
-                timezone.now()
-                if not pending
-                else None
+                None
+                if pending
+                else timezone.now()
             )
+
             log.is_retryable = False
             log.next_retry_at = None
             log.last_error = None
 
+        # =====================================================
+        # RETRY
+        # =====================================================
+
         elif retryable:
-            log.send_status = "retry_pending"
-            log.sent_at = None
-            log.processed_at = None
-            log.is_retryable = True
-            log.next_retry_at = (
-                parse_retry_after(response)
-                or calculate_next_retry(log.attempts)
+            can_retry = (
+                log.attempts < max_attempts
             )
+
+            if can_retry:
+                log.send_status = (
+                    "retry_pending"
+                )
+
+                log.is_retryable = True
+
+                log.next_retry_at = (
+                    parse_retry_after(
+                        response
+                    )
+                    or calculate_next_retry(
+                        log.attempts
+                    )
+                )
+
+                log.processed_at = None
+
+            else:
+                log.send_status = (
+                    "permanent_failed"
+                )
+
+                log.is_retryable = False
+                log.next_retry_at = None
+                log.processed_at = (
+                    timezone.now()
+                )
+
+                permanent = True
+                retryable = False
+
+            log.sent_at = None
+
             log.last_error = json.dumps(
                 sanitize_response_for_log(
                     response_json
@@ -893,18 +1189,30 @@ def send_b2c_access_event_to_mx(
                 ensure_ascii=False,
             )[:10000]
 
+        # =====================================================
+        # PERMANENTE
+        # =====================================================
+
         else:
-            log.send_status = "permanent_failed"
+            log.send_status = (
+                "permanent_failed"
+            )
+
             log.sent_at = None
             log.processed_at = timezone.now()
             log.is_retryable = False
             log.next_retry_at = None
+
             log.last_error = json.dumps(
                 sanitize_response_for_log(
                     response_json
                 ),
                 ensure_ascii=False,
             )[:10000]
+
+        # =====================================================
+        # GUARDAR LOG
+        # =====================================================
 
         log.save(
             update_fields=[
@@ -924,6 +1232,14 @@ def send_b2c_access_event_to_mx(
             ]
         )
 
+        # =====================================================
+        # ACTUALIZAR LEARNING ROUTE
+        # =====================================================
+        #
+        # Solo actualizamos los datos definitivos del usuario
+        # cuando México realmente aceptó el evento.
+        # =====================================================
+
         if accepted:
             update_route_with_mx_response(
                 route=route,
@@ -931,13 +1247,21 @@ def send_b2c_access_event_to_mx(
                 mx_status=mx_status,
                 mx_user_id=mx_user_id,
                 magic_link=magic_link,
-                entitlement_status=entitlement_status,
+                entitlement_status=(
+                    entitlement_status
+                ),
                 route_version=(
                     response_route_version
-                    or get_route_version(payload)
+                    or get_route_version(
+                        payload
+                    )
                 ),
                 response_json=response_json,
             )
+
+        # =====================================================
+        # RESULTADO
+        # =====================================================
 
         return {
             "ok": accepted,
@@ -947,13 +1271,17 @@ def send_b2c_access_event_to_mx(
             "retry": retryable,
             "permanent": permanent,
             "status": mx_status,
-            "http_status": response.status_code,
+            "http_status": http_status,
             "mxUserId": mx_user_id,
             "magicLink": magic_link,
-            "entitlementStatus": entitlement_status,
+            "entitlementStatus": (
+                entitlement_status
+            ),
             "routeVersion": (
                 response_route_version
-                or get_route_version(payload)
+                or get_route_version(
+                    payload
+                )
             ),
             "nextRetryAt": (
                 log.next_retry_at.isoformat()
@@ -964,28 +1292,52 @@ def send_b2c_access_event_to_mx(
             "response": response_json,
         }
 
+    # =========================================================
+    # ERROR DE RED / TIMEOUT
+    # =========================================================
+
     except requests.RequestException as exc:
         error_message = str(exc)
 
-        retryable = log.attempts < max_attempts
+        can_retry = (
+            log.attempts < max_attempts
+        )
 
         log.http_status = None
         log.response_json = None
-        log.mx_status = "RETRYABLE_ERROR"
+
+        log.mx_status = (
+            "RETRYABLE_ERROR"
+            if can_retry
+            else "MAX_ATTEMPTS_REACHED"
+        )
+
         log.send_status = (
             "retry_pending"
-            if retryable
+            if can_retry
             else "permanent_failed"
         )
-        log.is_retryable = retryable
+
+        log.is_retryable = can_retry
+
         log.next_retry_at = (
-            calculate_next_retry(log.attempts)
-            if retryable
+            calculate_next_retry(
+                log.attempts
+            )
+            if can_retry
             else None
         )
-        log.last_error = error_message
+
+        log.last_error = (
+            error_message[:10000]
+        )
+
+        log.sent_at = None
+
         log.processed_at = (
-            None if retryable else timezone.now()
+            None
+            if can_retry
+            else timezone.now()
         )
 
         log.save(
@@ -997,6 +1349,7 @@ def send_b2c_access_event_to_mx(
                 "is_retryable",
                 "next_retry_at",
                 "last_error",
+                "sent_at",
                 "processed_at",
                 "updated_at",
             ]
@@ -1007,11 +1360,11 @@ def send_b2c_access_event_to_mx(
             "accepted": False,
             "duplicate": False,
             "pending": False,
-            "retry": retryable,
-            "permanent": not retryable,
+            "retry": can_retry,
+            "permanent": not can_retry,
             "status": (
                 "RETRYABLE_ERROR"
-                if retryable
+                if can_retry
                 else "MAX_ATTEMPTS_REACHED"
             ),
             "http_status": None,
@@ -1024,13 +1377,24 @@ def send_b2c_access_event_to_mx(
             "error": error_message,
         }
 
+    # =========================================================
+    # ERROR INTERNO COLOMBIA
+    # =========================================================
+
     except Exception as exc:
         error_message = str(exc)
 
-        log.send_status = "permanent_failed"
+        log.send_status = (
+            "permanent_failed"
+        )
+
         log.is_retryable = False
         log.next_retry_at = None
-        log.last_error = error_message
+        log.last_error = (
+            error_message[:10000]
+        )
+
+        log.sent_at = None
         log.processed_at = timezone.now()
 
         log.save(
@@ -1039,6 +1403,7 @@ def send_b2c_access_event_to_mx(
                 "is_retryable",
                 "next_retry_at",
                 "last_error",
+                "sent_at",
                 "processed_at",
                 "updated_at",
             ]
