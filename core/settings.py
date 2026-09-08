@@ -14,7 +14,7 @@ pymysql.install_as_MySQLdb()
 SECRET_KEY = str(os.getenv('SECRET_KEY'))
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True 
+DEBUG = False 
 
 ALLOWED_HOSTS = ['backend-django-top-production.up.railway.app', '127.0.0.1', 'localhost','localhost:8000','app.top.education']
 
@@ -130,7 +130,7 @@ INSTALLED_APPS = [
     'ckeditor',
     'ckeditor_uploader',
     'django_select2',
-]
+]   
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',

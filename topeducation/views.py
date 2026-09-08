@@ -435,6 +435,7 @@ def certifications(request):
         "q": q,
     })
 
+@login_required(login_url="/signin/")
 def createCertification(request):
     if request.method == 'GET':
         return render(request, 'certifications/create.html',{
@@ -994,6 +995,7 @@ def createTopic(request):
         except Exception as e:
             messages.warning(request,f"{str(e)}")
 
+@login_required(login_url="/signin/")
 def skills(request):
     q = (request.GET.get("q") or "").strip()
 
@@ -1047,7 +1049,7 @@ def skills(request):
     }
     return render(request, "category/skills/index.html", context)
 
-
+@login_required(login_url="/signin/")
 def updateSkill(request, skill_id):
     skill = get_object_or_404(Skills, pk=skill_id)
 
@@ -1078,7 +1080,7 @@ def updateSkill(request, skill_id):
         },
     )
 
-
+@login_required(login_url="/signin/")
 def createSkill(request):
     if request.method == "GET":
         return render(
@@ -12951,29 +12953,160 @@ def billing_subscription_change_plan(request):
 @require_POST
 @csrf_exempt
 def billing_setup_intent(request):
-    user, route, error = _get_or_create_user_from_onboarding(request)
+    try:
+        user, route, error = _get_or_create_user_from_onboarding(request)
 
-    if error:
-        return JsonResponse({"ok": False, "error": error}, status=400)
+        if error:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": error,
+                },
+                status=400,
+            )
 
-    customer_id = _get_or_create_stripe_customer(user)
+        # =====================================================
+        # VALIDAR CONFIGURACIÓN STRIPE
+        # =====================================================
 
-    setup_intent = stripe.SetupIntent.create(
-        customer=customer_id,
-        usage="off_session",
-        payment_method_types=["card"],
-        metadata={
-            "user_id": str(user.id),
-            "route_id": str(route.id) if route else "",
-            "source": "top-education-colombia",
-        },
-    )
+        secret_key = str(
+            getattr(settings, "STRIPE_SECRET_KEY", "") or ""
+        ).strip()
 
-    return JsonResponse({
-        "ok": True,
-        "client_secret": setup_intent.client_secret,
-        "customer_id": customer_id,
-    })
+        if not secret_key:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "stripe_secret_key_missing",
+                },
+                status=500,
+            )
+
+        stripe_mode = (
+            "live"
+            if secret_key.startswith("sk_live_")
+            else "test"
+            if secret_key.startswith("sk_test_")
+            else "unknown"
+        )
+
+        # =====================================================
+        # CUSTOMER
+        # =====================================================
+
+        customer_id = _get_or_create_stripe_customer(user)
+
+        if not customer_id:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "stripe_customer_not_available",
+                },
+                status=500,
+            )
+
+        # Validar que el Customer realmente exista
+        # en la cuenta/modo Stripe actualmente configurado.
+        try:
+            customer = stripe.Customer.retrieve(customer_id)
+
+        except stripe.error.InvalidRequestError:
+
+            logger.warning(
+                "Stripe customer no existe en entorno actual. "
+                "user=%s customer=%s mode=%s",
+                user.id,
+                customer_id,
+                stripe_mode,
+            )
+
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "stripe_customer_environment_mismatch",
+                    "message": (
+                        "El cliente Stripe almacenado no pertenece "
+                        "al entorno Stripe actualmente configurado."
+                    ),
+                    "stripe_mode": stripe_mode,
+                },
+                status=409,
+            )
+
+        # =====================================================
+        # SETUP INTENT
+        # =====================================================
+
+        setup_intent = stripe.SetupIntent.create(
+            customer=customer.id,
+            usage="off_session",
+            payment_method_types=["card"],
+            metadata={
+                "user_id": str(user.id),
+                "route_id": str(route.id) if route else "",
+                "source": "top-education-colombia",
+            },
+        )
+
+        logger.info(
+            "Stripe SetupIntent creado. "
+            "user=%s setup_intent=%s mode=%s livemode=%s",
+            user.id,
+            setup_intent.id,
+            stripe_mode,
+            bool(setup_intent.get("livemode")),
+        )
+
+        # =====================================================
+        # RESPONSE
+        # =====================================================
+
+        return JsonResponse(
+            {
+                "ok": True,
+                "client_secret": setup_intent.client_secret,
+                "customer_id": customer.id,
+                "stripe_mode": stripe_mode,
+                "livemode": bool(
+                    setup_intent.get("livemode")
+                ),
+            }
+        )
+
+    except stripe.error.StripeError as exc:
+
+        logger.exception(
+            "Stripe error creando SetupIntent user=%s",
+            getattr(
+                locals().get("user"),
+                "id",
+                None,
+            ),
+        )
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "stripe_setup_intent_failed",
+                "message": str(exc),
+            },
+            status=400,
+        )
+
+    except Exception as exc:
+
+        logger.exception(
+            "Error interno creando SetupIntent"
+        )
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "setup_intent_failed",
+                "message": str(exc),
+            },
+            status=500,
+        )
 
 @require_GET
 @login_required
