@@ -1572,7 +1572,7 @@ def updateRanking(request, ranking_id):
     })
 
 
-
+@staff_member_required(login_url="/signin/")
 def catalog_inspector(request):
     base_url = "https://api-colombia.universidad.top/course-information"
 
@@ -8130,6 +8130,7 @@ def _ingest_by_resource(resource: str, payload: dict, provider: str | None = Non
     raise ValueError(f"Unsupported ingestion resource: {resource}")
 
 
+@staff_member_required(login_url="/signin/")
 @csrf_exempt
 @require_POST
 def api_run_courses_sync(request):
@@ -17277,6 +17278,7 @@ class AccountCVLastAnalysisAPIView(APIView):
             status=status.HTTP_200_OK,
         )
 
+@staff_member_required(login_url="/signin/")
 @require_GET
 def debug_free_preview_catalog(request):
     """
