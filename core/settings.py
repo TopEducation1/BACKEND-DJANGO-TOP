@@ -293,8 +293,13 @@ MEDIA_URL = "/media/"
 
 MEDIA_ROOT = os.getenv(
     "MEDIA_ROOT",
-    os.path.join(BASE_DIR, "media")
+    os.getenv(
+        "RAILWAY_VOLUME_MOUNT_PATH",
+        os.path.join(BASE_DIR, "media"),
+    ),
 )
+
+CKEDITOR_UPLOAD_PATH = "uploads/"
 
 CKEDITOR_UPLOAD_PATH = "uploads/"
 
