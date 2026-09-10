@@ -1,9 +1,9 @@
 from django.contrib.sitemaps import views as sitemap_views
+from django.urls import path, include, re_path
+from django.views.static import serve
 
-from django.urls import path, include
 from .views import *
 from . import views
-
 
 from django.contrib.auth.decorators import login_required
 from django.conf import settings
@@ -15,68 +15,317 @@ from .account_views import account_me, account_purchases
 
 
 urlpatterns = [
-    path('',login_required(views.dashboard,login_url='/signin/'), name='inicio'),
+    path('', login_required(views.dashboard, login_url='/signin/'), name='inicio'),
     path("select2/", include("django_select2.urls")),
-    path('dashboard/',login_required(views.dashboard,login_url='/signin/'), name='dashboard'),
-    path("api/auth/csrf/", csrf_token_view, name="auth-csrf",),
-    path('signin/',views.signin, name='signin'),
-    path('logout/',views.signout, name='logout'),
-    path('certifications/',login_required(views.certifications,login_url='/signin/'), name='certifications'),
-    path('certifications/upload/',login_required(views.upload,login_url='/signin/'), name='upload'),
-    path( 'certifications/create/', login_required( views.createCertification, login_url='/signin/' ),name='createCertification'),
-    path('certifications/<int:certification_id>/update/',login_required(views.updateCertification,login_url='/signin/'), name='updateCertification'),
-    path('certifications/<int:certification_id>/delete/',login_required(views.deleteCertification,login_url='/signin/'), name='deleteCertification'),
-    path('posts/create/',login_required(views.createPost,login_url='/signin/'), name='createPost'),
-    path('posts/',login_required(views.posts,login_url='/signin/'), name='posts'),
-    path('posts/<int:post_id>/update/',login_required(views.updatePost,login_url='/signin/'), name='updatePost'),
-    path('posts/<int:post_id>/delete/',login_required(views.deletePost,login_url='/signin/'), name='deletePost'),
-    
-    path('category/',login_required(views.categories,login_url='/signin/'), name='categories'),
-    path('category/universities/',login_required(views.universities,login_url='/signin/'), name='universities'),
-    path('category/universities/<int:university_id>/update/',login_required(views.updateUniversity,login_url='/signin/'), name='updateUniversity'),
-    path('category/universities/create/',login_required(views.createUniversity,login_url='/signin/'), name='createUniversity'),
-     path('category/platforms/',login_required(views.platforms,login_url='/signin/'), name='platforms'),
-    path('category/platforms/<int:platform_id>/update/',login_required(views.updatePlatform,login_url='/signin/'), name='updatePlatform'),
-    path('category/platforms/create/',login_required(views.createPlatform,login_url='/signin/'), name='createPlatform'),
-    path('category/companies/',login_required(views.companies,login_url='/signin/'), name='companies'),
-    path('category/companies/<int:company_id>/update/',login_required(views.updateCompany,login_url='/signin/'), name='updateCompany'),
-    path('category/companies/create/',login_required(views.createCompany,login_url='/signin/'), name='createCompany'),
-    path('category/topics/',login_required(views.topics,login_url='/signin/'), name='topics'),
-    path('category/topics/<int:topic_id>/update/',login_required(views.updateTopic,login_url='/signin/'), name='updateTopic'),
-    path('category/topics/create/',login_required(views.createTopic,login_url='/signin/'), name='createTopic'),
-    path("category/skills/", login_required( views.skills, login_url='/signin/'),name="skills"),
-    path( "category/skills/create/", login_required( views.createSkill, login_url='/signin/'), name="create-skill"),
-    path("category/skills/<int:skill_id>/update/", views.updateSkill, name="update-skill"),
-    path("category/skills/<int:skill_id>/update/", login_required( views.updateSkill, login_url='/signin/'),name="update-skill"),
-    path('category/tags/',login_required(views.tags,login_url='/signin/'), name='tags'),
-    path('category/tags/<int:tag_id>/update/',login_required(views.updateTag,login_url='/signin/'), name='updateTag'),
-    path('category/tags/create/',login_required(views.createTag,login_url='/signin/'), name='createTag'),
-    path('category/rankings/',login_required(views.rankings,login_url='/signin/'), name='rankings'),
-    path('category/rankings/<int:ranking_id>/update/',login_required(views.updateRanking,login_url='/signin/'), name='updateRanking'),
-    path('category/rankings/create/',login_required(views.createRanking,login_url='/signin/'), name='createRanking'),
-    path('category/originals/',login_required(views.originals,login_url='/signin/'), name='originals'),
-    path('category/originals/<int:original_id>/update/',login_required(views.updateOriginal,login_url='/signin/'), name='updateOriginal'),
-    path('category/originals/create/',login_required(views.createOriginal,login_url='/signin/'), name='createOriginal'),
-    path("category/originals/certifications/search/",search_original_certifications,name="search_original_certifications",),
+    path('dashboard/', login_required(views.dashboard, login_url='/signin/'), name='dashboard'),
+
+    path("api/auth/csrf/", csrf_token_view, name="auth-csrf"),
+    path('signin/', views.signin, name='signin'),
+    path('logout/', views.signout, name='logout'),
+
+    # ============================================================
+    # CERTIFICACIONES ADMIN
+    # ============================================================
+
+    path(
+        'certifications/',
+        login_required(views.certifications, login_url='/signin/'),
+        name='certifications'
+    ),
+
+    path(
+        'certifications/upload/',
+        login_required(views.upload, login_url='/signin/'),
+        name='upload'
+    ),
+
+    path(
+        'certifications/create/',
+        login_required(views.createCertification, login_url='/signin/'),
+        name='createCertification'
+    ),
+
+    path(
+        'certifications/<int:certification_id>/update/',
+        login_required(views.updateCertification, login_url='/signin/'),
+        name='updateCertification'
+    ),
+
+    path(
+        'certifications/<int:certification_id>/delete/',
+        login_required(views.deleteCertification, login_url='/signin/'),
+        name='deleteCertification'
+    ),
+
+    # ============================================================
+    # BLOGS ADMIN
+    # ============================================================
+
+    path(
+        'posts/create/',
+        login_required(views.createPost, login_url='/signin/'),
+        name='createPost'
+    ),
+
+    path(
+        'posts/',
+        login_required(views.posts, login_url='/signin/'),
+        name='posts'
+    ),
+
+    path(
+        'posts/<int:post_id>/update/',
+        login_required(views.updatePost, login_url='/signin/'),
+        name='updatePost'
+    ),
+
+    path(
+        'posts/<int:post_id>/delete/',
+        login_required(views.deletePost, login_url='/signin/'),
+        name='deletePost'
+    ),
+
+    # ============================================================
+    # CATEGORÍAS ADMIN
+    # ============================================================
+
+    path(
+        'category/',
+        login_required(views.categories, login_url='/signin/'),
+        name='categories'
+    ),
+
+    path(
+        'category/universities/',
+        login_required(views.universities, login_url='/signin/'),
+        name='universities'
+    ),
+
+    path(
+        'category/universities/<int:university_id>/update/',
+        login_required(views.updateUniversity, login_url='/signin/'),
+        name='updateUniversity'
+    ),
+
+    path(
+        'category/universities/create/',
+        login_required(views.createUniversity, login_url='/signin/'),
+        name='createUniversity'
+    ),
+
+    path(
+        'category/platforms/',
+        login_required(views.platforms, login_url='/signin/'),
+        name='platforms'
+    ),
+
+    path(
+        'category/platforms/<int:platform_id>/update/',
+        login_required(views.updatePlatform, login_url='/signin/'),
+        name='updatePlatform'
+    ),
+
+    path(
+        'category/platforms/create/',
+        login_required(views.createPlatform, login_url='/signin/'),
+        name='createPlatform'
+    ),
+
+    path(
+        'category/companies/',
+        login_required(views.companies, login_url='/signin/'),
+        name='companies'
+    ),
+
+    path(
+        'category/companies/<int:company_id>/update/',
+        login_required(views.updateCompany, login_url='/signin/'),
+        name='updateCompany'
+    ),
+
+    path(
+        'category/companies/create/',
+        login_required(views.createCompany, login_url='/signin/'),
+        name='createCompany'
+    ),
+
+    path(
+        'category/topics/',
+        login_required(views.topics, login_url='/signin/'),
+        name='topics'
+    ),
+
+    path(
+        'category/topics/<int:topic_id>/update/',
+        login_required(views.updateTopic, login_url='/signin/'),
+        name='updateTopic'
+    ),
+
+    path(
+        'category/topics/create/',
+        login_required(views.createTopic, login_url='/signin/'),
+        name='createTopic'
+    ),
+
+    path(
+        "category/skills/",
+        login_required(views.skills, login_url='/signin/'),
+        name="skills"
+    ),
+
+    path(
+        "category/skills/create/",
+        login_required(views.createSkill, login_url='/signin/'),
+        name="create-skill"
+    ),
+
+    path(
+        "category/skills/<int:skill_id>/update/",
+        login_required(views.updateSkill, login_url='/signin/'),
+        name="update-skill"
+    ),
+
+    path(
+        'category/tags/',
+        login_required(views.tags, login_url='/signin/'),
+        name='tags'
+    ),
+
+    path(
+        'category/tags/<int:tag_id>/update/',
+        login_required(views.updateTag, login_url='/signin/'),
+        name='updateTag'
+    ),
+
+    path(
+        'category/tags/create/',
+        login_required(views.createTag, login_url='/signin/'),
+        name='createTag'
+    ),
+
+    path(
+        'category/rankings/',
+        login_required(views.rankings, login_url='/signin/'),
+        name='rankings'
+    ),
+
+    path(
+        'category/rankings/<int:ranking_id>/update/',
+        login_required(views.updateRanking, login_url='/signin/'),
+        name='updateRanking'
+    ),
+
+    path(
+        'category/rankings/create/',
+        login_required(views.createRanking, login_url='/signin/'),
+        name='createRanking'
+    ),
+
+    path(
+        'category/originals/',
+        login_required(views.originals, login_url='/signin/'),
+        name='originals'
+    ),
+
+    path(
+        'category/originals/<int:original_id>/update/',
+        login_required(views.updateOriginal, login_url='/signin/'),
+        name='updateOriginal'
+    ),
+
+    path(
+        'category/originals/create/',
+        login_required(views.createOriginal, login_url='/signin/'),
+        name='createOriginal'
+    ),
+
+    path(
+        "category/originals/certifications/search/",
+        search_original_certifications,
+        name="search_original_certifications"
+    ),
+
+    # ============================================================
+    # APIs PÚBLICAS
+    # ============================================================
+
     path('certificaciones/', CertificationList.as_view(), name='certifications_list'),
     path('skills/', SkillsList.as_view(), name='skills_list'),
     path('universities/', UniversitiesList.as_view(), name='universities_list'),
     path('topics/', TopicsList.as_view(), name='topics_list'),
     path('api/searchTags/', receive_tags, name='receive_tags'),
-    path('certificacion/<slug:slug>/', CertificationDetailView.as_view(), name='get-certification'),
-    path("certificaciones/languages/", CertificationLanguagesList.as_view(), name="certification-languages"),
-    path('certificaciones/filter/', filter_by_tags.as_view()    , name='filter-by-tags'),
-    path('certificaciones/busqueda/', filter_by_search.as_view(), name='filter_by_search'),
-    path("certificaciones/busqueda-rapida/", QuickCertificationSearchAPIView.as_view(), name="certificaciones_busqueda_rapida",),
-    path('certificacionesInterest/', CertificationsCafam.as_view(), name="certificaciones_interest"),
-    path('cafam/certificacion/<slug:slug>/', CertificationDetailView.as_view(), name='get-certification'),
+
+    path(
+        'certificacion/<slug:slug>/',
+        CertificationDetailView.as_view(),
+        name='get-certification'
+    ),
+
+    path(
+        "certificaciones/languages/",
+        CertificationLanguagesList.as_view(),
+        name="certification-languages"
+    ),
+
+    path(
+        'certificaciones/filter/',
+        filter_by_tags.as_view(),
+        name='filter-by-tags'
+    ),
+
+    path(
+        'certificaciones/busqueda/',
+        filter_by_search.as_view(),
+        name='filter_by_search'
+    ),
+
+    path(
+        "certificaciones/busqueda-rapida/",
+        QuickCertificationSearchAPIView.as_view(),
+        name="certificaciones_busqueda_rapida"
+    ),
+
+    path(
+        'certificacionesInterest/',
+        CertificationsCafam.as_view(),
+        name="certificaciones_interest"
+    ),
+
+    path(
+        'cafam/certificacion/<slug:slug>/',
+        CertificationDetailView.as_view(),
+        name='get-certification-cafam'
+    ),
+
     path('blogs/', BlogList.as_view(), name="blog-list"),
     path('blog/<slug:slug>/', BlogDetailView.as_view(), name="get-blog"),
-    path('masterclass-certificaciones-grid/', MasterclassCertificationsGrids.as_view(), name="masterclass-certificaciones-grid/"),
-    path( "certificaciones/suggested-grid/", SuggestedCertificationsGrid.as_view(), name="suggested-certifications-grid"),
-    path("certificaciones/<slug:slug>/related-grid/", RelatedCertificationsGrid.as_view(), name="related-certifications-grid"),
-    path('documents/<str:nombre_archivo>/', views.descargar_excel, name='descargar_excel'),
+
+    path(
+        'masterclass-certificaciones-grid/',
+        MasterclassCertificationsGrids.as_view(),
+        name="masterclass-certificaciones-grid"
+    ),
+
+    path(
+        "certificaciones/suggested-grid/",
+        SuggestedCertificationsGrid.as_view(),
+        name="suggested-certifications-grid"
+    ),
+
+    path(
+        "certificaciones/<slug:slug>/related-grid/",
+        RelatedCertificationsGrid.as_view(),
+        name="related-certifications-grid"
+    ),
+
+    path(
+        'documents/<str:nombre_archivo>/',
+        views.descargar_excel,
+        name='descargar_excel'
+    ),
+
     path('error-404/', error_404),
+
     path('api/universities/', UniversitiesList.as_view(), name='universities-list'),
     path('api/universities-by-region/', UniversitiesByRegion.as_view(), name='universities-by-region'),
     path('api/topics/', TopicsList.as_view(), name='topics-list'),
@@ -86,64 +335,284 @@ urlpatterns = [
     path('api/companies/', CompaniesList.as_view(), name='companies-list'),
     path('api/originals/', OriginalsList.as_view(), name='originals-list'),
     path('api/rankings/', RankingsList.as_view(), name='rankings-list'),
+
     path("api/filters/skills/", SkillsFilterMiniView.as_view()),
     path("api/filters/companies/", CompaniesFilterMiniView.as_view()),
     path("api/filters/platforms/", PlatformsFilterMiniView.as_view()),
     path("api/filters/universities-by-region/", UniversitiesByRegionMiniView.as_view()),
-    path("api/recommendations/", PersonalizedRecommendations.as_view(), name="personalized-recommendations"),
-    path("api/learning-route/recommendations/", LearningRouteRecommendationsAPIView.as_view(), name="learning_route_recommendations",),
-    path("api/account/cv/analyze/", AccountCVAnalysisAPIView.as_view(), name="account_cv_analyze",),
-    path("api/account/cv/last-analysis/", AccountCVLastAnalysisAPIView.as_view(), name="account_cv_last_analysis",),
-    path("api/account/career-plan/", AccountCareerPlanAPIView.as_view(), name="account-career-plan",),
-    path("api/account/available-courses/", AccountAvailableCoursesAPIView.as_view(),name="account-available-courses",),
+
+    path(
+        "api/recommendations/",
+        PersonalizedRecommendations.as_view(),
+        name="personalized-recommendations"
+    ),
+
+    path(
+        "api/learning-route/recommendations/",
+        LearningRouteRecommendationsAPIView.as_view(),
+        name="learning_route_recommendations"
+    ),
+
+    # ============================================================
+    # ACCOUNT
+    # ============================================================
+
+    path("api/account/cv/analyze/", AccountCVAnalysisAPIView.as_view(), name="account_cv_analyze"),
+    path("api/account/cv/last-analysis/", AccountCVLastAnalysisAPIView.as_view(), name="account_cv_last_analysis"),
+    path("api/account/career-plan/", AccountCareerPlanAPIView.as_view(), name="account-career-plan"),
+    path("api/account/available-courses/", AccountAvailableCoursesAPIView.as_view(), name="account-available-courses"),
+
     path("originals/slider/", OriginalsSliderView.as_view(), name="originals-slider"),
-    
-    path('originals/<slug:slug>/', OriginalDetailView.as_view(), name='original-detail'),
-    path('ranking/<slug:slug>/', RankingDetailView.as_view(), name='ranking-detail'),
-    path("api/rankings/<str:slug>/preview/", RankingPreviewView.as_view(), name="ranking-preview",),
-    path('api/latest-certifications/', LatestCertificationsView.as_view(), name='latest_certifications'),
+
+    path(
+        'originals/<slug:slug>/',
+        OriginalDetailView.as_view(),
+        name='original-detail'
+    ),
+
+    path(
+        'ranking/<slug:slug>/',
+        RankingDetailView.as_view(),
+        name='ranking-detail'
+    ),
+
+    path(
+        "api/rankings/<str:slug>/preview/",
+        RankingPreviewView.as_view(),
+        name="ranking-preview"
+    ),
+
+    path(
+        'api/latest-certifications/',
+        LatestCertificationsView.as_view(),
+        name='latest_certifications'
+    ),
+
+    # ============================================================
+    # WHITE LABEL
+    # ============================================================
+
     path("brand/", views.brand_list, name="brand_list"),
     path("brand/new/", views.brand_update, name="brand_create"),
     path("brand/<int:marca_id>/update/", views.brand_update, name="brand_update"),
     path("brand/<int:marca_id>/settings/", views.brand_settings, name="brand_settings"),
-    path("api/brand/<slug:slug>/", MarcaPublicBySlugView.as_view(), name="brand_public_slug"),
-    path("sitemap.xml", sitemap_views.index, {"sitemaps": sitemaps},name="sitemap-index",),
-    path("sitemap-<section>.xml", sitemap_views.sitemap, {"sitemaps": sitemaps},name="sitemap-section",),
+
+    path(
+        "api/brand/<slug:slug>/",
+        MarcaPublicBySlugView.as_view(),
+        name="brand_public_slug"
+    ),
+
+    # ============================================================
+    # SITEMAP
+    # ============================================================
+
+    path(
+        "sitemap.xml",
+        sitemap_views.index,
+        {"sitemaps": sitemaps},
+        name="sitemap-index"
+    ),
+
+    path(
+        "sitemap-<section>.xml",
+        sitemap_views.sitemap,
+        {"sitemaps": sitemaps},
+        name="sitemap-section"
+    ),
+
+    # ============================================================
+    # CKEDITOR
+    # ============================================================
+
     path("ckeditor/", include("ckeditor_uploader.urls")),
+
+    # ============================================================
+    # INSPECTOR / SYNC
+    # ============================================================
+
     path("inspector/catalog/", views.catalog_inspector, name="catalog_inspector"),
-    path("bussines/purchases/", login_required(views.admin_purchases_page, login_url="/signin/"),name="admin_purchases_page"),
+
+    path(
+        "bussines/purchases/",
+        login_required(
+            views.admin_purchases_page,
+            login_url="/signin/"
+        ),
+        name="admin_purchases_page"
+    ),
+
     path("api/proxy/", views.proxy_json, name="proxy_json"),
     path("api/proxy/courses/", views.proxy_json, name="proxy_courses"),
     path("api/sync/courses/run/", api_run_courses_sync, name="api_run_courses_sync"),
-    #path("api/sync/courses/", views.sync_courses_from_external, name="sync_courses_from_external"),
-    path("api/stripe/create-checkout-session/", views.create_checkout_session, name="create_checkout_session"),
-    path('api/stripe/webhook/', views.stripe_webhook, name='stripe_webhook'),
-    path("api/stripe/sync-session/", views.stripe_sync_session, name="stripe_sync_session"),
+
+    # ============================================================
+    # STRIPE
+    # ============================================================
+
+    path(
+        "api/stripe/create-checkout-session/",
+        views.create_checkout_session,
+        name="create_checkout_session"
+    ),
+
+    path(
+        'api/stripe/webhook/',
+        views.stripe_webhook,
+        name='stripe_webhook'
+    ),
+
+    path(
+        "api/stripe/sync-session/",
+        views.stripe_sync_session,
+        name="stripe_sync_session"
+    ),
+
     path("api/account/purchases/", account_purchases, name="account_purchases"),
+
+    # ============================================================
+    # AUTH
+    # ============================================================
+
     path("api/auth/register/", views.auth_register, name="auth_register"),
     path("api/auth/login/", views.auth_login, name="auth_login"),
     path("api/auth/logout/", views.auth_logout, name="auth_logout"),
     path("api/account/me/", views.account_me, name="account_me"),
+
     path("api/billing/invoices/", views.billing_invoices_list),
     path("api/billing/portal/", views.billing_portal_session),
     path("api/account/mx/magic-link/refresh/", views.mx_magic_link_refresh),
-    path("api/billing/subscription/reactivate/", views.billing_subscription_reactivate),
-    path("api/auth/password/reset/", views.auth_password_reset_request, name="auth_password_reset_request"),
-    path("api/auth/password/reset/confirm/", views.auth_password_reset_confirm, name="auth_password_reset_confirm"),
-    path("api/admin/purchases/",login_required(views.admin_purchases_api, login_url="/signin/"),name="admin_purchases_api"),
-    path("api/learning-route/create/", LearningRouteCreateView.as_view()),
-    path("api/learning-route/free-signup/", LearningRouteFreeSignupView.as_view()),
-    path("api/billing/setup-intent/", billing_setup_intent),
-    path("api/billing/payment-methods/", billing_payment_methods_list),
-    path("api/billing/payment-methods/create/", billing_payment_methods_create),
-    path("api/billing/payment-methods/<int:method_id>/default/", billing_payment_method_set_default),
-    path("api/billing/subscriptions/create/", billing_subscription_create),
-    path("api/billing/subscription/cancel/", views.billing_subscription_cancel,),
-    path("api/billing/subscription/change-plan/",views.billing_subscription_change_plan,name="billing_subscription_change_plan",),
-    path("api/billing/payment-methods/<int:method_id>/delete/",views.billing_payment_method_delete,name="billing_payment_method_delete",),
-    path("api/learning-route/complete-signup/",LearningRouteCompleteSignupView.as_view(), name="learning_route_complete_signup",),
-    path("debug/free-preview-catalog/", views.debug_free_preview_catalog,name="debug_free_preview_catalog",),
 
-] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    path(
+        "api/billing/subscription/reactivate/",
+        views.billing_subscription_reactivate
+    ),
+
+    path(
+        "api/auth/password/reset/",
+        views.auth_password_reset_request,
+        name="auth_password_reset_request"
+    ),
+
+    path(
+        "api/auth/password/reset/confirm/",
+        views.auth_password_reset_confirm,
+        name="auth_password_reset_confirm"
+    ),
+
+    path(
+        "api/admin/purchases/",
+        login_required(
+            views.admin_purchases_api,
+            login_url="/signin/"
+        ),
+        name="admin_purchases_api"
+    ),
+
+    # ============================================================
+    # LEARNING ROUTE / BILLING
+    # ============================================================
+
+    path(
+        "api/learning-route/create/",
+        LearningRouteCreateView.as_view()
+    ),
+
+    path(
+        "api/learning-route/free-signup/",
+        LearningRouteFreeSignupView.as_view()
+    ),
+
+    path(
+        "api/billing/setup-intent/",
+        billing_setup_intent
+    ),
+
+    path(
+        "api/billing/payment-methods/",
+        billing_payment_methods_list
+    ),
+
+    path(
+        "api/billing/payment-methods/create/",
+        billing_payment_methods_create
+    ),
+
+    path(
+        "api/billing/payment-methods/<int:method_id>/default/",
+        billing_payment_method_set_default
+    ),
+
+    path(
+        "api/billing/subscriptions/create/",
+        billing_subscription_create
+    ),
+
+    path(
+        "api/billing/subscription/cancel/",
+        views.billing_subscription_cancel
+    ),
+
+    path(
+        "api/billing/subscription/change-plan/",
+        views.billing_subscription_change_plan,
+        name="billing_subscription_change_plan"
+    ),
+
+    path(
+        "api/billing/payment-methods/<int:method_id>/delete/",
+        views.billing_payment_method_delete,
+        name="billing_payment_method_delete"
+    ),
+
+    path(
+        "api/learning-route/complete-signup/",
+        LearningRouteCompleteSignupView.as_view(),
+        name="learning_route_complete_signup"
+    ),
+
+    path(
+        "debug/free-preview-catalog/",
+        views.debug_free_preview_catalog,
+        name="debug_free_preview_catalog"
+    ),
+]
+
+
+# ============================================================
+# MEDIA FILES
+# ============================================================
+#
+# IMPORTANTE:
+# MEDIA_ROOT apunta al Railway Volume, por ejemplo:
+#
+# /data/media
+#
+# Con DEBUG=False necesitamos resolver /media/... explícitamente
+# mientras usamos esta arquitectura.
+#
+
+urlpatterns += [
+    re_path(
+        r"^media/(?P<path>.*)$",
+        serve,
+        {
+            "document_root": settings.MEDIA_ROOT,
+        },
+    ),
+]
+
+
+# ============================================================
+# STATIC FILES
+# ============================================================
+#
+# WhiteNoise maneja STATIC en producción.
+# Este bloque solo es necesario durante desarrollo.
+#
+
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(
+        settings.STATIC_URL,
+        document_root=settings.STATIC_ROOT,
+    )
