@@ -4492,29 +4492,34 @@ def get_filter_ids(filters, *keys):
 
 class filter_by_search(APIView):
     """
-    Búsqueda rápida para el explorador.
+    Buscador rápido de certificaciones.
 
-    Estrategia:
+    Busca por:
 
-    1. La consulta pesada de Certificaciones se mantiene liviana.
-    2. Universidad / empresa / plataforma / tema / skills
-       se resuelven primero a IDs.
-    3. La consulta principal trabaja principalmente con FKs e IDs.
-    4. Se obtienen únicamente los IDs de las primeras coincidencias.
-    5. Solo después se hidratan las cards completas.
+    1. Título de certificación
+    2. Skills.nombre
+    3. Skills.translate
+    4. Universidad
+    5. Empresa
+    6. Plataforma
+
+    La búsqueda se hace por fases y únicamente se hidratan
+    las certificaciones finales.
+
+    Esto evita el OR gigante con JOINs que teníamos antes.
     """
 
     MIN_SEARCH_LENGTH = 2
     DEFAULT_LIMIT = 12
     MAX_LIMIT = 24
 
-    # Evita traer cientos de entidades auxiliares cuando el usuario
-    # escribe algo muy genérico, por ejemplo "de".
-    AUX_MATCH_LIMIT = 40
+    # Cantidad máxima de entidades auxiliares a resolver
+    # para términos cortos como "IA", "UX", "de", etc.
+    ENTITY_MATCH_LIMIT = 30
 
     def post(self, request):
         # =========================================================
-        # TEXTO
+        # QUERY
         # =========================================================
 
         query_string = str(
@@ -4553,7 +4558,7 @@ class filter_by_search(APIView):
         )
 
         # =========================================================
-        # FILTROS
+        # FILTROS DEL FRONT
         # =========================================================
 
         filters = (
@@ -4563,7 +4568,7 @@ class filter_by_search(APIView):
 
         try:
             # =====================================================
-            # LEER FILTROS DE TEXTO
+            # FILTROS DE TEXTO
             # =====================================================
 
             idioma_values = get_filter_values(
@@ -4582,6 +4587,7 @@ class filter_by_search(APIView):
 
             empresa_values = get_filter_values(
                 filters,
+                "empresa",
                 "empresas",
                 "Empresa",
                 "Empresas",
@@ -4589,19 +4595,28 @@ class filter_by_search(APIView):
 
             universidad_values = get_filter_values(
                 filters,
+                "universidad",
                 "universidades",
                 "Universidad",
                 "Universidades",
             )
 
+            # =====================================================
+            # IMPORTANTE
+            #
+            # temas y habilidades ahora son Skills.
+            # =====================================================
+
             tema_values = get_filter_values(
                 filters,
+                "tema",
                 "temas",
                 "Tema",
             )
 
             habilidad_values = get_filter_values(
                 filters,
+                "habilidad",
                 "habilidades",
                 "Habilidad",
             )
@@ -4621,71 +4636,46 @@ class filter_by_search(APIView):
             )
 
             # =====================================================
-            # LEER IDS
+            # IDS
             # =====================================================
 
             plataforma_ids = get_filter_ids(
                 filters,
-                "plataforma",
                 "plataforma_id",
+                "platform_id",
             )
 
             empresa_ids = get_filter_ids(
                 filters,
-                "empresas",
                 "empresa_id",
+                "company_id",
             )
 
             universidad_ids = get_filter_ids(
                 filters,
-                "universidades",
                 "universidad_id",
+                "university_id",
             )
 
             tema_ids = get_filter_ids(
                 filters,
-                "temas",
                 "tema_id",
             )
 
             habilidad_ids = get_filter_ids(
                 filters,
-                "habilidades",
                 "habilidad_id",
                 "skill_id",
             )
 
             # =====================================================
-            # NORMALIZAR
+            # NORMALIZACIÓN
             # =====================================================
 
-            plataforma_ids = (
-                normalize_explore_filter_ids(
-                    plataforma_ids
-                )
-            )
-
-            empresa_ids = (
-                normalize_explore_filter_ids(
-                    empresa_ids
-                )
-            )
-
-            universidad_ids = (
-                normalize_explore_filter_ids(
-                    universidad_ids
-                )
-            )
-
-            tema_ids = (
-                normalize_explore_filter_ids(
-                    tema_ids
-                )
-            )
-
-            habilidad_ids = (
-                normalize_explore_filter_ids(
-                    habilidad_ids
+            idioma_values = (
+                normalize_explore_filter_strings(
+                    idioma_values,
+                    lower=True,
                 )
             )
 
@@ -4721,13 +4711,6 @@ class filter_by_search(APIView):
                 )
             )
 
-            idioma_values = (
-                normalize_explore_filter_strings(
-                    idioma_values,
-                    lower=True,
-                )
-            )
-
             tipo_values = (
                 normalize_explore_filter_strings(
                     tipo_values
@@ -4740,8 +4723,38 @@ class filter_by_search(APIView):
                 )
             )
 
+            plataforma_ids = (
+                normalize_explore_filter_ids(
+                    plataforma_ids
+                )
+            )
+
+            empresa_ids = (
+                normalize_explore_filter_ids(
+                    empresa_ids
+                )
+            )
+
+            universidad_ids = (
+                normalize_explore_filter_ids(
+                    universidad_ids
+                )
+            )
+
+            tema_ids = (
+                normalize_explore_filter_ids(
+                    tema_ids
+                )
+            )
+
+            habilidad_ids = (
+                normalize_explore_filter_ids(
+                    habilidad_ids
+                )
+            )
+
             # =====================================================
-            # SKILLS DE FILTROS ACTIVOS
+            # SKILLS ACTIVAS COMO FILTROS
             # =====================================================
 
             selected_skill_ids = (
@@ -4759,174 +4772,20 @@ class filter_by_search(APIView):
                 )
             )
 
-            # Si el frontend ya envía IDs, no necesitamos
-            # resolver nuevamente slugs.
+            # Si tenemos IDs, no necesitamos resolver slugs.
             if selected_skill_ids:
                 selected_skill_slugs = []
 
             # =====================================================
-            # RESOLVER COINCIDENCIAS DEL TEXTO
+            # QUERYSET BASE
             # =====================================================
             #
-            # MUY IMPORTANTE:
-            #
-            # Antes la búsqueda principal hacía algo como:
-            #
-            # Certificaciones
-            #   JOIN Universidad
-            #   JOIN Empresa
-            #   JOIN Plataforma
-            #   JOIN Tema
-            #   JOIN SkillsCertification
-            #   JOIN Skills
-            #
-            # todo dentro de un OR gigante.
-            #
-            # Ahora primero buscamos IDs en cada tabla pequeña.
+            # Este queryset NO carga imágenes, skills,
+            # universidades, empresas ni plataformas.
             #
             # =====================================================
 
-            # -----------------------------------------------------
-            # TEMAS
-            # -----------------------------------------------------
-
-            search_topic_ids = list(
-                Temas.objects
-                .filter(
-                    Q(
-                        nombre__icontains=
-                        query_string
-                    )
-                    |
-                    Q(
-                        translate__icontains=
-                        query_string
-                    )
-                )
-                .values_list(
-                    "id",
-                    flat=True,
-                )[
-                    :self.AUX_MATCH_LIMIT
-                ]
-            )
-
-            # -----------------------------------------------------
-            # UNIVERSIDADES
-            # -----------------------------------------------------
-
-            search_university_ids = list(
-                Universidades.objects
-                .filter(
-                    nombre__icontains=
-                    query_string
-                )
-                .values_list(
-                    "id",
-                    flat=True,
-                )[
-                    :self.AUX_MATCH_LIMIT
-                ]
-            )
-
-            # -----------------------------------------------------
-            # EMPRESAS
-            # -----------------------------------------------------
-
-            search_company_ids = list(
-                Empresas.objects
-                .filter(
-                    nombre__icontains=
-                    query_string
-                )
-                .values_list(
-                    "id",
-                    flat=True,
-                )[
-                    :self.AUX_MATCH_LIMIT
-                ]
-            )
-
-            # -----------------------------------------------------
-            # PLATAFORMAS
-            # -----------------------------------------------------
-
-            search_platform_ids = list(
-                Plataformas.objects
-                .filter(
-                    nombre__icontains=
-                    query_string
-                )
-                .values_list(
-                    "id",
-                    flat=True,
-                )[
-                    :self.AUX_MATCH_LIMIT
-                ]
-            )
-
-            # -----------------------------------------------------
-            # SKILLS
-            # -----------------------------------------------------
-
-            search_skill_ids = list(
-                Skills.objects
-                .filter(
-                    estado=True
-                )
-                .filter(
-                    Q(
-                        nombre__icontains=
-                        query_string
-                    )
-                    |
-                    Q(
-                        translate__icontains=
-                        query_string
-                    )
-                )
-                .values_list(
-                    "id",
-                    flat=True,
-                )[
-                    :self.AUX_MATCH_LIMIT
-                ]
-            )
-
-            # =====================================================
-            # SUBQUERY CERTIFICACIONES POR SKILL
-            # =====================================================
-
-            if search_skill_ids:
-                search_skill_cert_ids = (
-                    SkillsCertification.objects
-                    .filter(
-                        skill_id__in=
-                        search_skill_ids
-                    )
-                    .values(
-                        "certificacion_id"
-                    )
-                )
-            else:
-                search_skill_cert_ids = None
-
-            # =====================================================
-            # QUERYSET PRINCIPAL
-            # =====================================================
-            #
-            # Sigue siendo deliberadamente LIVIANO.
-            #
-            # Aquí NO usamos:
-            #
-            # select_related
-            # prefetch_related
-            # serializer
-            # imágenes
-            #
-            # =====================================================
-
-            queryset = (
+            base_queryset = (
                 Certificaciones.objects
                 .filter(
                     vigente_certificacion=True
@@ -4976,296 +4835,744 @@ class filter_by_search(APIView):
                     )
                 )
 
-                queryset = queryset.filter(
-                    language_normalized__in=
-                    normalized_languages
-                )
+                if normalized_languages:
+                    base_queryset = (
+                        base_queryset.filter(
+                            language_normalized__in=
+                            normalized_languages
+                        )
+                    )
 
             else:
-                queryset = queryset.filter(
-                    language_normalized="es"
+                # Mantiene el comportamiento actual.
+                base_queryset = (
+                    base_queryset.filter(
+                        language_normalized="es"
+                    )
                 )
 
             # =====================================================
-            # FILTROS ACTIVOS
+            # FILTRO PLATAFORMA
             # =====================================================
 
-            # -----------------------------------------------------
-            # PLATAFORMA
-            # -----------------------------------------------------
-
             if plataforma_ids:
-                queryset = queryset.filter(
-                    plataforma_certificacion_id__in=
-                    plataforma_ids
+                base_queryset = (
+                    base_queryset.filter(
+                        plataforma_certificacion_id__in=
+                        plataforma_ids
+                    )
                 )
 
             elif plataforma_values:
-                platform_filter = Q()
+                query = Q()
 
                 for value in plataforma_values:
-                    platform_filter |= Q(
+                    query |= Q(
                         plataforma_certificacion__nombre__iexact=
                         value
                     )
 
-                queryset = queryset.filter(
-                    platform_filter
+                base_queryset = (
+                    base_queryset.filter(
+                        query
+                    )
                 )
 
-            # -----------------------------------------------------
-            # EMPRESA
-            # -----------------------------------------------------
+            # =====================================================
+            # FILTRO EMPRESA
+            # =====================================================
 
             if empresa_ids:
-                queryset = queryset.filter(
-                    empresa_certificacion_id__in=
-                    empresa_ids
+                base_queryset = (
+                    base_queryset.filter(
+                        empresa_certificacion_id__in=
+                        empresa_ids
+                    )
                 )
 
             elif empresa_values:
-                company_filter = Q()
+                query = Q()
 
                 for value in empresa_values:
-                    company_filter |= Q(
+                    query |= Q(
                         empresa_certificacion__nombre__iexact=
                         value
                     )
 
-                queryset = queryset.filter(
-                    company_filter
+                base_queryset = (
+                    base_queryset.filter(
+                        query
+                    )
                 )
 
-            # -----------------------------------------------------
-            # UNIVERSIDAD
-            # -----------------------------------------------------
+            # =====================================================
+            # FILTRO UNIVERSIDAD
+            # =====================================================
 
             if universidad_ids:
-                queryset = queryset.filter(
-                    universidad_certificacion_id__in=
-                    universidad_ids
+                base_queryset = (
+                    base_queryset.filter(
+                        universidad_certificacion_id__in=
+                        universidad_ids
+                    )
                 )
 
             elif universidad_values:
-                university_filter = Q()
+                query = Q()
 
                 for value in universidad_values:
-                    university_filter |= Q(
+                    query |= Q(
                         universidad_certificacion__nombre__iexact=
                         value
                     )
 
-                queryset = queryset.filter(
-                    university_filter
+                base_queryset = (
+                    base_queryset.filter(
+                        query
+                    )
                 )
 
-            # -----------------------------------------------------
+            # =====================================================
             # TIPO
-            # -----------------------------------------------------
+            # =====================================================
 
             if tipo_values:
-                queryset = queryset.filter(
-                    build_certification_type_q(
-                        tipo_values
+                base_queryset = (
+                    base_queryset.filter(
+                        build_certification_type_q(
+                            tipo_values
+                        )
                     )
                 )
 
-            # -----------------------------------------------------
+            # =====================================================
             # NIVEL
-            # -----------------------------------------------------
+            # =====================================================
 
             if nivel_values:
-                queryset = queryset.filter(
-                    build_certification_level_q(
-                        nivel_values
+                base_queryset = (
+                    base_queryset.filter(
+                        build_certification_level_q(
+                            nivel_values
+                        )
                     )
                 )
-
-            # -----------------------------------------------------
-            # TEMAS / HABILIDADES SELECCIONADAS
-            # -----------------------------------------------------
-            #
-            # Reutilizamos exactamente la optimización
-            # que ya hicimos para filter_by_tags.
-            #
-            # -----------------------------------------------------
-
-            queryset = apply_skills_domain_filter(
-                queryset,
-                skill_ids=selected_skill_ids,
-                skill_slugs=selected_skill_slugs,
-            )
 
             # =====================================================
-            # FILTRO DEL TEXTO DE BÚSQUEDA
-            # =====================================================
-            #
-            # A diferencia de la versión anterior, NO hacemos
-            # JOIN a todas las relaciones dentro de este OR.
-            #
+            # FILTROS POR SKILLS SELECCIONADAS
             # =====================================================
 
-            search_q = (
-                Q(
-                    nombre__icontains=
-                    query_string
-                )
-                |
-                Q(
-                    slug__icontains=
-                    query_string
-                )
-            )
-
-            if search_topic_ids:
-                search_q |= Q(
-                    tema_certificacion_id__in=
-                    search_topic_ids
-                )
-
-            if search_university_ids:
-                search_q |= Q(
-                    universidad_certificacion_id__in=
-                    search_university_ids
-                )
-
-            if search_company_ids:
-                search_q |= Q(
-                    empresa_certificacion_id__in=
-                    search_company_ids
-                )
-
-            if search_platform_ids:
-                search_q |= Q(
-                    plataforma_certificacion_id__in=
-                    search_platform_ids
-                )
-
-            if search_skill_cert_ids is not None:
-                search_q |= Q(
-                    id__in=Subquery(
-                        search_skill_cert_ids
-                    )
-                )
-
-            queryset = queryset.filter(
-                search_q
-            )
-
-            # =====================================================
-            # PRIORIDAD DE RESULTADOS
-            # =====================================================
-            #
-            # 1. Nombre comienza con búsqueda
-            # 2. Nombre contiene búsqueda
-            # 3. Skill
-            # 4. Tema
-            # 5. Universidad
-            # 6. Empresa
-            # 7. Plataforma
-            #
-            # =====================================================
-
-            priority_conditions = [
-                When(
-                    nombre__istartswith=
-                    query_string,
-                    then=Value(1),
-                ),
-                When(
-                    nombre__icontains=
-                    query_string,
-                    then=Value(2),
-                ),
-            ]
-
-            if search_skill_cert_ids is not None:
-                priority_conditions.append(
-                    When(
-                        id__in=Subquery(
-                            search_skill_cert_ids
-                        ),
-                        then=Value(3),
-                    )
-                )
-
-            if search_topic_ids:
-                priority_conditions.append(
-                    When(
-                        tema_certificacion_id__in=
-                        search_topic_ids,
-                        then=Value(4),
-                    )
-                )
-
-            if search_university_ids:
-                priority_conditions.append(
-                    When(
-                        universidad_certificacion_id__in=
-                        search_university_ids,
-                        then=Value(5),
-                    )
-                )
-
-            if search_company_ids:
-                priority_conditions.append(
-                    When(
-                        empresa_certificacion_id__in=
-                        search_company_ids,
-                        then=Value(6),
-                    )
-                )
-
-            if search_platform_ids:
-                priority_conditions.append(
-                    When(
-                        plataforma_certificacion_id__in=
-                        search_platform_ids,
-                        then=Value(7),
-                    )
-                )
-
-            queryset = (
-                queryset
-                .annotate(
-                    search_priority=Case(
-                        *priority_conditions,
-                        default=Value(99),
-                        output_field=
-                        IntegerField(),
-                    )
-                )
-                .order_by(
-                    "search_priority",
-                    "-fecha_creado_cert",
-                    "-id",
+            base_queryset = (
+                apply_skills_domain_filter(
+                    base_queryset,
+                    skill_ids=
+                        selected_skill_ids,
+                    skill_slugs=
+                        selected_skill_slugs,
                 )
             )
 
             # =====================================================
-            # SOLAMENTE IDS
+            # ACUMULADOR DE RESULTADOS
+            # =====================================================
+
+            result_ids = []
+            seen_ids = set()
+
+            def add_ids(ids):
+                """
+                Agrega IDs conservando prioridad y sin duplicados.
+                """
+
+                for certification_id in ids:
+                    try:
+                        certification_id = int(
+                            certification_id
+                        )
+                    except (
+                        TypeError,
+                        ValueError,
+                    ):
+                        continue
+
+                    if certification_id in seen_ids:
+                        continue
+
+                    seen_ids.add(
+                        certification_id
+                    )
+
+                    result_ids.append(
+                        certification_id
+                    )
+
+                    if len(result_ids) >= limit:
+                        break
+
+            def remaining():
+                return max(
+                    0,
+                    limit - len(result_ids),
+                )
+
+            # =====================================================
+            # FASE 1
+            #
+            # TÍTULO COMIENZA POR EL TEXTO
             # =====================================================
             #
-            # Este es el equivalente del patrón usado
-            # por filter_by_tags.
+            # "desarrollo"
             #
-            # No hidratamos el queryset grande.
+            # Desarrollo web...
+            # Desarrollo de software...
             #
             # =====================================================
 
-            ids = list(
-                queryset
-                .values_list(
-                    "id",
-                    flat=True,
-                )[:limit]
-            )
+            if remaining() > 0:
+                ids = (
+                    base_queryset
+                    .filter(
+                        nombre__istartswith=
+                        query_string
+                    )
+                    .order_by(
+                        "-fecha_creado_cert",
+                        "-id",
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :remaining()
+                    ]
+                )
+
+                add_ids(ids)
+
+            # =====================================================
+            # FASE 2
+            #
+            # SKILL EXACTA
+            # =====================================================
+            #
+            # Especialmente importante:
+            #
+            # IA
+            # UX
+            # SEO
+            # SQL
+            #
+            # =====================================================
+
+            if remaining() > 0:
+                exact_skill_ids = list(
+                    Skills.objects
+                    .filter(
+                        estado=True
+                    )
+                    .filter(
+                        Q(
+                            nombre__iexact=
+                            query_string
+                        )
+                        |
+                        Q(
+                            translate__iexact=
+                            query_string
+                        )
+                        |
+                        Q(
+                            slug__iexact=
+                            slugify(
+                                query_string
+                            )
+                        )
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :self.ENTITY_MATCH_LIMIT
+                    ]
+                )
+
+                if exact_skill_ids:
+                    cert_ids = (
+                        SkillsCertification.objects
+                        .filter(
+                            skill_id__in=
+                            exact_skill_ids,
+                            certificacion_id__in=
+                            base_queryset.values(
+                                "id"
+                            ),
+                        )
+                        .order_by(
+                            "orden",
+                            "-certificacion_id",
+                        )
+                        .values_list(
+                            "certificacion_id",
+                            flat=True,
+                        )
+                        .distinct()[
+                            :remaining()
+                        ]
+                    )
+
+                    add_ids(
+                        cert_ids
+                    )
+
+            # =====================================================
+            # FASE 3
+            #
+            # SKILL COMIENZA POR TEXTO
+            # =====================================================
+            #
+            # "dise"
+            #
+            # Diseño
+            # Diseño gráfico
+            # Diseño UX
+            #
+            # =====================================================
+
+            if remaining() > 0:
+                prefix_skill_ids = list(
+                    Skills.objects
+                    .filter(
+                        estado=True
+                    )
+                    .filter(
+                        Q(
+                            nombre__istartswith=
+                            query_string
+                        )
+                        |
+                        Q(
+                            translate__istartswith=
+                            query_string
+                        )
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :self.ENTITY_MATCH_LIMIT
+                    ]
+                )
+
+                if prefix_skill_ids:
+                    cert_ids = (
+                        base_queryset
+                        .filter(
+                            id__in=Subquery(
+                                SkillsCertification.objects
+                                .filter(
+                                    skill_id__in=
+                                    prefix_skill_ids
+                                )
+                                .values(
+                                    "certificacion_id"
+                                )
+                            )
+                        )
+                        .exclude(
+                            id__in=
+                            result_ids
+                        )
+                        .order_by(
+                            "-fecha_creado_cert",
+                            "-id",
+                        )
+                        .values_list(
+                            "id",
+                            flat=True,
+                        )[
+                            :remaining()
+                        ]
+                    )
+
+                    add_ids(
+                        cert_ids
+                    )
+
+            # =====================================================
+            # FASE 4
+            #
+            # UNIVERSIDAD / EMPRESA / PLATAFORMA
+            # QUE COMIENZAN POR EL TEXTO
+            # =====================================================
+
+            if remaining() > 0:
+                university_ids = list(
+                    Universidades.objects
+                    .filter(
+                        nombre__istartswith=
+                        query_string
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :self.ENTITY_MATCH_LIMIT
+                    ]
+                )
+
+                if university_ids:
+                    ids = (
+                        base_queryset
+                        .filter(
+                            universidad_certificacion_id__in=
+                            university_ids
+                        )
+                        .exclude(
+                            id__in=
+                            result_ids
+                        )
+                        .order_by(
+                            "-fecha_creado_cert",
+                            "-id",
+                        )
+                        .values_list(
+                            "id",
+                            flat=True,
+                        )[
+                            :remaining()
+                        ]
+                    )
+
+                    add_ids(ids)
+
+            if remaining() > 0:
+                company_ids = list(
+                    Empresas.objects
+                    .filter(
+                        nombre__istartswith=
+                        query_string
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :self.ENTITY_MATCH_LIMIT
+                    ]
+                )
+
+                if company_ids:
+                    ids = (
+                        base_queryset
+                        .filter(
+                            empresa_certificacion_id__in=
+                            company_ids
+                        )
+                        .exclude(
+                            id__in=
+                            result_ids
+                        )
+                        .order_by(
+                            "-fecha_creado_cert",
+                            "-id",
+                        )
+                        .values_list(
+                            "id",
+                            flat=True,
+                        )[
+                            :remaining()
+                        ]
+                    )
+
+                    add_ids(ids)
+
+            if remaining() > 0:
+                platform_ids = list(
+                    Plataformas.objects
+                    .filter(
+                        nombre__istartswith=
+                        query_string
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :self.ENTITY_MATCH_LIMIT
+                    ]
+                )
+
+                if platform_ids:
+                    ids = (
+                        base_queryset
+                        .filter(
+                            plataforma_certificacion_id__in=
+                            platform_ids
+                        )
+                        .exclude(
+                            id__in=
+                            result_ids
+                        )
+                        .order_by(
+                            "-fecha_creado_cert",
+                            "-id",
+                        )
+                        .values_list(
+                            "id",
+                            flat=True,
+                        )[
+                            :remaining()
+                        ]
+                    )
+
+                    add_ids(ids)
+
+            # =====================================================
+            # FASE 5
+            #
+            # TÍTULO CONTIENE TEXTO
+            # =====================================================
+            #
+            # Va DESPUÉS de skills exactas/prefix.
+            #
+            # Esto es fundamental para "IA":
+            #
+            # no queremos que palabras que simplemente contienen
+            # "ia" llenen los 12 resultados antes de consultar
+            # la skill "IA".
+            #
+            # =====================================================
+
+            if remaining() > 0:
+                ids = (
+                    base_queryset
+                    .filter(
+                        nombre__icontains=
+                        query_string
+                    )
+                    .exclude(
+                        id__in=
+                        result_ids
+                    )
+                    .order_by(
+                        "-fecha_creado_cert",
+                        "-id",
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :remaining()
+                    ]
+                )
+
+                add_ids(ids)
+
+            # =====================================================
+            # FASE 6
+            #
+            # SKILL CONTIENE TEXTO
+            # =====================================================
+
+            if remaining() > 0:
+                contains_skill_ids = list(
+                    Skills.objects
+                    .filter(
+                        estado=True
+                    )
+                    .filter(
+                        Q(
+                            nombre__icontains=
+                            query_string
+                        )
+                        |
+                        Q(
+                            translate__icontains=
+                            query_string
+                        )
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :self.ENTITY_MATCH_LIMIT
+                    ]
+                )
+
+                if contains_skill_ids:
+                    ids = (
+                        base_queryset
+                        .filter(
+                            id__in=Subquery(
+                                SkillsCertification.objects
+                                .filter(
+                                    skill_id__in=
+                                    contains_skill_ids
+                                )
+                                .values(
+                                    "certificacion_id"
+                                )
+                            )
+                        )
+                        .exclude(
+                            id__in=
+                            result_ids
+                        )
+                        .order_by(
+                            "-fecha_creado_cert",
+                            "-id",
+                        )
+                        .values_list(
+                            "id",
+                            flat=True,
+                        )[
+                            :remaining()
+                        ]
+                    )
+
+                    add_ids(ids)
+
+            # =====================================================
+            # FASE 7
+            #
+            # UNIVERSIDAD CONTIENE
+            # =====================================================
+
+            if remaining() > 0:
+                university_ids = list(
+                    Universidades.objects
+                    .filter(
+                        nombre__icontains=
+                        query_string
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :self.ENTITY_MATCH_LIMIT
+                    ]
+                )
+
+                if university_ids:
+                    ids = (
+                        base_queryset
+                        .filter(
+                            universidad_certificacion_id__in=
+                            university_ids
+                        )
+                        .exclude(
+                            id__in=
+                            result_ids
+                        )
+                        .order_by(
+                            "-fecha_creado_cert",
+                            "-id",
+                        )
+                        .values_list(
+                            "id",
+                            flat=True,
+                        )[
+                            :remaining()
+                        ]
+                    )
+
+                    add_ids(ids)
+
+            # =====================================================
+            # FASE 8
+            #
+            # EMPRESA CONTIENE
+            # =====================================================
+
+            if remaining() > 0:
+                company_ids = list(
+                    Empresas.objects
+                    .filter(
+                        nombre__icontains=
+                        query_string
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :self.ENTITY_MATCH_LIMIT
+                    ]
+                )
+
+                if company_ids:
+                    ids = (
+                        base_queryset
+                        .filter(
+                            empresa_certificacion_id__in=
+                            company_ids
+                        )
+                        .exclude(
+                            id__in=
+                            result_ids
+                        )
+                        .order_by(
+                            "-fecha_creado_cert",
+                            "-id",
+                        )
+                        .values_list(
+                            "id",
+                            flat=True,
+                        )[
+                            :remaining()
+                        ]
+                    )
+
+                    add_ids(ids)
+
+            # =====================================================
+            # FASE 9
+            #
+            # PLATAFORMA CONTIENE
+            # =====================================================
+
+            if remaining() > 0:
+                platform_ids = list(
+                    Plataformas.objects
+                    .filter(
+                        nombre__icontains=
+                        query_string
+                    )
+                    .values_list(
+                        "id",
+                        flat=True,
+                    )[
+                        :self.ENTITY_MATCH_LIMIT
+                    ]
+                )
+
+                if platform_ids:
+                    ids = (
+                        base_queryset
+                        .filter(
+                            plataforma_certificacion_id__in=
+                            platform_ids
+                        )
+                        .exclude(
+                            id__in=
+                            result_ids
+                        )
+                        .order_by(
+                            "-fecha_creado_cert",
+                            "-id",
+                        )
+                        .values_list(
+                            "id",
+                            flat=True,
+                        )[
+                            :remaining()
+                        ]
+                    )
+
+                    add_ids(ids)
 
             # =====================================================
             # SIN RESULTADOS
             # =====================================================
 
-            if not ids:
+            if not result_ids:
                 return Response(
                     {
                         "results": [],
@@ -5275,17 +5582,12 @@ class filter_by_search(APIView):
                 )
 
             # =====================================================
-            # HIDRATAR SOLO LAS CARDS NECESARIAS
-            # =====================================================
-            #
-            # Reutilizamos el helper que ya existe para
-            # filter_by_tags.
-            #
+            # HIDRATAR ÚNICAMENTE LOS IDS FINALES
             # =====================================================
 
             results = (
                 load_explore_certification_page(
-                    ids
+                    result_ids
                 )
             )
 
@@ -5303,17 +5605,13 @@ class filter_by_search(APIView):
                 )
             )
 
-            # =====================================================
-            # RESPONSE
-            # =====================================================
-
             return Response(
                 {
                     "results":
                         serializer.data,
 
                     "count":
-                        len(results),
+                        len(serializer.data),
                 },
                 status=status.HTTP_200_OK,
             )
