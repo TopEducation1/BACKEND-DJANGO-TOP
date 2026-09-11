@@ -5796,18 +5796,194 @@ class QuickCertificationSearchAPIView(APIView):
         )
 
 class LatestCertificationsView(APIView):
+    DEFAULT_PAGE_SIZE = 16
+    MAX_PAGE_SIZE = 32
+
     def get(self, request):
         try:
-            certifications = Certificaciones.objects.all().order_by('-fecha_creado_cert')[:32]
-            serializer = CertificationSerializer(certifications, many=True)
-            return Response(serializer.data)
-        except Exception as e:
-            import traceback
-            print("🔥 Error en LatestCertificationsView:", e)
-            traceback.print_exc()
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # =========================================================
+            # PAGINACIÓN
+            # =========================================================
 
+            try:
+                page = int(
+                    request.query_params.get(
+                        "page",
+                        1
+                    )
+                )
+            except (TypeError, ValueError):
+                page = 1
 
+            try:
+                page_size = int(
+                    request.query_params.get(
+                        "page_size",
+                        self.DEFAULT_PAGE_SIZE
+                    )
+                )
+            except (TypeError, ValueError):
+                page_size = (
+                    self.DEFAULT_PAGE_SIZE
+                )
+
+            page = max(
+                1,
+                page
+            )
+
+            page_size = max(
+                1,
+                min(
+                    page_size,
+                    self.MAX_PAGE_SIZE
+                )
+            )
+
+            # =========================================================
+            # QUERYSET BASE
+            # =========================================================
+
+            queryset = (
+                Certificaciones.objects
+                .filter(
+                    vigente_certificacion=True,
+                )
+                .order_by(
+                    "-fecha_creado_cert",
+                    "-id",
+                )
+            )
+
+            # =========================================================
+            # TOTAL
+            # =========================================================
+
+            count = queryset.count()
+
+            total_pages = (
+                (count + page_size - 1)
+                // page_size
+            )
+
+            if total_pages == 0:
+                total_pages = 1
+
+            # Evitar páginas imposibles
+            if page > total_pages:
+                page = total_pages
+
+            offset = (
+                (page - 1)
+                * page_size
+            )
+
+            # =========================================================
+            # OBTENER SOLO IDS
+            # =========================================================
+
+            certification_ids = list(
+                queryset
+                .values_list(
+                    "id",
+                    flat=True,
+                )[
+                    offset:
+                    offset + page_size
+                ]
+            )
+
+            # =========================================================
+            # SIN RESULTADOS
+            # =========================================================
+
+            if not certification_ids:
+                return Response(
+                    {
+                        "results": [],
+                        "count": count,
+                        "current_page": page,
+                        "page_size": page_size,
+                        "total_pages": total_pages,
+                        "has_next": False,
+                        "has_previous": (
+                            page > 1
+                        ),
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            # =========================================================
+            # HIDRATAR ÚNICAMENTE LOS RESULTADOS DE ESTA PÁGINA
+            # =========================================================
+
+            certifications = (
+                load_explore_certification_page(
+                    certification_ids
+                )
+            )
+
+            serializer = (
+                CertificationSearchSerializer(
+                    certifications,
+                    many=True,
+                    context={
+                        "request": request,
+                    },
+                )
+            )
+
+            # =========================================================
+            # RESPONSE
+            # =========================================================
+
+            return Response(
+                {
+                    "results":
+                        serializer.data,
+
+                    "count":
+                        count,
+
+                    "current_page":
+                        page,
+
+                    "page_size":
+                        page_size,
+
+                    "total_pages":
+                        total_pages,
+
+                    "has_next":
+                        page < total_pages,
+
+                    "has_previous":
+                        page > 1,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as error:
+            logger.exception(
+                "Error en LatestCertificationsView"
+            )
+
+            return Response(
+                {
+                    "error":
+                        "Error al obtener las certificaciones más recientes",
+
+                    "detail": (
+                        str(error)
+                        if settings.DEBUG
+                        else None
+                    ),
+                },
+                status=(
+                    status
+                    .HTTP_500_INTERNAL_SERVER_ERROR
+                ),
+            )
 class OriginalDetailView(APIView):
     def get(self, request, slug):
         try:
