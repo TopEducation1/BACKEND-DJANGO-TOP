@@ -2661,31 +2661,80 @@ class CertificationDetailView(APIView):
                 {"error": "Error al cargar la certificación"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-@method_decorator(cache_page(60 * 60), name="dispatch")
+
+@method_decorator(
+    cache_page(60 * 60 * 6),
+    name="dispatch",
+)
 class SkillsFilterMiniView(APIView):
+
     def get(self, request):
-        qs = (
-            Skills.objects
-            .filter(estado=True)
-            .only(
+
+        qs = Skills.objects.filter(
+            estado=True
+        )
+
+        skill_type = (
+            request.query_params
+            .get("type", "")
+            .strip()
+            .lower()
+        )
+
+        parent_id = (
+            request.query_params
+            .get("parent_id")
+        )
+
+        ids = (
+            request.query_params
+            .get("ids", "")
+            .strip()
+        )
+
+        if skill_type:
+            qs = qs.filter(
+                skill_type=skill_type
+            )
+
+        if parent_id:
+            qs = qs.filter(
+                parent_id=parent_id
+            )
+
+        if ids:
+            ids_list = [
+                int(value)
+                for value in ids.split(",")
+                if value.strip().isdigit()
+            ]
+
+            if ids_list:
+                qs = qs.filter(
+                    id__in=ids_list
+                )
+
+        skills = list(
+            qs
+            .order_by(
+                "parent_id",
+                "nombre",
+            )
+            .values(
                 "id",
                 "nombre",
                 "translate",
                 "slug",
                 "skill_ico",
                 "skill_img",
-                "skill_col",
                 "skill_type",
                 "estado",
                 "parent_id",
             )
-            .order_by("parent_id", "nombre")
         )
 
-        serializer = SkillFilterMiniSerializer(qs, many=True)
-        return Response(serializer.data)
-
+        return Response(skills)
+    
 @method_decorator(cache_page(60 * 60), name="dispatch")
 class CompaniesFilterMiniView(APIView):
     def get(self, request):
@@ -2711,43 +2760,56 @@ class PlatformsFilterMiniView(APIView):
         serializer = PlatformFilterMiniSerializer(qs, many=True)
         return Response(serializer.data)
 
+@method_decorator(
+    cache_page(60 * 60 * 6),
+    name="dispatch",
+)
 class UniversitiesByRegionMiniView(APIView):
+
     def get(self, request):
+
         universidades = (
             Universidades.objects
-            .filter(univ_est="enabled")
-            .select_related("region_universidad")
-            .only(
+            .filter(
+                univ_est="enabled"
+            )
+            .order_by(
+                "region_universidad__nombre",
+                "nombre",
+            )
+            .values(
                 "id",
                 "nombre",
                 "univ_ico",
                 "univ_img",
                 "region_universidad_id",
-                "region_universidad__id",
                 "region_universidad__nombre",
             )
-            .order_by("region_universidad__nombre", "nombre")
         )
 
         grouped = {}
 
         for uni in universidades:
+
             region = (
-                uni.region_universidad.nombre
-                if uni.region_universidad
-                else "Del mundo"
+                uni["region_universidad__nombre"]
+                or "Del mundo"
             )
 
-            grouped.setdefault(region, []).append({
-                "id": uni.id,
-                "nombre": uni.nombre,
-                "univ_ico": uni.univ_ico,
-                "univ_img": uni.univ_img,
-                "region_universidad_id": uni.region_universidad_id,
+            grouped.setdefault(
+                region,
+                [],
+            ).append({
+                "id": uni["id"],
+                "nombre": uni["nombre"],
+                "univ_ico": uni["univ_ico"],
+                "univ_img": uni["univ_img"],
+                "region_universidad_id":
+                    uni["region_universidad_id"],
             })
 
         return Response(grouped)
-
+    
 @method_decorator(csrf_exempt, name="dispatch")
 class PersonalizedRecommendations(APIView):
 

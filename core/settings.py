@@ -133,14 +133,36 @@ INSTALLED_APPS = [
 ]   
 
 MIDDLEWARE = [
+    # CORS debe quedar arriba para poder agregar los headers
+    # también a respuestas generadas por otros middlewares.
     'corsheaders.middleware.CorsMiddleware',
+
+    # Seguridad
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware', 
+
+    # Compresión de respuestas grandes:
+    # JSON de skills, universidades, certificaciones, etc.
+    'django.middleware.gzip.GZipMiddleware',
+
+    # WhiteNoise solo si decides volver a servir estáticos desde Django.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+
+    # Sesiones
     'django.contrib.sessions.middleware.SessionMiddleware',
+
+    # CommonMiddleware
     'django.middleware.common.CommonMiddleware',
+
+    # CSRF
     'django.middleware.csrf.CsrfViewMiddleware',
+
+    # Autenticación
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+
+    # Mensajes
     'django.contrib.messages.middleware.MessageMiddleware',
+
+    # Protección clickjacking
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
