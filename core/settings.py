@@ -24,7 +24,41 @@ DEBUG = os.getenv(
     "on",
 }
 
-ALLOWED_HOSTS = ['backend-django-top-production.up.railway.app', '127.0.0.1', 'localhost','localhost:8000','app.top.education']
+ALLOWED_HOSTS = [
+    'backend-django-top-production.up.railway.app',
+    '127.0.0.1',
+    'localhost',
+    'localhost:8000',
+    'app.top.education'
+]
+
+# ============================================================
+# MX HELP DESK / COLOMBIA
+# ============================================================
+
+MX_HELP_DESK_BASE_URL = os.getenv(
+    "MX_HELP_DESK_BASE_URL",
+    "https://api-dev.universidad.top"
+).rstrip("/")
+
+MX_HELP_DESK_SERVICE_TOKEN = os.getenv(
+    "MX_HELP_DESK_SERVICE_TOKEN",
+    ""
+).strip()
+
+MX_HELP_DESK_CONNECT_TIMEOUT = int(
+    os.getenv(
+        "MX_HELP_DESK_CONNECT_TIMEOUT",
+        "10"
+    )
+)
+
+MX_HELP_DESK_READ_TIMEOUT = int(
+    os.getenv(
+        "MX_HELP_DESK_READ_TIMEOUT",
+        "45"
+    )
+)
 
 # Configuración de seguridad HTTPS
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -348,16 +382,87 @@ DATABASES = {
     }
 }
 
+# ============================================================
+# LOGGING
+# ============================================================
+
+DJANGO_LOG_LEVEL = os.getenv(
+    "DJANGO_LOG_LEVEL",
+    "INFO"
+).upper()
+
+DJANGO_DB_LOG_LEVEL = os.getenv(
+    "DJANGO_DB_LOG_LEVEL",
+    "WARNING"
+).upper()
+
+
 LOGGING = {
     "version": 1,
+
     "disable_existing_loggers": False,
-    "handlers": {
-        "console": {"class": "logging.StreamHandler"},
+
+    "formatters": {
+        "verbose": {
+            "format": (
+                "[{asctime}] "
+                "{levelname} "
+                "{name}: "
+                "{message}"
+            ),
+            "style": "{",
+        },
     },
+
+    "handlers": {
+        "console": {
+            "class":
+                "logging.StreamHandler",
+
+            "formatter":
+                "verbose",
+        },
+    },
+
     "loggers": {
+
+        # Errores HTTP / views
+        "django.request": {
+            "handlers": [
+                "console"
+            ],
+
+            "level":
+                "ERROR",
+
+            "propagate":
+                False,
+        },
+
+        # Errores del servidor de desarrollo
+        "django.server": {
+            "handlers": [
+                "console"
+            ],
+
+            "level":
+                "INFO",
+
+            "propagate":
+                False,
+        },
+
+        # MySQL
         "django.db.backends": {
-            "handlers": ["console"],
-            "level": "DEBUG",
+            "handlers": [
+                "console"
+            ],
+
+            "level":
+                DJANGO_DB_LOG_LEVEL,
+
+            "propagate":
+                False,
         },
     },
 }
@@ -412,8 +517,6 @@ MEDIA_ROOT = os.getenv(
         os.path.join(BASE_DIR, "media"),
     ),
 )
-
-CKEDITOR_UPLOAD_PATH = "uploads/"
 
 CKEDITOR_UPLOAD_PATH = "uploads/"
 

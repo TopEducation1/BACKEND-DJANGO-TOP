@@ -583,6 +583,24 @@ urlpatterns = [
         views.debug_free_preview_catalog,
         name="debug_free_preview_catalog"
     ),
+
+    path(
+        "api/account/help-desk/options/",
+        AccountHelpDeskOptionsView.as_view(),
+        name="account-help-desk-options",
+    ),
+
+    path(
+        "api/account/help-desk/attachment-uploads/",
+        AccountHelpDeskAttachmentUploadView.as_view(),
+        name="account-help-desk-attachment-upload",
+    ),
+
+    path(
+        "api/account/help-desk/direct-requests/",
+        AccountHelpDeskDirectRequestView.as_view(),
+        name="account-help-desk-direct-request",
+    ),
 ]
 
 

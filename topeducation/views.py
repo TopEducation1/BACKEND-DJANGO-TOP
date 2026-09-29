@@ -90,6 +90,11 @@ from topeducation.services.learning_route_service import (
     serialize_route_snapshot,
     update_learning_route,
 )
+from topeducation.services.help_desk import (
+    help_desk_request,
+    HelpDeskIntegrationError,
+    HelpDeskTimeoutError,
+)
 
 from topeducation.services.mx_payload_builder import (
     build_mx_access_payload,
@@ -9392,6 +9397,7 @@ def account_me(request):
             "learning_streak_days": getattr(route, "learning_streak_days", 0) if route else 0,
         }
     })
+
 @api_login_required
 def account_purchases(request):
     qs = StripePurchase.objects.filter(user=request.user).order_by("-created_at")[:100]
@@ -20386,4 +20392,485 @@ class AccountAvailableCoursesAPIView(APIView):
                     },
                 },
             }
+        )
+
+
+class AccountHelpDeskOptionsView(APIView):
+
+    permission_classes = [
+        IsAuthenticated
+    ]
+
+    CACHE_KEY = (
+        "mx_help_desk_options_dev_v1"
+    )
+
+    CACHE_TIMEOUT = 60 * 15
+
+    def get(self, request):
+
+        cached = cache.get(
+            self.CACHE_KEY
+        )
+
+        if cached is not None:
+            return Response(
+                cached,
+                status=200,
+            )
+
+        try:
+
+            external_response, data = (
+                help_desk_request(
+                    "GET",
+                    (
+                        "/v2/integrations/"
+                        "colombia/help-desk/options"
+                    ),
+                )
+            )
+
+        except HelpDeskTimeoutError:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "help_desk_timeout",
+                    "message":
+                        "La mesa de ayuda no respondió a tiempo.",
+                },
+                status=504,
+            )
+
+        except HelpDeskIntegrationError as exc:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error": exc.code,
+                    "message": str(exc),
+                },
+                status=exc.status_code,
+            )
+
+        # Un 401 de MX NO significa que el
+        # usuario Colombia perdió sesión.
+        if external_response.status_code == 401:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "help_desk_credentials_error",
+                    "message":
+                        "La integración de mesa de ayuda no está disponible.",
+                },
+                status=503,
+            )
+
+        if not external_response.ok:
+
+            return Response(
+                data,
+                status=external_response.status_code,
+            )
+
+        cache.set(
+            self.CACHE_KEY,
+            data,
+            self.CACHE_TIMEOUT,
+        )
+
+        return Response(
+            data,
+            status=200,
+        )
+
+class AccountHelpDeskAttachmentUploadView(
+    APIView
+):
+
+    permission_classes = [
+        IsAuthenticated
+    ]
+
+    ALLOWED_TYPES = {
+        "image/png",
+        "image/jpeg",
+        "application/pdf",
+    }
+
+    MAX_FILE_SIZE = (
+        10 * 1024 * 1024
+    )
+
+    def post(self, request):
+
+        file_data = (
+            request.data.get("file")
+            or {}
+        )
+
+        name = str(
+            file_data.get("name", "")
+        ).strip()
+
+        content_type = str(
+            file_data.get(
+                "contentType",
+                ""
+            )
+        ).strip()
+
+        try:
+            size = int(
+                file_data.get(
+                    "size",
+                    0
+                )
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            size = 0
+
+        if not name:
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "invalid_file_name",
+                    "message":
+                        "El archivo no tiene un nombre válido.",
+                },
+                status=400,
+            )
+
+        if (
+            content_type
+            not in self.ALLOWED_TYPES
+        ):
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "invalid_file_type",
+                    "message":
+                        "Solo se permiten PNG, JPG y PDF.",
+                },
+                status=400,
+            )
+
+        if (
+            size <= 0
+            or size > self.MAX_FILE_SIZE
+        ):
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "invalid_file_size",
+                    "message":
+                        "Cada archivo debe pesar como máximo 10 MiB.",
+                },
+                status=400,
+            )
+
+        requester = (
+            get_help_desk_requester(
+                request
+            )
+        )
+
+        institution = (
+            get_help_desk_institution(
+                request
+            )
+        )
+
+        payload = {
+            "requester": requester,
+
+            "institution":
+                institution,
+
+            "file": {
+                "name": name,
+                "size": size,
+                "contentType":
+                    content_type,
+            },
+        }
+
+        try:
+
+            external_response, data = (
+                help_desk_request(
+                    "POST",
+                    (
+                        "/v2/integrations/"
+                        "colombia/help-desk/"
+                        "attachment-uploads"
+                    ),
+                    json=payload,
+                )
+            )
+
+        except HelpDeskTimeoutError:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "attachment_authorization_timeout",
+                    "message":
+                        "No fue posible autorizar el archivo.",
+                },
+                status=504,
+            )
+
+        except HelpDeskIntegrationError as exc:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error": exc.code,
+                    "message": str(exc),
+                },
+                status=exc.status_code,
+            )
+
+        return Response(
+            data,
+            status=
+                external_response.status_code,
+        )
+
+class AccountHelpDeskDirectRequestView(
+    APIView
+):
+
+    permission_classes = [
+        IsAuthenticated
+    ]
+
+    def post(self, request):
+
+        contact_email = str(
+            request.data.get(
+                "contactEmail",
+                ""
+            )
+        ).strip()
+
+        category = str(
+            request.data.get(
+                "category",
+                ""
+            )
+        ).strip()
+
+        priority = str(
+            request.data.get(
+                "priority",
+                ""
+            )
+        ).strip()
+
+        description = str(
+            request.data.get(
+                "description",
+                ""
+            )
+        ).strip()
+
+        attachments = (
+            request.data.get(
+                "attachments"
+            )
+            or []
+        )
+
+        client_context = (
+            request.data.get(
+                "clientContext"
+            )
+            or {}
+        )
+
+        if not description:
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "description_required",
+                    "message":
+                        "Describe tu solicitud.",
+                },
+                status=400,
+            )
+
+        if len(description) > 2000:
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "description_too_long",
+                    "message":
+                        "La descripción no puede superar 2.000 caracteres.",
+                },
+                status=400,
+            )
+
+        if len(attachments) > 10:
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "too_many_attachments",
+                    "message":
+                        "Solo puedes adjuntar hasta 10 archivos.",
+                },
+                status=400,
+            )
+
+        safe_attachments = []
+
+        for item in attachments:
+
+            token = str(
+                (
+                    item
+                    if isinstance(
+                        item,
+                        str
+                    )
+                    else item.get(
+                        "uploadToken",
+                        ""
+                    )
+                )
+            ).strip()
+
+            if token:
+                safe_attachments.append(
+                    {
+                        "uploadToken":
+                            token
+                    }
+                )
+
+        requester = (
+            get_help_desk_requester(
+                request
+            )
+        )
+
+        institution = (
+            get_help_desk_institution(
+                request
+            )
+        )
+
+        payload = {
+            "requester":
+                requester,
+
+            "institution":
+                institution,
+
+            "contactEmail":
+                contact_email,
+
+            "category":
+                category,
+
+            "priority":
+                priority,
+
+            "description":
+                description,
+
+            "attachments":
+                safe_attachments,
+
+            "clientContext": {
+                "route":
+                    str(
+                        client_context.get(
+                            "route",
+                            ""
+                        )
+                    )[:500],
+
+                "userAgent":
+                    str(
+                        client_context.get(
+                            "userAgent",
+                            ""
+                        )
+                    )[:500],
+            },
+        }
+
+        try:
+
+            external_response, data = (
+                help_desk_request(
+                    "POST",
+                    (
+                        "/v2/integrations/"
+                        "colombia/help-desk/"
+                        "direct-requests"
+                    ),
+                    json=payload,
+                )
+            )
+
+        except HelpDeskTimeoutError:
+
+            # MUY IMPORTANTE:
+            # no hacemos retry.
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "submission_timeout",
+
+                    "ambiguous":
+                        True,
+
+                    "message": (
+                        "No pudimos confirmar si "
+                        "la solicitud fue recibida. "
+                        "Conservamos tus datos; "
+                        "no la enviaremos nuevamente "
+                        "de forma automática."
+                    ),
+                },
+                status=504,
+            )
+
+        except HelpDeskIntegrationError as exc:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        exc.code,
+
+                    "message":
+                        str(exc),
+                },
+                status=
+                    exc.status_code,
+            )
+
+        return Response(
+            data,
+            status=
+                external_response.status_code,
         )

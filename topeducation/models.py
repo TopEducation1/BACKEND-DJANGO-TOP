@@ -2120,3 +2120,55 @@ class CertificationLanguage(models.Model):
 
     def __str__(self):
         return self.nombre
+
+class HelpDeskSubmission(models.Model):
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="help_desk_submissions",
+    )
+
+    request_id = models.CharField(
+        max_length=128,
+        unique=True,
+    )
+
+    category = models.CharField(
+        max_length=50,
+    )
+
+    priority = models.CharField(
+        max_length=30,
+    )
+
+    contact_email = models.EmailField()
+
+    description = models.TextField()
+
+    institution_name = models.CharField(
+        max_length=255,
+    )
+
+    attachments = models.JSONField(
+        default=list,
+        blank=True,
+    )
+
+    submitted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    class Meta:
+        db_table = (
+            "HelpDeskSubmission"
+        )
+
+        ordering = [
+            "-created_at"
+        ]
