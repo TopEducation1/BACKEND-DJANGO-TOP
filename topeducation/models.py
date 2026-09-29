@@ -200,28 +200,96 @@ class Specialization(models.Model):
 
 
 class Certificaciones(models.Model):
-    nombre = models.CharField(max_length=500)
-    slug = models.SlugField(max_length=500, default="default-slug")
-    tema_certificacion = models.ForeignKey(Temas, on_delete=models.SET_NULL, null=True)
+
+    # =========================================================
+    # INFORMACIÓN PRINCIPAL
+    # =========================================================
+
+    nombre = models.CharField(
+        max_length=500
+    )
+
+    slug = models.SlugField(
+        max_length=500,
+        default="default-slug"
+    )
+
+    tema_certificacion = models.ForeignKey(
+        Temas,
+        on_delete=models.SET_NULL,
+        null=True
+    )
 
     palabra_clave_certificacion = models.TextField()
-    metadescripcion_certificacion = models.TextField(default="NONE")
-    instructores_certificacion = models.TextField(default="NONE")
-    nivel_certificacion = models.CharField(max_length=255, default="NONE")
-    tiempo_certificacion = models.CharField(max_length=255, default="NONE")
-    lenguaje_certificacion = models.CharField(max_length=255, default="NONE")
-    aprendizaje_certificacion = models.TextField(default="NONE")
-    habilidades_certificacion = models.TextField(default="NONE")
-    experiencia_certificacion = models.TextField(default="NONE")
-    testimonios_certificacion = models.TextField(default="NONE")
-    contenido_certificacion = models.TextField(blank=True, verbose_name='Contenido', default="NONE")
-    modulos_certificacion = models.TextField(default="NONE")
 
-    tipo_certificacion = models.CharField(max_length=100, null=True, blank=True, default="NONE")
+    metadescripcion_certificacion = models.TextField(
+        default="NONE"
+    )
+
+    instructores_certificacion = models.TextField(
+        default="NONE"
+    )
+
+    nivel_certificacion = models.CharField(
+        max_length=255,
+        default="NONE"
+    )
+
+    tiempo_certificacion = models.CharField(
+        max_length=255,
+        default="NONE"
+    )
+
+    lenguaje_certificacion = models.CharField(
+        max_length=255,
+        default="NONE"
+    )
+
+    aprendizaje_certificacion = models.TextField(
+        default="NONE"
+    )
+
+    habilidades_certificacion = models.TextField(
+        default="NONE"
+    )
+
+    experiencia_certificacion = models.TextField(
+        default="NONE"
+    )
+
+    testimonios_certificacion = models.TextField(
+        default="NONE"
+    )
+
+    contenido_certificacion = models.TextField(
+        blank=True,
+        verbose_name="Contenido",
+        default="NONE"
+    )
+
+    modulos_certificacion = models.TextField(
+        default="NONE"
+    )
+
+    # =========================================================
+    # TIPO / ESTADO
+    # =========================================================
+
+    tipo_certificacion = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        default="NONE"
+    )
+
     vigente_certificacion = models.BooleanField(
         default=True,
         db_index=False,
     )
+
+    # =========================================================
+    # RELACIONES PRINCIPALES
+    # =========================================================
 
     universidad_certificacion = models.ForeignKey(
         Universidades,
@@ -230,6 +298,7 @@ class Certificaciones(models.Model):
         null=True,
         blank=True
     )
+
     empresa_certificacion = models.ForeignKey(
         Empresas,
         related_name="certificaciones",
@@ -237,9 +306,18 @@ class Certificaciones(models.Model):
         null=True,
         blank=True
     )
-    plataforma_certificacion = models.ForeignKey(Plataformas, on_delete=models.CASCADE, null=True, blank=True)
 
-    # NUEVOS
+    plataforma_certificacion = models.ForeignKey(
+        Plataformas,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
+
+    # =========================================================
+    # DATOS DE INTEGRACIÓN / MÉXICO
+    # =========================================================
+
     source_provider = models.CharField(
         max_length=50,
         null=True,
@@ -252,7 +330,10 @@ class Certificaciones(models.Model):
         null=True,
         blank=True,
         db_index=True,
-        help_text="Identificador interno utilizado por la plataforma Mexico"
+        help_text=(
+            "Identificador interno utilizado "
+            "por la plataforma Mexico"
+        )
     )
 
     specialization = models.ForeignKey(
@@ -260,71 +341,279 @@ class Certificaciones(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='certificaciones'
+        related_name="certificaciones"
     )
-    specialization_id_external = models.CharField(max_length=255, null=True, blank=True, db_index=True)
-    specialization_name_external = models.CharField(max_length=500, null=True, blank=True)
 
-    country = models.CharField(max_length=120, null=True, blank=True, default="Global")
-    region = models.CharField(max_length=120, null=True, blank=True, default="Global")
+    specialization_id_external = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True
+    )
 
-    mapping_status = models.CharField(max_length=50, null=True, blank=True, default="uncategorized", db_index=True)
-    language_normalized = models.CharField(max_length=120, null=True, blank=True)
-
-    skills_internal_json = models.JSONField(default=list, blank=True)
-    subskills_internal_json = models.JSONField(default=list, blank=True)
-
-    reconciliation_snapshot = models.JSONField(default=dict, blank=True)
-    raw_payload = models.JSONField(default=dict, blank=True)
-
-    fecha_creado_cert = models.DateField(auto_now_add=True, null=False)
-    url_certificacion_original = models.CharField(max_length=300, default="Null")
-    video_certificacion = models.CharField(default='Null', null=True, blank=True, max_length=1000)
-    imagen_final = models.CharField(default='', null=True, blank=True, max_length=255)
-    cert_top = models.CharField(max_length=5, blank=True, null=True, verbose_name='Ranking global')
-
-    skills = models.ManyToManyField(
-        'Skills',
-        through='SkillsCertification',
-        related_name='certificaciones',
+    specialization_name_external = models.CharField(
+        max_length=500,
+        null=True,
         blank=True
     )
 
+    country = models.CharField(
+        max_length=120,
+        null=True,
+        blank=True,
+        default="Global"
+    )
+
+    region = models.CharField(
+        max_length=120,
+        null=True,
+        blank=True,
+        default="Global"
+    )
+
+    mapping_status = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        default="uncategorized",
+        db_index=True
+    )
+
+    # =========================================================
+    # IDIOMA NORMALIZADO ORIGINAL
+    # =========================================================
+
+    language_normalized = models.CharField(
+        max_length=120,
+        null=True,
+        blank=True
+    )
+
+    # =========================================================
+    # FILTROS NORMALIZADOS DE EXPLORA
+    # =========================================================
+    #
+    # IMPORTANTE:
+    #
+    # Mantenemos:
+    #
+    # nivel_certificacion
+    # tipo_certificacion
+    # lenguaje_certificacion
+    # language_normalized
+    #
+    # porque contienen información original / histórica.
+    #
+    # Estos nuevos FK son los utilizados por Explora para
+    # filtrar mediante IDs pequeños e indexados.
+    #
+    # Se utilizan referencias por STRING para evitar problemas
+    # de orden de declaración dentro de models.py.
+    #
+    # db_index=False porque declaramos los índices explícitos
+    # en Meta con los mismos nombres creados en MySQL.
+    # =========================================================
+
+    nivel_filtro = models.ForeignKey(
+        "CertificationLevel",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="certificaciones",
+        db_index=False,
+    )
+
+    tipo_filtro = models.ForeignKey(
+        "CertificationType",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="certificaciones",
+        db_index=False,
+    )
+
+    idioma_filtro = models.ForeignKey(
+        "CertificationLanguage",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="certificaciones",
+        db_index=False,
+    )
+
+    # =========================================================
+    # MAPPING / DATOS EXTERNOS
+    # =========================================================
+
+    skills_internal_json = models.JSONField(
+        default=list,
+        blank=True
+    )
+
+    subskills_internal_json = models.JSONField(
+        default=list,
+        blank=True
+    )
+
+    reconciliation_snapshot = models.JSONField(
+        default=dict,
+        blank=True
+    )
+
+    raw_payload = models.JSONField(
+        default=dict,
+        blank=True
+    )
+
+    # =========================================================
+    # INFORMACIÓN ADICIONAL
+    # =========================================================
+
+    fecha_creado_cert = models.DateField(
+        auto_now_add=True,
+        null=False
+    )
+
+    url_certificacion_original = models.CharField(
+        max_length=300,
+        default="Null"
+    )
+
+    video_certificacion = models.CharField(
+        default="Null",
+        null=True,
+        blank=True,
+        max_length=1000
+    )
+
+    imagen_final = models.CharField(
+        default="",
+        null=True,
+        blank=True,
+        max_length=255
+    )
+
+    cert_top = models.CharField(
+        max_length=5,
+        blank=True,
+        null=True,
+        verbose_name="Ranking global"
+    )
+
+    # =========================================================
+    # SKILLS
+    # =========================================================
+
+    skills = models.ManyToManyField(
+        "Skills",
+        through="SkillsCertification",
+        related_name="certificaciones",
+        blank=True
+    )
+
+    # =========================================================
+    # SAVE
+    # =========================================================
+
     def save(self, *args, **kwargs):
-        if not self.slug or self.slug.startswith("slice"):
-            self.slug = slugify(self.nombre)
+
+        if (
+            not self.slug
+            or self.slug.startswith("slice")
+        ):
+
+            self.slug = slugify(
+                self.nombre
+            )
+
             base_slug = self.slug
             counter = 1
-            while Certificaciones.objects.filter(slug=self.slug).exists():
-                self.slug = f"{base_slug}-{counter}"
+
+            while (
+                Certificaciones.objects
+                .filter(
+                    slug=self.slug
+                )
+                .exists()
+            ):
+
+                self.slug = (
+                    f"{base_slug}-{counter}"
+                )
+
                 counter += 1
-        super().save(*args, **kwargs)
+
+        super().save(
+            *args,
+            **kwargs
+        )
+
+    # =========================================================
+    # STRING
+    # =========================================================
 
     def __str__(self):
-        return str(self.id) + " - " + self.nombre
+
+        return (
+            str(self.id)
+            + " - "
+            + self.nombre
+        )
+
+    # =========================================================
+    # META
+    # =========================================================
 
     class Meta:
+
         db_table = "Certificaciones"
 
         indexes = [
+
+            # =================================================
+            # ÍNDICES HISTÓRICOS
+            # =================================================
+
             models.Index(
-                fields=["tipo_certificacion"],
+                fields=[
+                    "tipo_certificacion"
+                ],
                 name="cert_tipo_idx",
             ),
+
             models.Index(
-                fields=["nivel_certificacion"],
+                fields=[
+                    "nivel_certificacion"
+                ],
                 name="cert_nivel_idx",
             ),
+
             models.Index(
-                fields=["language_normalized"],
+                fields=[
+                    "language_normalized"
+                ],
                 name="cert_language_idx",
             ),
+
             models.Index(
-                fields=["plataforma_certificacion"],
+                fields=[
+                    "plataforma_certificacion"
+                ],
                 name="cert_plat_idx",
             ),
 
-            # Recomendaciones por plataforma y nivel.
+            # =================================================
+            # RECOMENDACIONES
+            # =================================================
+            #
+            # Recomendaciones por:
+            #
+            # estado
+            # plataforma
+            # nivel original
+            #
+            # =================================================
+
             models.Index(
                 fields=[
                     "vigente_certificacion",
@@ -335,7 +624,15 @@ class Certificaciones(models.Model):
                 name="idx_rec_platform_level",
             ),
 
-            # Explora: filtra por estado e idioma y ordena/pagina por id.
+            # =================================================
+            # EXPLORA ANTERIOR
+            # =================================================
+            #
+            # Se mantiene por compatibilidad con consultas
+            # que todavía utilicen language_normalized.
+            #
+            # =================================================
+
             models.Index(
                 fields=[
                     "vigente_certificacion",
@@ -344,8 +641,82 @@ class Certificaciones(models.Model):
                 ],
                 name="idx_cert_active_lang",
             ),
-        ]
 
+            # =================================================
+            # NUEVOS ÍNDICES INDIVIDUALES
+            # =================================================
+            #
+            # Estos son los índices que ya creamos manualmente
+            # en MySQL:
+            #
+            # idx_cert_nivel_filtro
+            # idx_cert_tipo_filtro
+            # idx_cert_idioma_filtro
+            #
+            # =================================================
+
+            models.Index(
+                fields=[
+                    "nivel_filtro"
+                ],
+                name="idx_cert_nivel_filtro",
+            ),
+
+            models.Index(
+                fields=[
+                    "tipo_filtro"
+                ],
+                name="idx_cert_tipo_filtro",
+            ),
+
+            models.Index(
+                fields=[
+                    "idioma_filtro"
+                ],
+                name="idx_cert_idioma_filtro",
+            ),
+
+            # =================================================
+            # EXPLORA:
+            # IDIOMA + NIVEL
+            # =================================================
+            #
+            # Optimiza consultas como:
+            #
+            # vigente = 1
+            # idioma IN (es, en)
+            # nivel IN (beginner, introductory)
+            #
+            # ORDER BY fecha_creado_cert DESC, id DESC
+            #
+            # =================================================
+
+            models.Index(
+                fields=[
+                    "vigente_certificacion",
+                    "idioma_filtro",
+                    "nivel_filtro",
+                    "fecha_creado_cert",
+                    "id",
+                ],
+                name="idx_explore_lang_level",
+            ),
+
+            # =================================================
+            # EXPLORA:
+            # TIPO
+            # =================================================
+
+            models.Index(
+                fields=[
+                    "vigente_certificacion",
+                    "tipo_filtro",
+                    "fecha_creado_cert",
+                    "id",
+                ],
+                name="idx_explore_type",
+            ),
+        ]
 
 class Instructores(models.Model):
     nombre = models.CharField(max_length=250, null=True, blank=True)
@@ -1674,3 +2045,78 @@ class MxAccessEventLog(models.Model):
             f"{self.event_id or self.stripe_event_id} - "
             f"{self.event_type} - {self.send_status}"
         )
+
+class CertificationLevel(models.Model):
+    code = models.CharField(
+        max_length=30,
+        unique=True,
+    )
+
+    nombre = models.CharField(
+        max_length=100,
+    )
+
+    orden = models.PositiveSmallIntegerField(
+        default=0,
+    )
+
+    activo = models.BooleanField(
+        default=True,
+    )
+
+    class Meta:
+        db_table = "CertificationLevel"
+        ordering = ["orden"]
+
+    def __str__(self):
+        return self.nombre
+
+class CertificationType(models.Model):
+    code = models.CharField(
+        max_length=50,
+        unique=True,
+    )
+
+    nombre = models.CharField(
+        max_length=100,
+    )
+
+    orden = models.PositiveSmallIntegerField(
+        default=0,
+    )
+
+    activo = models.BooleanField(
+        default=True,
+    )
+
+    class Meta:
+        db_table = "CertificationType"
+        ordering = ["orden"]
+
+    def __str__(self):
+        return self.nombre
+
+class CertificationLanguage(models.Model):
+    code = models.CharField(
+        max_length=10,
+        unique=True,
+    )
+
+    nombre = models.CharField(
+        max_length=100,
+    )
+
+    orden = models.PositiveSmallIntegerField(
+        default=0,
+    )
+
+    activo = models.BooleanField(
+        default=True,
+    )
+
+    class Meta:
+        db_table = "CertificationLanguage"
+        ordering = ["orden"]
+
+    def __str__(self):
+        return self.nombre

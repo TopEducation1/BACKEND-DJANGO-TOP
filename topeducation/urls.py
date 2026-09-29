@@ -319,6 +319,12 @@ urlpatterns = [
     ),
 
     path(
+        "certificacion/<slug:slug>/extras/",
+        CertificationExtrasView.as_view(),
+        name="certification-extras",
+    ),
+
+    path(
         'documents/<str:nombre_archivo>/',
         views.descargar_excel,
         name='descargar_excel'
@@ -340,6 +346,7 @@ urlpatterns = [
     path("api/filters/companies/", CompaniesFilterMiniView.as_view()),
     path("api/filters/platforms/", PlatformsFilterMiniView.as_view()),
     path("api/filters/universities-by-region/", UniversitiesByRegionMiniView.as_view()),
+    path("api/explore/filter-catalogs/", ExploreFilterCatalogsView.as_view(), name="explore-filter-catalogs",),
 
     path(
         "api/recommendations/",

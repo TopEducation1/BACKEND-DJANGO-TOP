@@ -316,7 +316,726 @@ class CertificationSkillsMixin:
             print(f"Error obteniendo skills fallback para cert {getattr(instance, 'id', None)}: {e}")
 
         return []
-    
+
+class CertificationDetailSerializer(
+    serializers.ModelSerializer
+):
+    plataforma_certificacion = (
+        serializers.SerializerMethodField()
+    )
+
+    universidad_certificacion = (
+        serializers.SerializerMethodField()
+    )
+
+    empresa_certificacion = (
+        serializers.SerializerMethodField()
+    )
+
+    skills = serializers.SerializerMethodField()
+    primary_skill = serializers.SerializerMethodField()
+
+    instructores_detalle_certificacion = (
+        serializers.SerializerMethodField()
+    )
+
+    specialization_detail = (
+        serializers.SerializerMethodField()
+    )
+
+    specialization_courses = (
+        serializers.SerializerMethodField()
+    )
+
+    contenido_certificacion = (
+        serializers.SerializerMethodField()
+    )
+
+    aprendizaje_certificacion = (
+        serializers.SerializerMethodField()
+    )
+
+    habilidades_certificacion = (
+        serializers.SerializerMethodField()
+    )
+
+    instructores_certificacion = (
+        serializers.SerializerMethodField()
+    )
+
+    video_certificacion = (
+        serializers.SerializerMethodField()
+    )
+
+    class Meta:
+        model = Certificaciones
+
+        fields = [
+            "id",
+            "slug",
+            "nombre",
+
+            "metadescripcion_certificacion",
+
+            "nivel_certificacion",
+            "tiempo_certificacion",
+            "lenguaje_certificacion",
+            "tipo_certificacion",
+
+            "aprendizaje_certificacion",
+            "habilidades_certificacion",
+            "contenido_certificacion",
+
+            "instructores_certificacion",
+            "instructores_detalle_certificacion",
+
+            "url_certificacion_original",
+            "video_certificacion",
+            "imagen_final",
+
+            "fecha_creado_cert",
+            "cert_top",
+
+            "plataforma_certificacion",
+            "universidad_certificacion",
+            "empresa_certificacion",
+
+            "skills",
+            "primary_skill",
+
+            "specialization_detail",
+            "specialization_courses",
+        ]
+
+    # ============================================================
+    # HELPERS
+    # ============================================================
+
+    def _is_specialization(self, instance):
+        value = str(
+            getattr(
+                instance,
+                "tipo_certificacion",
+                "",
+            )
+            or ""
+        ).strip().lower()
+
+        return value in {
+            "especialización",
+            "especializacion",
+            "specialization",
+        }
+
+    def _get_skill_data(self, instance):
+        """
+        Construimos las skills una sola vez por certificación.
+
+        Antes CertificationSerializer calculaba skills y
+        primary_skill por separado.
+        """
+
+        cache_attr = (
+            "_certification_detail_skills_cache"
+        )
+
+        cached = getattr(
+            instance,
+            cache_attr,
+            None,
+        )
+
+        if cached is not None:
+            return cached
+
+        links = getattr(
+            instance,
+            "skills_links_ordered",
+            [],
+        )
+
+        skills = []
+
+        for link in links:
+            skill = getattr(
+                link,
+                "skill",
+                None,
+            )
+
+            if not skill:
+                continue
+
+            skills.append({
+                "id":
+                    skill.id,
+
+                "nombre":
+                    skill.nombre,
+
+                "translate":
+                    skill.translate,
+
+                "slug":
+                    skill.slug,
+
+                "skill_col":
+                    skill.skill_col,
+
+                "skill_img":
+                    skill.skill_img,
+
+                "skill_ico":
+                    skill.skill_ico,
+
+                "skill_type":
+                    skill.skill_type,
+            })
+
+        setattr(
+            instance,
+            cache_attr,
+            skills,
+        )
+
+        return skills
+
+    # ============================================================
+    # RELACIONES
+    # ============================================================
+
+    def get_plataforma_certificacion(
+        self,
+        instance,
+    ):
+        platform = getattr(
+            instance,
+            "plataforma_certificacion",
+            None,
+        )
+
+        if not platform:
+            return None
+
+        return {
+            "id":
+                platform.id,
+
+            "nombre":
+                platform.nombre,
+
+            "plat_img":
+                platform.plat_img,
+
+            "plat_ico":
+                platform.plat_ico,
+        }
+
+    def get_universidad_certificacion(
+        self,
+        instance,
+    ):
+        university = getattr(
+            instance,
+            "universidad_certificacion",
+            None,
+        )
+
+        if not university:
+            return None
+
+        return {
+            "id":
+                university.id,
+
+            "nombre":
+                university.nombre,
+
+            "descripcion_institucion":
+                university.descripcion_institucion,
+
+            "univ_img":
+                university.univ_img,
+
+            "univ_ico":
+                university.univ_ico,
+        }
+
+    def get_empresa_certificacion(
+        self,
+        instance,
+    ):
+        company = getattr(
+            instance,
+            "empresa_certificacion",
+            None,
+        )
+
+        if not company:
+            return None
+
+        return {
+            "id":
+                company.id,
+
+            "nombre":
+                company.nombre,
+
+            "descripcion_institucion":
+                company.descripcion_institucion,
+
+            "empr_img":
+                company.empr_img,
+
+            "empr_ico":
+                company.empr_ico,
+        }
+
+    # ============================================================
+    # SKILLS
+    # ============================================================
+
+    def get_skills(
+        self,
+        instance,
+    ):
+        return self._get_skill_data(
+            instance
+        )
+
+    def get_primary_skill(
+        self,
+        instance,
+    ):
+        skills = self._get_skill_data(
+            instance
+        )
+
+        if not skills:
+            return None
+
+        return skills[0]
+
+    # ============================================================
+    # INSTRUCTORES
+    # ============================================================
+
+    def get_instructores_detalle_certificacion(
+        self,
+        instance,
+    ):
+        links = getattr(
+            instance,
+            "instructor_links_prefetched",
+            [],
+        )
+
+        result = []
+
+        for link in links:
+            instructor = getattr(
+                link,
+                "instructor",
+                None,
+            )
+
+            if not instructor:
+                continue
+
+            result.append({
+                "id":
+                    instructor.id,
+
+                "nombre":
+                    instructor.nombre,
+
+                "imagen":
+                    instructor.imagen,
+            })
+
+        return result
+
+    def get_instructores_certificacion(
+        self,
+        instance,
+    ):
+        raw = (
+            getattr(
+                instance,
+                "instructores_certificacion",
+                "",
+            )
+            or ""
+        )
+
+        if not isinstance(raw, str):
+            return raw
+
+        text = raw.strip()
+
+        if not text:
+            return ""
+
+        if text.lower() in {
+            "none",
+            "null",
+        }:
+            return raw
+
+        text = re.sub(
+            r"\s*(?:&| and | y )\s*",
+            ",",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        names = [
+            item.strip()
+            for item in text.split(",")
+            if item.strip()
+        ]
+
+        return [
+            {
+                "id": index + 1,
+                "name": name,
+            }
+            for index, name
+            in enumerate(names)
+        ]
+
+    # ============================================================
+    # CONTENIDO
+    # ============================================================
+
+    def get_contenido_certificacion(
+        self,
+        instance,
+    ):
+        raw = (
+            getattr(
+                instance,
+                "contenido_certificacion",
+                "",
+            )
+            or ""
+        )
+
+        if not isinstance(raw, str):
+            return {
+                "cantidad_modulos": "",
+                "contenido_certificacion": [],
+            }
+
+        lines = raw.split("\n")
+
+        if not lines:
+            return {
+                "cantidad_modulos": "",
+                "contenido_certificacion": [],
+            }
+
+        cantidad = (
+            lines[0].strip()
+            if lines
+            else ""
+        )
+
+        contenido = [
+            line.strip()
+            for line in lines[1:]
+            if line.strip()
+        ]
+
+        return {
+            "cantidad_modulos":
+                cantidad,
+
+            "contenido_certificacion":
+                contenido,
+        }
+
+    def get_aprendizaje_certificacion(
+        self,
+        instance,
+    ):
+        raw = (
+            getattr(
+                instance,
+                "aprendizaje_certificacion",
+                "",
+            )
+            or ""
+        )
+
+        if not isinstance(raw, str):
+            return raw or []
+
+        return [
+            {
+                "id": index + 1,
+                "nombre": value.strip(),
+            }
+            for index, value
+            in enumerate(
+                raw.split("\n")
+            )
+            if value.strip()
+        ]
+
+    def get_habilidades_certificacion(
+        self,
+        instance,
+    ):
+        raw = (
+            getattr(
+                instance,
+                "habilidades_certificacion",
+                "",
+            )
+            or ""
+        )
+
+        if not isinstance(raw, str):
+            return raw or []
+
+        return [
+            {
+                "id": index + 1,
+                "nombre": value.strip(),
+            }
+            for index, value
+            in enumerate(
+                raw.split("-")
+            )
+            if value.strip()
+        ]
+
+    # ============================================================
+    # VIDEO
+    # ============================================================
+
+    def get_video_certificacion(
+        self,
+        instance,
+    ):
+        raw = getattr(
+            instance,
+            "video_certificacion",
+            "",
+        )
+
+        value = (
+            raw.strip()
+            if isinstance(raw, str)
+            else ""
+        )
+
+        if (
+            not value
+            or value.lower()
+            in {
+                "none",
+                "null",
+            }
+        ):
+            return None
+
+        return {
+            "url": value,
+        }
+
+    # ============================================================
+    # ESPECIALIZACIÓN
+    # ============================================================
+
+    def get_specialization_detail(
+        self,
+        instance,
+    ):
+        # Importante:
+        # no hacemos nada para cursos normales.
+        if not self._is_specialization(
+            instance
+        ):
+            return None
+
+        specialization = getattr(
+            instance,
+            "specialization",
+            None,
+        )
+
+        if not specialization:
+            return None
+
+        return {
+            "id":
+                specialization.id,
+
+            "specialization_id":
+                specialization.specialization_id,
+
+            "specialization_name":
+                specialization.specialization_name,
+
+            "provider":
+                specialization.provider,
+        }
+
+    def get_specialization_courses(
+        self,
+        instance,
+    ):
+        # ========================================================
+        # MUY IMPORTANTE
+        # ========================================================
+        #
+        # El serializer anterior hacía esta consulta siempre que
+        # hubiera specialization FK.
+        #
+        # Aquí solo se ejecuta si la página realmente representa
+        # una Especialización.
+        #
+        # ========================================================
+
+        if not self._is_specialization(
+            instance
+        ):
+            return []
+
+        specialization_id = getattr(
+            instance,
+            "specialization_id",
+            None,
+        )
+
+        if not specialization_id:
+            return []
+
+        courses = (
+            Certificaciones.objects
+            .filter(
+                specialization_id=(
+                    specialization_id
+                ),
+                vigente_certificacion=True,
+            )
+            .exclude(
+                id=instance.id
+            )
+            .select_related(
+                "plataforma_certificacion",
+                "universidad_certificacion",
+                "empresa_certificacion",
+            )
+            .only(
+                "id",
+                "slug",
+                "nombre",
+                "imagen_final",
+                "metadescripcion_certificacion",
+                "tipo_certificacion",
+
+                "plataforma_certificacion_id",
+                "universidad_certificacion_id",
+                "empresa_certificacion_id",
+
+                "plataforma_certificacion__id",
+                "plataforma_certificacion__nombre",
+                "plataforma_certificacion__plat_img",
+                "plataforma_certificacion__plat_ico",
+
+                "universidad_certificacion__id",
+                "universidad_certificacion__nombre",
+                "universidad_certificacion__univ_img",
+                "universidad_certificacion__univ_ico",
+
+                "empresa_certificacion__id",
+                "empresa_certificacion__nombre",
+                "empresa_certificacion__empr_img",
+                "empresa_certificacion__empr_ico",
+            )
+            .order_by(
+                "id"
+            )[:20]
+        )
+
+        return (
+            CertificationSpecializationCourseSerializer(
+                courses,
+                many=True,
+                context=self.context,
+            ).data
+        )
+
+class BlogListSerializer(serializers.ModelSerializer):
+    categoria_blog = serializers.SerializerMethodField()
+    autor_blog = serializers.SerializerMethodField()
+    autor_img = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Blog
+
+        fields = [
+            "id",
+            "slug",
+            "nombre_blog",
+            "fecha_redaccion_blog",
+            "miniatura_blog",
+            "metadescripcion_blog",
+
+            "categoria_blog",
+            "autor_blog",
+            "autor_img",
+        ]
+
+    def get_categoria_blog(self, instance):
+        categoria = getattr(
+            instance,
+            "categoria_blog",
+            None
+        )
+
+        if not categoria:
+            return None
+
+        return {
+            "id": categoria.id,
+            "nombre_categoria_blog":
+                categoria.nombre_categoria_blog,
+        }
+
+    def get_autor_blog(self, instance):
+        autor = getattr(
+            instance,
+            "autor_blog",
+            None
+        )
+
+        if not autor:
+            return None
+
+        return {
+            "id": autor.id,
+            "nombre_autor":
+                autor.nombre_autor,
+            "auto_img":
+                autor.auto_img,
+        }
+
+    def get_autor_img(self, instance):
+        autor = getattr(
+            instance,
+            "autor_blog",
+            None
+        )
+
+        if not autor:
+            return None
+
+        return autor.auto_img
+
 class CertificationSerializer(CertificationSkillsMixin, serializers.ModelSerializer):
     skills = serializers.SerializerMethodField()
     primary_skill = serializers.SerializerMethodField()
