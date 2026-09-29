@@ -2250,30 +2250,75 @@ class MasterclassCertificationsGrids(APIView):
         serializer = CertificationSerializer(masterclass_certifications_queryset, many = True)
         return Response (serializer.data, status=status.HTTP_200_OK)     
 
+@method_decorator(
+    cache_page(60 * 30),
+    name="dispatch"
+)
 class SuggestedCertificationsGrid(APIView):
 
+    authentication_classes = []
+    permission_classes = []
+
     def get(self, request):
-        amount = int(request.query_params.get("amount", 6))
+
+        # =========================================================
+        # AMOUNT
+        # =========================================================
+
+        try:
+            amount = int(
+                request.query_params.get(
+                    "amount",
+                    9
+                )
+            )
+
+        except (TypeError, ValueError):
+            amount = 9
+
+        # Protección para evitar requests absurdos
+        amount = max(
+            1,
+            min(
+                amount,
+                24
+            )
+        )
+
+        # =========================================================
+        # QUERY
+        # =========================================================
 
         qs = (
             Certificaciones.objects
-            .filter(vigente_certificacion=True)
+
+            .filter(
+                vigente_certificacion=True
+            )
+
             .select_related(
                 "plataforma_certificacion",
                 "universidad_certificacion",
                 "empresa_certificacion",
             )
+
             .prefetch_related(
                 Prefetch(
                     "skills_rel",
+
                     queryset=(
                         SkillsCertification.objects
-                        .select_related("skill")
+
+                        .select_related(
+                            "skill"
+                        )
+
                         .only(
                             "id",
                             "certificacion_id",
                             "skill_id",
                             "orden",
+
                             "skill__id",
                             "skill__nombre",
                             "skill__translate",
@@ -2283,47 +2328,87 @@ class SuggestedCertificationsGrid(APIView):
                             "skill__skill_ico",
                             "skill__skill_img",
                         )
-                        .order_by("orden", "id")
+
+                        .order_by(
+                            "orden",
+                            "id"
+                        )
                     ),
+
                     to_attr="skills_links_ordered",
                 )
             )
+
             .only(
                 "id",
                 "slug",
                 "nombre",
+
                 "imagen_final",
+
                 "tipo_certificacion",
                 "nivel_certificacion",
                 "tiempo_certificacion",
+
                 "vigente_certificacion",
 
+                # ==========================
+                # PLATAFORMA
+                # ==========================
+
                 "plataforma_certificacion_id",
+
                 "plataforma_certificacion__id",
                 "plataforma_certificacion__nombre",
                 "plataforma_certificacion__plat_ico",
 
+                # ==========================
+                # UNIVERSIDAD
+                # ==========================
+
                 "universidad_certificacion_id",
+
                 "universidad_certificacion__id",
                 "universidad_certificacion__nombre",
                 "universidad_certificacion__univ_ico",
 
+                # ==========================
+                # EMPRESA
+                # ==========================
+
                 "empresa_certificacion_id",
+
                 "empresa_certificacion__id",
                 "empresa_certificacion__nombre",
                 "empresa_certificacion__empr_ico",
             )
-            .order_by("-id")[:amount]
+
+            # No usar order_by("?").
+            # Leer por PK descendente es muchísimo más barato.
+            .order_by(
+                "-id"
+            )
+
+            [:amount]
         )
+
+        # =========================================================
+        # SERIALIZE
+        # =========================================================
 
         serializer = SuggestedCertificationSerializer(
             qs,
             many=True,
-            context={"request": request}
+            context={
+                "request": request
+            }
         )
 
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK
+        )
+        
 class CertificationsCafam(APIView):
     
     def get(self, request):
@@ -2823,37 +2908,72 @@ class UniversitiesByRegion(APIView):
 
         return Response(grouped)
 
-
+@method_decorator(
+    cache_page(60 * 30),
+    name="dispatch"
+)
 class BlogDetailView(APIView):
-    
-    def get(self, request, slug):
-        try:
-            if not slug:
-                return Response(
-                    {'Error': 'Se requiere el nombre de el blog'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-                
-            blog = Blog.objects.get(slug = slug)
-            
-            serializer = BlogSerializer(blog, context={'request': request})
 
-            data = serializer.data
-            
-            return Response(data)
-        
-        except Certificaciones.DoesNotExist:
-            
+    # Endpoint totalmente público.
+    # Evita consultas innecesarias de sesión/usuario
+    # si el navegador tiene cookies de Django.
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request, slug):
+
+        if not slug:
             return Response(
-                {'error': 'Blog no encontrado'},
+                {
+                    "error": "Se requiere el slug del blog"
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            blog = (
+                Blog.objects
+                .select_related(
+                    "autor_blog",
+                    "categoria_blog",
+                )
+                .get(
+                    slug=slug
+                )
+            )
+
+            serializer = BlogSerializer(
+                blog,
+                context={
+                    "request": request
+                }
+            )
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_200_OK
+            )
+
+        except Blog.DoesNotExist:
+            return Response(
+                {
+                    "error": "Blog no encontrado"
+                },
                 status=status.HTTP_404_NOT_FOUND
             )
-            
-        except ValueError:
+
+        except Exception as error:
+            print(
+                "[BLOG_DETAIL_ERROR]",
+                repr(error)
+            )
+
             return Response(
-                {'error': 'Nombre invalido'},
-                status=status.HTTP_400_BAD_REQUEST
-            ) 
+                {
+                    "error": "Error al cargar el blog"
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 @method_decorator(
     cache_page(60 * 30),
