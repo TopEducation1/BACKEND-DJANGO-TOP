@@ -14,7 +14,15 @@ pymysql.install_as_MySQLdb()
 SECRET_KEY = str(os.getenv('SECRET_KEY'))
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False 
+DEBUG = os.getenv(
+    "DEBUG",
+    "False"
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 ALLOWED_HOSTS = ['backend-django-top-production.up.railway.app', '127.0.0.1', 'localhost','localhost:8000','app.top.education']
 
@@ -241,17 +249,101 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
-# Database configuration
+# ============================================================
+# DATABASE
+# ============================================================
+
+DB_CONN_MAX_AGE = int(
+    os.getenv(
+        "DB_CONN_MAX_AGE",
+        "0"
+    )
+)
+
+DB_CONN_HEALTH_CHECKS = os.getenv(
+    "DB_CONN_HEALTH_CHECKS",
+    "True"
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+DB_CONNECT_TIMEOUT = int(
+    os.getenv(
+        "DB_CONNECT_TIMEOUT",
+        "15"
+    )
+)
+
+DB_READ_TIMEOUT = int(
+    os.getenv(
+        "DB_READ_TIMEOUT",
+        "60"
+    )
+)
+
+DB_WRITE_TIMEOUT = int(
+    os.getenv(
+        "DB_WRITE_TIMEOUT",
+        "60"
+    )
+)
+
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("MYSQL_DATABASE"),
-        "USER": os.getenv("MYSQLUSER"),
-        "PASSWORD": os.getenv("MYSQLPASSWORD"),
-        "HOST": os.getenv("DATABASE_HOST"),
-        "PORT": os.getenv("MYSQLPORT", "3306"),
+
+        "NAME": (
+            os.getenv("MYSQL_DATABASE")
+            or os.getenv("MYSQLDATABASE")
+        ),
+
+        "USER": (
+            os.getenv("MYSQLUSER")
+            or os.getenv("MYSQL_USER")
+        ),
+
+        "PASSWORD": (
+            os.getenv("MYSQLPASSWORD")
+            or os.getenv("MYSQL_PASSWORD")
+        ),
+
+        "HOST": (
+            os.getenv("DATABASE_HOST")
+            or os.getenv("MYSQLHOST")
+        ),
+
+        "PORT": (
+            os.getenv("MYSQLPORT")
+            or "3306"
+        ),
+
+        # ----------------------------------------------------
+        # CONEXIONES
+        # ----------------------------------------------------
+
+        "CONN_MAX_AGE": DB_CONN_MAX_AGE,
+
+        "CONN_HEALTH_CHECKS": DB_CONN_HEALTH_CHECKS,
+
+        # ----------------------------------------------------
+        # MYSQL / PYMYSQL
+        # ----------------------------------------------------
+
         "OPTIONS": {
             "charset": "utf8mb4",
+
+            "connect_timeout":
+                DB_CONNECT_TIMEOUT,
+
+            "read_timeout":
+                DB_READ_TIMEOUT,
+
+            "write_timeout":
+                DB_WRITE_TIMEOUT,
         },
     }
 }
