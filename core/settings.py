@@ -261,12 +261,12 @@ CORS_ALLOW_HEADERS = [
 
 
 # Configuración de cookies seguras
-"""
+
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
-CSRF_COOKIE_SAMESITE = 'Lax'
-SESSION_COOKIE_SAMESITE = 'Lax'
-"""
+
+SESSION_COOKIE_SAMESITE = "None"
+CSRF_COOKIE_SAMESITE = "None"
 
 # El resto de tu configuración permanece igual
 ROOT_URLCONF = 'core.urls'

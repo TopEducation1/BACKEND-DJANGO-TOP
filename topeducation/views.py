@@ -20395,6 +20395,27 @@ class AccountAvailableCoursesAPIView(APIView):
             }
         )
 
+
+class AccountCsrfTokenView(APIView):
+
+    permission_classes = [
+        IsAuthenticated
+    ]
+
+    def get(self, request):
+
+        token = get_token(request)
+
+        return Response(
+            {
+                "ok": True,
+                "data": {
+                    "csrfToken": token,
+                },
+            },
+            status=200,
+        )
+
 def get_help_desk_requester(request):
     user = request.user
 

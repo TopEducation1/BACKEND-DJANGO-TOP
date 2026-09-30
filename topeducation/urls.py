@@ -601,6 +601,12 @@ urlpatterns = [
         AccountHelpDeskDirectRequestView.as_view(),
         name="account-help-desk-direct-request",
     ),
+
+    path(
+        "api/account/csrf/",
+        AccountCsrfTokenView.as_view(),
+        name="account-csrf",
+    ),
 ]
 
 
