@@ -585,6 +585,12 @@ urlpatterns = [
     ),
 
     path(
+        "api/account/csrf/",
+        AccountCsrfTokenView.as_view(),
+        name="account-csrf",
+    ),
+
+    path(
         "api/account/help-desk/options/",
         AccountHelpDeskOptionsView.as_view(),
         name="account-help-desk-options",
@@ -593,19 +599,19 @@ urlpatterns = [
     path(
         "api/account/help-desk/attachment-uploads/",
         AccountHelpDeskAttachmentUploadView.as_view(),
-        name="account-help-desk-attachment-upload",
+        name="account-help-desk-attachment-uploads",
     ),
 
     path(
         "api/account/help-desk/direct-requests/",
         AccountHelpDeskDirectRequestView.as_view(),
-        name="account-help-desk-direct-request",
+        name="account-help-desk-direct-requests",
     ),
 
     path(
-        "api/account/csrf/",
-        AccountCsrfTokenView.as_view(),
-        name="account-csrf",
+        "api/account/help-desk/requests/",
+        AccountHelpDeskRequestsView.as_view(),
+        name="account-help-desk-requests",
     ),
 ]
 
