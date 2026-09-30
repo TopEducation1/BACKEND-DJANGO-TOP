@@ -26,6 +26,10 @@ from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.utils.dateparse import parse_datetime
+from topeducation.models import CVAnalysis
+from topeducation.services.cv_analysis_client import analyze_cv_with_provider
 from django.core.mail import send_mail
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.db import transaction
@@ -19169,10 +19173,7 @@ class LearningRouteRecommendationsAPIView(APIView):
             ),
         )
     
-#ANALISIS DE CV
-from django.utils.dateparse import parse_datetime   
-from topeducation.models import CVAnalysis
-from topeducation.services.cv_analysis_client import analyze_cv_with_provider
+#ANALISIS DE CV  
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -20394,6 +20395,20 @@ class AccountAvailableCoursesAPIView(APIView):
             }
         )
 
+def get_help_desk_requester(request):
+    user = request.user
+
+    full_name = (
+        user.get_full_name()
+        or getattr(user, "username", "")
+        or user.email
+        or "Usuario Top Education"
+    )
+
+    return {
+        "id": str(user.id),
+        "name": str(full_name).strip()[:255],
+    }
 
 class AccountHelpDeskOptionsView(APIView):
 
@@ -20409,15 +20424,24 @@ class AccountHelpDeskOptionsView(APIView):
 
     def get(self, request):
 
+        # ========================================================
+        # CACHE
+        # ========================================================
+
         cached = cache.get(
             self.CACHE_KEY
         )
 
         if cached is not None:
+
             return Response(
                 cached,
-                status=200,
+                status=status.HTTP_200_OK,
             )
+
+        # ========================================================
+        # MX
+        # ========================================================
 
         try:
 
@@ -20439,9 +20463,13 @@ class AccountHelpDeskOptionsView(APIView):
                     "error":
                         "help_desk_timeout",
                     "message":
-                        "La mesa de ayuda no respondió a tiempo.",
+                        (
+                            "La mesa de ayuda "
+                            "no respondió a tiempo."
+                        ),
                 },
-                status=504,
+                status=
+                    status.HTTP_504_GATEWAY_TIMEOUT,
             )
 
         except HelpDeskIntegrationError as exc:
@@ -20449,15 +20477,27 @@ class AccountHelpDeskOptionsView(APIView):
             return Response(
                 {
                     "ok": False,
-                    "error": exc.code,
-                    "message": str(exc),
+                    "error":
+                        exc.code,
+                    "message":
+                        str(exc),
                 },
-                status=exc.status_code,
+                status=
+                    exc.status_code,
             )
 
-        # Un 401 de MX NO significa que el
-        # usuario Colombia perdió sesión.
-        if external_response.status_code == 401:
+        # ========================================================
+        # CREDENCIAL MX
+        # ========================================================
+
+        # Importante:
+        # un 401 de MX no significa que el
+        # usuario Colombia perdió su sesión.
+        if (
+            external_response.status_code
+            ==
+            status.HTTP_401_UNAUTHORIZED
+        ):
 
             return Response(
                 {
@@ -20465,17 +20505,55 @@ class AccountHelpDeskOptionsView(APIView):
                     "error":
                         "help_desk_credentials_error",
                     "message":
-                        "La integración de mesa de ayuda no está disponible.",
+                        (
+                            "La integración de mesa "
+                            "de ayuda no está disponible."
+                        ),
                 },
-                status=503,
+                status=
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+
+        # ========================================================
+        # OTROS ERRORES MX
+        # ========================================================
 
         if not external_response.ok:
 
             return Response(
                 data,
-                status=external_response.status_code,
+                status=
+                    external_response.status_code,
             )
+
+        # ========================================================
+        # VALIDACIÓN BÁSICA DE RESPUESTA
+        # ========================================================
+
+        if (
+            not isinstance(data, dict)
+            or
+            data.get("ok") is not True
+        ):
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "invalid_help_desk_options_response",
+                    "message":
+                        (
+                            "La mesa de ayuda devolvió "
+                            "una respuesta no válida."
+                        ),
+                },
+                status=
+                    status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # ========================================================
+        # CACHE
+        # ========================================================
 
         cache.set(
             self.CACHE_KEY,
@@ -20483,14 +20561,16 @@ class AccountHelpDeskOptionsView(APIView):
             self.CACHE_TIMEOUT,
         )
 
+        # ========================================================
+        # RESPONSE
+        # ========================================================
+
         return Response(
             data,
-            status=200,
+            status=status.HTTP_200_OK,
         )
 
-class AccountHelpDeskAttachmentUploadView(
-    APIView
-):
+class AccountHelpDeskAttachmentUploadView(APIView):
 
     permission_classes = [
         IsAuthenticated
@@ -20508,13 +20588,35 @@ class AccountHelpDeskAttachmentUploadView(
 
     def post(self, request):
 
+        # ========================================================
+        # FILE
+        # ========================================================
+
         file_data = (
             request.data.get("file")
             or {}
         )
 
+        if not isinstance(
+            file_data,
+            dict
+        ):
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "invalid_file",
+                    "message":
+                        "La información del archivo no es válida.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         name = str(
-            file_data.get("name", "")
+            file_data.get(
+                "name",
+                ""
+            )
         ).strip()
 
         content_type = str(
@@ -20522,22 +20624,30 @@ class AccountHelpDeskAttachmentUploadView(
                 "contentType",
                 ""
             )
-        ).strip()
+        ).strip().lower()
 
         try:
+
             size = int(
                 file_data.get(
                     "size",
                     0
                 )
             )
+
         except (
             TypeError,
             ValueError,
         ):
+
             size = 0
 
+        # ========================================================
+        # VALIDACIONES
+        # ========================================================
+
         if not name:
+
             return Response(
                 {
                     "ok": False,
@@ -20546,28 +20656,44 @@ class AccountHelpDeskAttachmentUploadView(
                     "message":
                         "El archivo no tiene un nombre válido.",
                 },
-                status=400,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(name) > 255:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "file_name_too_long",
+                    "message":
+                        "El nombre del archivo es demasiado largo.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if (
             content_type
             not in self.ALLOWED_TYPES
         ):
+
             return Response(
                 {
                     "ok": False,
                     "error":
                         "invalid_file_type",
                     "message":
-                        "Solo se permiten PNG, JPG y PDF.",
+                        "Solo se permiten archivos PNG, JPG/JPEG y PDF.",
                 },
-                status=400,
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if (
             size <= 0
-            or size > self.MAX_FILE_SIZE
+            or
+            size > self.MAX_FILE_SIZE
         ):
+
             return Response(
                 {
                     "ok": False,
@@ -20576,8 +20702,12 @@ class AccountHelpDeskAttachmentUploadView(
                     "message":
                         "Cada archivo debe pesar como máximo 10 MiB.",
                 },
-                status=400,
+                status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # ========================================================
+        # CONTEXTO SEGURO DEL BACKEND
+        # ========================================================
 
         requester = (
             get_help_desk_requester(
@@ -20585,25 +20715,37 @@ class AccountHelpDeskAttachmentUploadView(
             )
         )
 
+        # No viene del navegador.
         institution = (
-            get_help_desk_institution(
-                request
-            )
+            get_help_desk_institution()
         )
 
+        # ========================================================
+        # PAYLOAD MX
+        # ========================================================
+
         payload = {
-            "requester": requester,
+            "requester":
+                requester,
 
             "institution":
                 institution,
 
             "file": {
-                "name": name,
-                "size": size,
+                "name":
+                    name,
+
+                "size":
+                    size,
+
                 "contentType":
                     content_type,
             },
         }
+
+        # ========================================================
+        # MX
+        # ========================================================
 
         try:
 
@@ -20624,12 +20766,18 @@ class AccountHelpDeskAttachmentUploadView(
             return Response(
                 {
                     "ok": False,
+
                     "error":
                         "attachment_authorization_timeout",
+
                     "message":
-                        "No fue posible autorizar el archivo.",
+                        (
+                            "No fue posible autorizar "
+                            "el archivo a tiempo."
+                        ),
                 },
-                status=504,
+                status=
+                    status.HTTP_504_GATEWAY_TIMEOUT,
             )
 
         except HelpDeskIntegrationError as exc:
@@ -20637,11 +20785,18 @@ class AccountHelpDeskAttachmentUploadView(
             return Response(
                 {
                     "ok": False,
-                    "error": exc.code,
-                    "message": str(exc),
+                    "error":
+                        exc.code,
+                    "message":
+                        str(exc),
                 },
-                status=exc.status_code,
+                status=
+                    exc.status_code,
             )
+
+        # ========================================================
+        # RESPUESTA
+        # ========================================================
 
         return Response(
             data,
@@ -20649,15 +20804,20 @@ class AccountHelpDeskAttachmentUploadView(
                 external_response.status_code,
         )
 
-class AccountHelpDeskDirectRequestView(
-    APIView
-):
+class AccountHelpDeskDirectRequestView(APIView):
 
     permission_classes = [
         IsAuthenticated
     ]
 
+    MAX_ATTACHMENTS = 10
+    MAX_DESCRIPTION_LENGTH = 2000
+
     def post(self, request):
+
+        # ========================================================
+        # INPUT FRONTEND
+        # ========================================================
 
         contact_email = str(
             request.data.get(
@@ -20701,7 +20861,88 @@ class AccountHelpDeskDirectRequestView(
             or {}
         )
 
+        # ========================================================
+        # VALIDACIONES
+        # ========================================================
+
+        if not contact_email:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "contact_email_required",
+                    "message":
+                        "Se requiere un correo de contacto.",
+                },
+                status=
+                    status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(contact_email) > 255:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "contact_email_too_long",
+                    "message":
+                        "El correo de contacto es demasiado largo.",
+                },
+                status=
+                    status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+
+            validate_email(
+                contact_email
+            )
+
+        except ValidationError:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "invalid_contact_email",
+                    "message":
+                        "Ingresa un correo electrónico válido.",
+                },
+                status=
+                    status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not category:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "category_required",
+                    "message":
+                        "Selecciona el motivo de contacto.",
+                },
+                status=
+                    status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not priority:
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "priority_required",
+                    "message":
+                        "Selecciona a cuántas personas afecta.",
+                },
+                status=
+                    status.HTTP_400_BAD_REQUEST,
+            )
+
         if not description:
+
             return Response(
                 {
                     "ok": False,
@@ -20710,22 +20951,54 @@ class AccountHelpDeskDirectRequestView(
                     "message":
                         "Describe tu solicitud.",
                 },
-                status=400,
+                status=
+                    status.HTTP_400_BAD_REQUEST,
             )
 
-        if len(description) > 2000:
+        if (
+            len(description)
+            >
+            self.MAX_DESCRIPTION_LENGTH
+        ):
+
             return Response(
                 {
                     "ok": False,
                     "error":
                         "description_too_long",
                     "message":
-                        "La descripción no puede superar 2.000 caracteres.",
+                        (
+                            "La descripción no puede "
+                            "superar 2.000 caracteres."
+                        ),
                 },
-                status=400,
+                status=
+                    status.HTTP_400_BAD_REQUEST,
             )
 
-        if len(attachments) > 10:
+        if not isinstance(
+            attachments,
+            list
+        ):
+
+            return Response(
+                {
+                    "ok": False,
+                    "error":
+                        "invalid_attachments",
+                    "message":
+                        "La lista de archivos adjuntos no es válida.",
+                },
+                status=
+                    status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (
+            len(attachments)
+            >
+            self.MAX_ATTACHMENTS
+        ):
+
             return Response(
                 {
                     "ok": False,
@@ -20734,34 +21007,96 @@ class AccountHelpDeskDirectRequestView(
                     "message":
                         "Solo puedes adjuntar hasta 10 archivos.",
                 },
-                status=400,
+                status=
+                    status.HTTP_400_BAD_REQUEST,
             )
+
+        # ========================================================
+        # TOKENS DE ARCHIVOS
+        # ========================================================
 
         safe_attachments = []
 
         for item in attachments:
 
-            token = str(
-                (
-                    item
-                    if isinstance(
-                        item,
-                        str
-                    )
-                    else item.get(
+            if isinstance(
+                item,
+                str
+            ):
+
+                token = (
+                    item.strip()
+                )
+
+            elif isinstance(
+                item,
+                dict
+            ):
+
+                token = str(
+                    item.get(
                         "uploadToken",
                         ""
                     )
-                )
-            ).strip()
+                ).strip()
 
-            if token:
-                safe_attachments.append(
+            else:
+
+                token = ""
+
+            if not token:
+
+                return Response(
                     {
-                        "uploadToken":
-                            token
-                    }
+                        "ok": False,
+                        "error":
+                            "invalid_attachment_token",
+                        "message":
+                            (
+                                "Uno de los archivos adjuntos "
+                                "no tiene una autorización válida."
+                            ),
+                    },
+                    status=
+                        status.HTTP_400_BAD_REQUEST,
                 )
+
+            safe_attachments.append(
+                {
+                    "uploadToken":
+                        token
+                }
+            )
+
+        # ========================================================
+        # CLIENT CONTEXT
+        # ========================================================
+
+        if not isinstance(
+            client_context,
+            dict
+        ):
+            client_context = {}
+
+        route = str(
+            client_context.get(
+                "route",
+                ""
+            )
+            or ""
+        )[:500]
+
+        user_agent = str(
+            client_context.get(
+                "userAgent",
+                ""
+            )
+            or ""
+        )[:500]
+
+        # ========================================================
+        # CONTEXTO SEGURO DEL BACKEND
+        # ========================================================
 
         requester = (
             get_help_desk_requester(
@@ -20769,11 +21104,15 @@ class AccountHelpDeskDirectRequestView(
             )
         )
 
+        # Estático.
+        # No viene de React ni de account/me.
         institution = (
-            get_help_desk_institution(
-                request
-            )
+            get_help_desk_institution()
         )
+
+        # ========================================================
+        # PAYLOAD EXACTO PARA MX
+        # ========================================================
 
         payload = {
             "requester":
@@ -20799,22 +21138,16 @@ class AccountHelpDeskDirectRequestView(
 
             "clientContext": {
                 "route":
-                    str(
-                        client_context.get(
-                            "route",
-                            ""
-                        )
-                    )[:500],
+                    route,
 
                 "userAgent":
-                    str(
-                        client_context.get(
-                            "userAgent",
-                            ""
-                        )
-                    )[:500],
+                    user_agent,
             },
         }
+
+        # ========================================================
+        # ENVÍO MX
+        # ========================================================
 
         try:
 
@@ -20832,11 +21165,17 @@ class AccountHelpDeskDirectRequestView(
 
         except HelpDeskTimeoutError:
 
-            # MUY IMPORTANTE:
-            # no hacemos retry.
+            # IMPORTANTE:
+            #
+            # MX establece que un timeout
+            # del envío final es ambiguo.
+            #
+            # NO hacemos retry automático.
+
             return Response(
                 {
                     "ok": False,
+
                     "error":
                         "submission_timeout",
 
@@ -20846,12 +21185,13 @@ class AccountHelpDeskDirectRequestView(
                     "message": (
                         "No pudimos confirmar si "
                         "la solicitud fue recibida. "
-                        "Conservamos tus datos; "
-                        "no la enviaremos nuevamente "
-                        "de forma automática."
+                        "Tus datos se conservarán "
+                        "en el formulario y no "
+                        "realizaremos un reenvío automático."
                     ),
                 },
-                status=504,
+                status=
+                    status.HTTP_504_GATEWAY_TIMEOUT,
             )
 
         except HelpDeskIntegrationError as exc:
@@ -20859,6 +21199,7 @@ class AccountHelpDeskDirectRequestView(
             return Response(
                 {
                     "ok": False,
+
                     "error":
                         exc.code,
 
@@ -20868,6 +21209,111 @@ class AccountHelpDeskDirectRequestView(
                 status=
                     exc.status_code,
             )
+
+        # ========================================================
+        # GUARDAR HISTORIAL LOCAL
+        # SOLO SI MX CONFIRMÓ HTTP 201
+        # ========================================================
+
+        if (
+            external_response.status_code
+            ==
+            status.HTTP_201_CREATED
+            and
+            data.get("ok") is True
+        ):
+
+            result = (
+                data.get("data")
+                or {}
+            )
+
+            request_id = str(
+                result.get(
+                    "requestId"
+                )
+                or ""
+            ).strip()
+
+            submitted_at_raw = (
+                result.get(
+                    "submittedAt"
+                )
+            )
+
+            submitted_at = (
+                parse_datetime(
+                    submitted_at_raw
+                )
+                if submitted_at_raw
+                else None
+            )
+
+            confirmed_attachments = (
+                result.get(
+                    "attachments"
+                )
+                or []
+            )
+
+            if request_id:
+
+                try:
+
+                    HelpDeskSubmission.objects.update_or_create(
+                        request_id=
+                            request_id,
+
+                        defaults={
+                            "user":
+                                request.user,
+
+                            "category":
+                                category,
+
+                            "priority":
+                                priority,
+
+                            "contact_email":
+                                contact_email,
+
+                            "description":
+                                description,
+
+                            # Guardamos el mismo valor
+                            # estático que fue enviado a MX.
+                            "institution_name":
+                                institution[
+                                    "name"
+                                ],
+
+                            # Guardamos lo que MX confirmó.
+                            # NO guardamos uploadToken.
+                            "attachments":
+                                confirmed_attachments,
+
+                            "submitted_at":
+                                submitted_at,
+                        },
+                    )
+
+                except Exception as exc:
+
+                    # MUY IMPORTANTE:
+                    #
+                    # MX ya respondió 201.
+                    # Una falla en nuestro historial local
+                    # NO debe convertir un envío exitoso
+                    # en un error para el usuario.
+
+                    print(
+                        "[HELP_DESK_LOCAL_HISTORY_ERROR]",
+                        repr(exc),
+                    )
+
+        # ========================================================
+        # RESPUESTA AL FRONT
+        # ========================================================
 
         return Response(
             data,
