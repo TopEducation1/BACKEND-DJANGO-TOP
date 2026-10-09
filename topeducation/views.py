@@ -9329,76 +9329,684 @@ def auth_logout(request):
     logout(request)
     return JsonResponse({"ok": True})
 
+PROFILE_COUNTRIES = {
+    "Colombia",
+    "México",
+    "Perú",
+    "Chile",
+    "Argentina",
+    "Ecuador",
+    "Estados Unidos",
+    "España",
+}
+
+
+@require_POST
+@api_login_required
+def account_profile_update(request):
+
+    user = request.user
+
+    # ========================================================
+    # PAYLOAD
+    # ========================================================
+
+    try:
+
+        payload = json.loads(
+            request.body.decode(
+                "utf-8"
+            )
+            or "{}"
+        )
+
+    except (
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+    ):
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error":
+                    "invalid_json",
+                "message":
+                    "La información enviada no es válida.",
+            },
+            status=400,
+        )
+
+    full_name = " ".join(
+        str(
+            payload.get(
+                "fullName",
+                "",
+            )
+            or ""
+        ).split()
+    )
+
+    country = str(
+        payload.get(
+            "country",
+            "",
+        )
+        or ""
+    ).strip()
+
+    # ========================================================
+    # VALIDACIONES
+    # ========================================================
+
+    if not full_name:
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error":
+                    "full_name_required",
+                "message":
+                    "Ingresa tu nombre completo.",
+            },
+            status=400,
+        )
+
+    if len(full_name) > 240:
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error":
+                    "full_name_too_long",
+                "message":
+                    "El nombre es demasiado largo.",
+            },
+            status=400,
+        )
+
+    if not country:
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error":
+                    "country_required",
+                "message":
+                    "Selecciona tu país.",
+            },
+            status=400,
+        )
+
+    if (
+        country
+        not in PROFILE_COUNTRIES
+    ):
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error":
+                    "invalid_country",
+                "message":
+                    "El país seleccionado no es válido.",
+            },
+            status=400,
+        )
+
+    # ========================================================
+    # DIVIDIR NOMBRE
+    # ========================================================
+
+    name_parts = (
+        full_name.rsplit(
+            " ",
+            1,
+        )
+    )
+
+    if len(name_parts) == 2:
+        first_name = (
+            name_parts[0]
+            .strip()
+        )
+
+        last_name = (
+            name_parts[1]
+            .strip()
+        )
+
+    else:
+        first_name = full_name
+        last_name = ""
+
+    if (
+        len(first_name) > 120
+        or
+        len(last_name) > 120
+    ):
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error":
+                    "invalid_name_length",
+                "message":
+                    "El nombre ingresado es demasiado largo.",
+            },
+            status=400,
+        )
+
+    # ========================================================
+    # ACTUALIZACIÓN
+    # ========================================================
+
+    try:
+
+        with transaction.atomic():
+
+            route = (
+                LearningRouteLead.objects
+                .select_for_update()
+                .filter(
+                    user=user
+                )
+                .order_by(
+                    "-updated_at",
+                    "-id",
+                )
+                .first()
+            )
+
+            # Respaldo para registros antiguos
+            # donde la ruta pudiera no tener user FK.
+            if (
+                route is None
+                and user.email
+            ):
+
+                route = (
+                    LearningRouteLead.objects
+                    .select_for_update()
+                    .filter(
+                        email__iexact=
+                            user.email
+                    )
+                    .order_by(
+                        "-updated_at",
+                        "-id",
+                    )
+                    .first()
+                )
+
+            if route is None:
+
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error":
+                            "learning_route_not_found",
+                        "message":
+                            (
+                                "No encontramos la información "
+                                "de perfil asociada a tu cuenta."
+                            ),
+                    },
+                    status=404,
+                )
+
+            # -----------------------------------------------
+            # AUTH USER
+            # -----------------------------------------------
+
+            user.first_name = (
+                first_name
+            )
+
+            user.last_name = (
+                last_name
+            )
+
+            user.save(
+                update_fields=[
+                    "first_name",
+                    "last_name",
+                ]
+            )
+
+            # -----------------------------------------------
+            # LEARNING ROUTE
+            # -----------------------------------------------
+
+            route.first_name = (
+                first_name
+            )
+
+            route.last_name = (
+                last_name
+            )
+
+            route.country = (
+                country
+            )
+
+            route.save(
+                update_fields=[
+                    "first_name",
+                    "last_name",
+                    "country",
+                    "updated_at",
+                ]
+            )
+
+    except Exception:
+
+        logger.exception(
+            (
+                "Error actualizando perfil "
+                "user_id=%s"
+            ),
+            user.id,
+        )
+
+        return JsonResponse(
+            {
+                "ok": False,
+                "error":
+                    "profile_update_failed",
+                "message":
+                    (
+                        "No fue posible actualizar "
+                        "tu perfil."
+                    ),
+            },
+            status=500,
+        )
+
+    # ========================================================
+    # RESPONSE
+    # ========================================================
+
+    return JsonResponse(
+        {
+            "ok": True,
+
+            "data": {
+                "id":
+                    user.id,
+
+                "email":
+                    user.email,
+
+                "first_name":
+                    first_name,
+
+                "last_name":
+                    last_name,
+
+                "full_name":
+                    full_name,
+
+                "country":
+                    country,
+
+                "language":
+                    "Español",
+            },
+
+            "message":
+                "Perfil actualizado correctamente.",
+        },
+        status=200,
+    )
+
 @api_login_required
 def account_me(request):
     u = request.user
 
-    billing = UserBillingProfile.objects.filter(user=u).first()
+    # =========================================================
+    # BILLING
+    # =========================================================
+
+    billing = (
+        UserBillingProfile.objects
+        .filter(user=u)
+        .first()
+    )
+
+    # =========================================================
+    # SUSCRIPCIÓN
+    # =========================================================
+
     sub = (
         StripeSubscription.objects
         .filter(user=u)
-        .order_by("-updated_at", "-id")
+        .order_by(
+            "-updated_at",
+            "-id",
+        )
         .first()
     )
+
+    # =========================================================
+    # LEARNING ROUTE
+    # =========================================================
 
     route = (
         LearningRouteLead.objects
         .filter(user=u)
-        .order_by("-updated_at", "-id")
+        .order_by(
+            "-updated_at",
+            "-id",
+        )
         .first()
     )
 
-    selected_plan = getattr(route, "selected_plan", None) or "free"
-    selected_paid_plan = getattr(route, "selected_paid_plan", None) or None
+    # =========================================================
+    # PLAN
+    # =========================================================
+
+    selected_plan = (
+        getattr(
+            route,
+            "selected_plan",
+            None,
+        )
+        or "free"
+    )
+
+    selected_paid_plan = (
+        getattr(
+            route,
+            "selected_paid_plan",
+            None,
+        )
+        or None
+    )
+
+    # =========================================================
+    # DATOS DE PERFIL
+    # =========================================================
+
+    route_first_name = str(
+        getattr(
+            route,
+            "first_name",
+            "",
+        )
+        or ""
+    ).strip()
+
+    route_last_name = str(
+        getattr(
+            route,
+            "last_name",
+            "",
+        )
+        or ""
+    ).strip()
+
+    user_first_name = str(
+        getattr(
+            u,
+            "first_name",
+            "",
+        )
+        or ""
+    ).strip()
+
+    user_last_name = str(
+        getattr(
+            u,
+            "last_name",
+            "",
+        )
+        or ""
+    ).strip()
+
+    # Preferimos los datos del User.
+    # Si un usuario antiguo no los tiene,
+    # recuperamos los de LearningRouteLead.
+    first_name = (
+        user_first_name
+        or route_first_name
+    )
+
+    last_name = (
+        user_last_name
+        or route_last_name
+    )
+
+    full_name = (
+        f"{first_name} {last_name}"
+    ).strip()
+
+    if not full_name:
+        full_name = (
+            u.get_full_name()
+            or u.username
+            or u.email
+            or "Usuario top.education"
+        )
+
+    # El país sí se encuentra en LearningRouteLead,
+    # ya que fue seleccionado durante Empieza Ahora.
+    country = str(
+        getattr(
+            route,
+            "country",
+            "",
+        )
+        or ""
+    ).strip()
+
+    # =========================================================
+    # RESPONSE
+    # =========================================================
 
     return JsonResponse({
         "ok": True,
+
         "data": {
-            "id": u.id,
-            "email": u.email,
-            "full_name": u.get_full_name() or u.username,
+            # -------------------------------------------------
+            # PERFIL
+            # -------------------------------------------------
 
-            "stripe_customer_id": getattr(billing, "stripe_customer_id", None),
-            "stripe_subscription_id": getattr(sub, "stripe_subscription_id", None),
+            "id":
+                u.id,
 
-            "subscription_status": getattr(sub, "status", None),
-            "selected_plan": selected_plan,
-            "selected_paid_plan": selected_paid_plan,
-            "billing_variant": selected_paid_plan,
-            "interval": getattr(sub, "interval", None),
-            "price_id": getattr(sub, "price_id", None),
+            "email":
+                u.email,
+
+            "first_name":
+                first_name,
+
+            "last_name":
+                last_name,
+
+            "full_name":
+                full_name,
+
+            "country":
+                country,
+
+            # Por ahora no tenemos un campo independiente
+            # de idioma guardado para la cuenta.
+            "language":
+                "Español",
+
+            # -------------------------------------------------
+            # STRIPE
+            # -------------------------------------------------
+
+            "stripe_customer_id":
+                getattr(
+                    billing,
+                    "stripe_customer_id",
+                    None,
+                ),
+
+            "stripe_subscription_id":
+                getattr(
+                    sub,
+                    "stripe_subscription_id",
+                    None,
+                ),
+
+            "subscription_status":
+                getattr(
+                    sub,
+                    "status",
+                    None,
+                ),
+
+            "selected_plan":
+                selected_plan,
+
+            "selected_paid_plan":
+                selected_paid_plan,
+
+            "billing_variant":
+                selected_paid_plan,
+
+            "interval":
+                getattr(
+                    sub,
+                    "interval",
+                    None,
+                ),
+
+            "price_id":
+                getattr(
+                    sub,
+                    "price_id",
+                    None,
+                ),
 
             "current_period_end": (
                 sub.current_period_end.isoformat()
-                if sub and sub.current_period_end else None
+                if (
+                    sub
+                    and
+                    sub.current_period_end
+                )
+                else None
             ),
-            "cancel_at_period_end": bool(sub.cancel_at_period_end) if sub else False,
+
+            "cancel_at_period_end": (
+                bool(
+                    sub.cancel_at_period_end
+                )
+                if sub
+                else False
+            ),
+
+            # -------------------------------------------------
+            # TRIAL
+            # -------------------------------------------------
 
             "trial_start": (
                 route.trial_start.isoformat()
-                if route and getattr(route, "trial_start", None) else None
-            ),
-            "trial_end": (
-                route.trial_end.isoformat()
-                if route and getattr(route, "trial_end", None) else None
+                if (
+                    route
+                    and
+                    getattr(
+                        route,
+                        "trial_start",
+                        None,
+                    )
+                )
+                else None
             ),
 
-            "mx_status": getattr(route, "mx_status", None),
-            "mx_user_id": getattr(route, "mx_user_id", None),
-            "mx_magic_link": getattr(route, "mx_magic_link", None),
+            "trial_end": (
+                route.trial_end.isoformat()
+                if (
+                    route
+                    and
+                    getattr(
+                        route,
+                        "trial_end",
+                        None,
+                    )
+                )
+                else None
+            ),
+
+            # -------------------------------------------------
+            # MÉXICO
+            # -------------------------------------------------
+
+            "mx_status":
+                getattr(
+                    route,
+                    "mx_status",
+                    None,
+                ),
+
+            "mx_user_id":
+                getattr(
+                    route,
+                    "mx_user_id",
+                    None,
+                ),
+
+            "mx_magic_link":
+                getattr(
+                    route,
+                    "mx_magic_link",
+                    None,
+                ),
 
             "mx_access_status": (
                 "RESTRICTED"
-                if getattr(sub, "status", None) in ["past_due", "unpaid", "canceled", "cancelled"]
+                if getattr(
+                    sub,
+                    "status",
+                    None,
+                )
+                in [
+                    "past_due",
+                    "unpaid",
+                    "canceled",
+                    "cancelled",
+                ]
                 else "ALLOWED"
             ),
+
             "lifecycle_status": (
                 "EXPIRED"
-                if getattr(sub, "status", None) in ["canceled", "cancelled"]
-                else str(getattr(sub, "status", "") or selected_plan).upper()
+                if getattr(
+                    sub,
+                    "status",
+                    None,
+                )
+                in [
+                    "canceled",
+                    "cancelled",
+                ]
+                else str(
+                    getattr(
+                        sub,
+                        "status",
+                        "",
+                    )
+                    or selected_plan
+                ).upper()
             ),
 
-            "learning_streak_days": getattr(route, "learning_streak_days", 0) if route else 0,
+            # -------------------------------------------------
+            # APRENDIZAJE
+            # -------------------------------------------------
+
+            "learning_streak_days": (
+                getattr(
+                    route,
+                    "learning_streak_days",
+                    0,
+                )
+                if route
+                else 0
+            ),
         }
     })
 

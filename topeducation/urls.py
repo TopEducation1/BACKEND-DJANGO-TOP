@@ -613,6 +613,11 @@ urlpatterns = [
         AccountHelpDeskRequestsView.as_view(),
         name="account-help-desk-requests",
     ),
+    path(
+        "api/account/profile/update/",
+        account_profile_update,
+        name="account-profile-update",
+    ),
 ]
 
 
