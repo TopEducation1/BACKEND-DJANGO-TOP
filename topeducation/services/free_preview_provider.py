@@ -343,6 +343,32 @@ def get_free_preview_last_remote_response(*, provider: Optional[str] = None, lan
     country_code = _normalize_country_code(country_code)
     payload = cache.get(_last_remote_response_cache_key(provider=provider, language=language, country_code=country_code))
     return _ensure_mapping(payload)
+
+
+def get_last_free_preview_remote_response(
+    *,
+    provider: Optional[str] = None,
+    language: Optional[str] = None,
+    country_code: str = DEFAULT_COUNTRY_CODE,
+) -> Dict[str, Any]:
+    """
+    Alias público mantenido por compatibilidad.
+
+    Algunos servicios importan:
+        get_last_free_preview_remote_response
+
+    mientras que la implementación original expone:
+        get_free_preview_last_remote_response
+
+    Ambas funciones devuelven exactamente el mismo diagnóstico
+    temporal de la última respuesta REAL recibida desde MX.
+    """
+
+    return get_free_preview_last_remote_response(
+        provider=provider,
+        language=language,
+        country_code=country_code,
+    )
 def _extract_response_data(
     payload: Any,
 ) -> Dict[str, Any]:
