@@ -28,23 +28,6 @@ def get_free_eligible_queryset(
     QuerySet,
     Dict[str, Dict[str, Any]],
 ]:
-    """
-    Devuelve:
-
-    1. QuerySet de certificaciones locales que están presentes
-       en el catálogo Free Tier de MX.
-    2. Mapa del catálogo hidratado por certificationId.
-
-    Reglas importantes:
-    - El endpoint /v1/b2c/free-preview-courses es la única
-      fuente de elegibilidad Free.
-    - No se infiere elegibilidad por proveedor, título,
-      plataforma ni por pertenecer al catálogo general.
-    - idInterno y preview se conservan desde la hidratación.
-    - No existe una regla contractual de "exactamente tres".
-      La cantidad que Colombia muestre o seleccione es una
-      decisión de producto.
-    """
 
     hydration = get_hydrated_free_catalog(
         force_refresh=force_refresh,

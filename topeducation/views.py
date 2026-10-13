@@ -20035,23 +20035,49 @@ def debug_free_preview_catalog(request):
             },
         )
 
+    
     except FreePreviewProviderError as exc:
         logger.exception(
-            "Error consultando el catálogo Free Preview."
+            "No fue posible preparar el catálogo Free."
         )
 
-        return JsonResponse(
-            {
-                "ok": False,
-                "error": exc.__class__.__name__,
-                "detail": str(exc),
-            },
-            status=502,
-            json_dumps_params={
-                "ensure_ascii": False,
-                "indent": 2,
-            },
+        response_payload = {
+            "ok": False,
+            "error": "free_catalog_unavailable",
+            "message": str(exc),
+        }
+
+        if getattr(
+            settings,
+            "MX_FREE_PREVIEW_EXPOSE_DEBUG_RESPONSE",
+            False,
+        ):
+            # Para el caso de catálogo vacío/normalizado a cero,
+            # el provider ya adjunta la respuesta exacta a la excepción.
+            provider_debug = getattr(
+                exc,
+                "provider_debug",
+                None,
+            )
+
+            # Fallback por si el error ocurrió después de una respuesta
+            # que fue cacheada pero no quedó adjunta a la excepción.
+            if not provider_debug:
+                provider_debug = get_free_preview_last_remote_response(
+                    provider=None,
+                    language=None,
+                    country_code=country_code,
+                )
+
+            response_payload["provider_debug"] = (
+                provider_debug or None
+            )
+
+        return Response(
+            response_payload,
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
+
 
     except Exception as exc:
         logger.exception(

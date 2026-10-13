@@ -259,6 +259,13 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
+MX_FREE_PREVIEW_EXPOSE_DEBUG_RESPONSE = (
+    os.getenv(
+        "MX_FREE_PREVIEW_EXPOSE_DEBUG_RESPONSE",
+        "0",
+    )
+    == "1"
+)
 
 # Configuración de cookies seguras
 
@@ -267,6 +274,7 @@ CSRF_COOKIE_SECURE = True
 
 SESSION_COOKIE_SAMESITE = "None"
 CSRF_COOKIE_SAMESITE = "None"
+
 
 # El resto de tu configuración permanece igual
 ROOT_URLCONF = 'core.urls'
