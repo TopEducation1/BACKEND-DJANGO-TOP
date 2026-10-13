@@ -136,7 +136,9 @@ def admin_purchases_page(request):
 def inicio(request):
     return HttpResponse("<h1>Bienvenido a Top.Education</h1>")
 
+
 @require_GET
+@ensure_csrf_cookie
 def csrf_token_view(request):
     token = get_token(request)
 
@@ -144,7 +146,8 @@ def csrf_token_view(request):
         {
             "ok": True,
             "csrfToken": token,
-        }
+        },
+        status=200,
     )
 
 @login_required
@@ -17841,6 +17844,7 @@ def build_level_recommendations(
             )
 
     return clean_items
+
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteRecommendationsAPIView(APIView):

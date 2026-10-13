@@ -18,7 +18,6 @@ urlpatterns = [
     path('', login_required(views.dashboard, login_url='/signin/'), name='inicio'),
     path("select2/", include("django_select2.urls")),
     path('dashboard/', login_required(views.dashboard, login_url='/signin/'), name='dashboard'),
-
     path("api/auth/csrf/", csrf_token_view, name="auth-csrf"),
     path('signin/', views.signin, name='signin'),
     path('logout/', views.signout, name='logout'),
