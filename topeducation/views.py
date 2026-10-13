@@ -17848,40 +17848,6 @@ def build_level_recommendations(
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LearningRouteRecommendationsAPIView(APIView):
-    """
-    Genera recomendaciones de ruta de aprendizaje utilizando
-    exclusivamente experiencias elegibles provenientes del catálogo
-    oficial Free Tier:
-
-        /v1/b2c/free-preview-courses
-
-    La respuesta separa tres conceptos:
-
-    1. recommended_courses
-       Ruta completa recomendada para el usuario.
-       Puede contener hasta MAX_COMPLETE_RECOMMENDATIONS cursos.
-
-    2. visual_recommended_courses
-       Selección visual utilizada por StartNow.
-       Mantiene un máximo de nueve cursos:
-       tres por cada bloque visual de la ruta.
-
-    3. free_courses
-       Experiencias elegibles para TOP_EDUCATION_FREE.
-
-       El contrato actual NO exige exactamente tres cursos.
-       Puede enviarse una o más experiencias Free elegibles.
-
-    Reglas importantes:
-
-    - No se infiere elegibilidad Free desde el catálogo general.
-    - No se infiere elegibilidad por proveedor.
-    - No se infiere elegibilidad por routeLevel.
-    - No existe restricción contractual de idioma para Free.
-    - No se repite idInterno.
-    - idInterno se conserva exactamente como fue recibido.
-    - El bloque preview se conserva para provisión a México.
-    """
 
     authentication_classes = []
     permission_classes = []
@@ -18230,7 +18196,7 @@ class LearningRouteRecommendationsAPIView(APIView):
         course_language = str(
             course.get("language")
             or ""
-        ).strip().lower()
+        ).strip().lower() or None
 
         # El idioma solamente mejora relevancia.
         # No elimina cursos Free de otros idiomas.
@@ -18803,26 +18769,28 @@ class LearningRouteRecommendationsAPIView(APIView):
                 eligible_queryset,
                 hydrated_map,
             ) = get_free_eligible_queryset(
-                force_refresh=(
-                    force_refresh
-                ),
+                force_refresh=force_refresh,
+
+                # No restringimos la elegibilidad
+                # por proveedor.
                 provider=None,
 
-                # El idioma puede utilizarse para mejorar
-                # personalización si el servicio lo soporta,
-                # pero NO constituye una regla contractual
-                # de elegibilidad.
-                language=language,
+                # IMPORTANTE:
+                # El idioma del usuario NO filtra el
+                # catálogo oficial Free.
+                #
+                # Se utilizará posteriormente únicamente
+                # como señal de ranking en _score_course().
+                language=None,
 
-                country_code=(
-                    country_code
-                ),
+                country_code=country_code,
             )
 
         except (
             FreeRecommendationError,
             FreePreviewProviderError,
         ) as exc:
+
             logger.exception(
                 "No fue posible preparar "
                 "el catálogo Free."
@@ -18831,18 +18799,28 @@ class LearningRouteRecommendationsAPIView(APIView):
             return Response(
                 {
                     "ok": False,
-                    "error": (
-                        "free_catalog_unavailable"
-                    ),
-                    "message": str(exc),
+                    "error":
+                        "free_catalog_unavailable",
+                    "message":
+                        str(exc),
+
+                    "meta": {
+                        "country_code":
+                            country_code,
+
+                        "requested_language":
+                            language,
+
+                        "catalog_language_filter":
+                            None,
+                    },
                 },
-                status=(
-                    status
-                    .HTTP_503_SERVICE_UNAVAILABLE
-                ),
+                status=
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         except Exception as exc:
+
             logger.exception(
                 "Error inesperado preparando "
                 "recomendaciones Free."
@@ -18851,15 +18829,13 @@ class LearningRouteRecommendationsAPIView(APIView):
             return Response(
                 {
                     "ok": False,
-                    "error": (
-                        "free_recommendation_failed"
-                    ),
-                    "message": str(exc),
+                    "error":
+                        "free_recommendation_failed",
+                    "message":
+                        str(exc),
                 },
-                status=(
-                    status
-                    .HTTP_500_INTERNAL_SERVER_ERROR
-                ),
+                status=
+                    status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         # =====================================================
@@ -19960,16 +19936,26 @@ class AccountCVLastAnalysisAPIView(APIView):
             status=status.HTTP_200_OK,
         )
 
-@staff_member_required(login_url="/signin/")
+@staff_member_required(
+    login_url="/signin/"
+)
 @require_GET
-def debug_free_preview_catalog(request):
+def debug_free_preview_catalog(
+    request
+):
     """
-    Vista temporal para inspeccionar en el navegador
-    el catálogo completo de cursos Free Preview.
+    Inspecciona el catálogo Free completo.
+
+    Por defecto NO filtra idioma.
+    El idioma solo se envía al proveedor
+    si se especifica manualmente ?language=...
     """
 
     force_refresh = str(
-        request.GET.get("refresh") or "1"
+        request.GET.get(
+            "refresh"
+        )
+        or "1"
     ).strip().lower() in {
         "1",
         "true",
@@ -19979,125 +19965,163 @@ def debug_free_preview_catalog(request):
     }
 
     provider = str(
-        request.GET.get("provider") or ""
+        request.GET.get(
+            "provider"
+        )
+        or ""
     ).strip() or None
 
-    language = str(
-        request.GET.get("language") or ""
-    ).strip() or None
+    language_param = str(
+        request.GET.get(
+            "language"
+        )
+        or ""
+    ).strip().lower()
+
+    language = (
+        language_param
+        if language_param
+        else None
+    )
 
     country_code = str(
-        request.GET.get("countryCode") or "CO"
-    ).strip().upper()
+        request.GET.get(
+            "countryCode"
+        )
+        or "CO"
+    ).strip().upper()[:2]
 
     try:
-        catalog = get_free_preview_catalog(
-            force_refresh=force_refresh,
-            provider=provider,
-            language=language,
-            country_code=country_code,
-            allow_stale=True,
+
+        catalog = (
+            get_free_preview_catalog(
+                force_refresh=
+                    force_refresh,
+
+                provider=
+                    provider,
+
+                language=
+                    language,
+
+                country_code=
+                    country_code,
+
+                allow_stale=
+                    True,
+            )
         )
 
-        hydrated = hydrate_free_preview_catalog_result(
-            catalog,
-            request=request,
+        hydrated = (
+            hydrate_free_preview_catalog_result(
+                catalog,
+                request=request,
+            )
         )
 
         return JsonResponse(
             {
                 "ok": True,
+
+                "query": {
+                    "provider":
+                        provider,
+
+                    "language":
+                        language,
+
+                    "countryCode":
+                        country_code,
+
+                    "forceRefresh":
+                        force_refresh,
+                },
+
                 "catalog": {
-                    "source": catalog.source,
-                    "stale": catalog.stale,
-                    "total": catalog.total,
-                    "pages": catalog.pages,
-                    "metadata": catalog.metadata,
+                    "source":
+                        catalog.source,
+
+                    "stale":
+                        catalog.stale,
+
+                    "total":
+                        catalog.total,
+
+                    "pages":
+                        catalog.pages,
+
+                    "metadata":
+                        catalog.metadata,
                 },
+
                 "hydration": {
-                    "totalRequested": hydrated.total_requested,
-                    "totalMatched": hydrated.total_matched,
-                    "totalUnmatched": len(
-                        hydrated.unmatched_id_internos
-                    ),
-                    "totalDuplicated": len(
-                        hydrated.duplicated_id_internos
-                    ),
-                    "unmatchedIdInternos": (
-                        hydrated.unmatched_id_internos[:100]
-                    ),
-                    "duplicatedIdInternos": (
-                        hydrated.duplicated_id_internos[:100]
-                    ),
+                    "totalRequested":
+                        hydrated.total_requested,
+
+                    "totalMatched":
+                        hydrated.total_matched,
+
+                    "totalUnmatched":
+                        len(
+                            hydrated
+                            .unmatched_id_internos
+                        ),
+
+                    "totalDuplicated":
+                        len(
+                            hydrated
+                            .duplicated_id_internos
+                        ),
+
+                    "unmatchedIdInternos":
+                        hydrated
+                        .unmatched_id_internos[
+                            :100
+                        ],
+
+                    "duplicatedIdInternos":
+                        hydrated
+                        .duplicated_id_internos[
+                            :100
+                        ],
                 },
-                "items": hydrated.courses,
+
+                "items":
+                    hydrated.courses,
             },
             status=200,
             json_dumps_params={
-                "ensure_ascii": False,
-                "indent": 2,
+                "ensure_ascii":
+                    False,
+
+                "indent":
+                    2,
             },
         )
 
-    
     except FreePreviewProviderError as exc:
+
         logger.exception(
-            "No fue posible preparar el catálogo Free."
-        )
-
-        response_payload = {
-            "ok": False,
-            "error": "free_catalog_unavailable",
-            "message": str(exc),
-        }
-
-        if getattr(
-            settings,
-            "MX_FREE_PREVIEW_EXPOSE_DEBUG_RESPONSE",
-            False,
-        ):
-            # Para el caso de catálogo vacío/normalizado a cero,
-            # el provider ya adjunta la respuesta exacta a la excepción.
-            provider_debug = getattr(
-                exc,
-                "provider_debug",
-                None,
-            )
-
-            # Fallback por si el error ocurrió después de una respuesta
-            # que fue cacheada pero no quedó adjunta a la excepción.
-            if not provider_debug:
-                provider_debug = get_free_preview_last_remote_response(
-                    provider=None,
-                    language=None,
-                    country_code=country_code,
-                )
-
-            response_payload["provider_debug"] = (
-                provider_debug or None
-            )
-
-        return Response(
-            response_payload,
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
-
-
-    except Exception as exc:
-        logger.exception(
-            "Error inesperado consultando el catálogo Free Preview."
+            "No fue posible preparar "
+            "el catálogo Free."
         )
 
         return JsonResponse(
             {
                 "ok": False,
-                "error": exc.__class__.__name__,
-                "detail": str(exc),
+
+                "error":
+                    "free_catalog_unavailable",
+
+                "message":
+                    str(exc),
             },
-            status=500,
+            status=503,
             json_dumps_params={
-                "ensure_ascii": False,
-                "indent": 2,
+                "ensure_ascii":
+                    False,
+                "indent":
+                    2,
             },
         )
 
