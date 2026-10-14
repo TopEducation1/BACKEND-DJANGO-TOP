@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
 
-from django.db.models import Prefetch, Q, QuerySet
+from django.db.models import Prefetch, QuerySet
 
 
 
@@ -41,10 +41,6 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_QUERY_BATCH_SIZE = 500
-
-# Los fallbacks por course key generan condiciones OR con prefijos.
-# Se procesan en grupos pequeños para no construir SQL excesivamente grande.
-DEFAULT_STABLE_KEY_BATCH_SIZE = 75
 
 
 
@@ -843,25 +839,18 @@ def fetch_certifications_by_internal_ids(
 def fetch_certifications_by_stable_course_keys(
     stable_keys: Sequence[str],
     *,
-    batch_size: int = DEFAULT_STABLE_KEY_BATCH_SIZE,
+    batch_size: int = DEFAULT_QUERY_BATCH_SIZE,
 ) -> Dict[str, List[Certificaciones]]:
     """
-    Busca cursos locales por la parte estable de id_interno.
+    Busca coincidencias locales por la parte estable del idInterno,
+    evitando construir cientos de condiciones OR + LIKE.
 
-    Este fallback SOLO se usa cuando el idInterno exacto recibido desde
-    /v1/b2c/free-preview-courses no existe localmente.
-
-    Por ejemplo, permite relacionar:
-
-        MX:    course-v1:CodeSignal+141+3T2026
-        local: course-v1:CodeSignal+141+2T2026
-
-    Ambos comparten:
-
-        course-v1:CodeSignal+141
-
-    La consulta se hace en lotes mediante prefijos indexables y después
-    se vuelve a validar la stable key en Python.
+    Estrategia:
+    1. Consulta únicamente (id, id_interno) de certificaciones activas.
+    2. Calcula la stable key en Python.
+    3. Conserva solo los IDs locales que pertenecen a las stable keys
+       solicitadas por el catálogo Free.
+    4. Carga objetos completos únicamente para esos candidatos.
     """
 
     normalized_keys = _unique_preserving_order([
@@ -875,50 +864,124 @@ def fetch_certifications_by_stable_course_keys(
     if not normalized_keys:
         return grouped
 
-    base_queryset = get_certifications_hydration_queryset()
+    expected_keys = set(normalized_keys)
 
-    for chunk in _chunked(
-        normalized_keys,
-        batch_size,
-    ):
-        query = Q()
+    candidate_ids_by_key: Dict[str, List[int]] = {}
 
-        for stable_key in chunk:
-            query |= Q(
-                id_interno__startswith=f"{stable_key}+"
-            )
+    rows = (
+        Certificaciones.objects
+        .filter(
+            vigente_certificacion=True,
+            id_interno__isnull=False,
+        )
+        .exclude(id_interno="")
+        .values_list(
+            "id",
+            "id_interno",
+        )
+        .iterator(
+            chunk_size=2000
+        )
+    )
 
-        if not query.children:
+    for certification_id, id_interno in rows:
+        stable_key = _stable_course_key(
+            id_interno
+        )
+
+        if (
+            not stable_key
+            or stable_key not in expected_keys
+        ):
             continue
 
-        certifications = base_queryset.filter(query)
-        expected_keys = set(chunk)
+        candidate_ids_by_key.setdefault(
+            stable_key,
+            [],
+        ).append(
+            int(certification_id)
+        )
 
-        for certification in certifications:
-            stable_key = _stable_course_key(
-                certification.id_interno
+    if not candidate_ids_by_key:
+        return grouped
+
+    candidate_ids_int: List[int] = []
+    seen_candidate_ids = set()
+
+    for ids in candidate_ids_by_key.values():
+        for certification_id in ids:
+            certification_id = int(
+                certification_id
             )
 
-            if not stable_key:
+            if certification_id in seen_candidate_ids:
                 continue
 
-            # Defensa adicional para no aceptar coincidencias que no
-            # pertenecen realmente al lote solicitado.
-            if stable_key not in expected_keys:
-                continue
+            seen_candidate_ids.add(
+                certification_id
+            )
 
-            grouped.setdefault(
-                stable_key,
-                [],
-            ).append(certification)
+            candidate_ids_int.append(
+                certification_id
+            )
+
+    base_queryset = (
+        get_certifications_hydration_queryset()
+    )
+
+    certifications_by_id: Dict[
+        int,
+        Certificaciones,
+    ] = {}
+
+    for chunk in _chunked(
+        candidate_ids_int,
+        batch_size,
+    ):
+        for certification in (
+            base_queryset.filter(
+                id__in=chunk
+            )
+        ):
+            certifications_by_id[
+                int(certification.id)
+            ] = certification
+
+    for stable_key, ids in (
+        candidate_ids_by_key.items()
+    ):
+        matches = []
+
+        for certification_id in ids:
+            certification = (
+                certifications_by_id.get(
+                    int(certification_id)
+                )
+            )
+
+            if certification is not None:
+                matches.append(
+                    certification
+                )
+
+        if matches:
+            grouped[
+                stable_key
+            ] = matches
+
+    logger.info(
+        (
+            "Fallback stable key preparado. "
+            "solicitadas=%s keys_con_match=%s "
+            "certificaciones_candidatas=%s"
+        ),
+        len(normalized_keys),
+        len(grouped),
+        len(certifications_by_id),
+    )
 
     return grouped
 
-
-
-# =========================================================
-
-# SELECCIÓN CUANDO HAY IDs DUPLICADOS
 
 # =========================================================
 
