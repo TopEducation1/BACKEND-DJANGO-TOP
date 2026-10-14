@@ -19646,27 +19646,37 @@ class LearningRouteRecommendationsAPIView(APIView):
 
 
 
-        force_refresh = str(
-
+        # =====================================================
+        # REFRESH DEL CATÁLOGO FREE
+        # =====================================================
+        #
+        # Este endpoint NO debe refrescar el catálogo remoto
+        # durante la solicitud del usuario.
+        #
+        # Si el frontend envía force_refresh=True lo registramos
+        # para diagnóstico, pero se ignora deliberadamente.
+        #
+        # La actualización remota debe resolverse por caché /
+        # proceso de refresh independiente, no dentro de StartNow.
+        requested_force_refresh = str(
             request.data.get(
-
                 "force_refresh"
+            )
+            or ""
+        ).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
+        if requested_force_refresh:
+            logger.info(
+                "Learning Route recibió force_refresh=True, "
+                "pero se ignora para evitar bloquear el worker."
             )
 
-            or ""
-
-        ).strip().lower() in {
-
-            "1",
-
-            "true",
-
-            "yes",
-
-            "on",
-
-        }
+        force_refresh = False
 
 
 
@@ -19730,7 +19740,10 @@ class LearningRouteRecommendationsAPIView(APIView):
 
             ) = get_free_eligible_queryset(
 
-                force_refresh=force_refresh,
+                # Siempre False en este endpoint.
+                # Recommendations consume caché y nunca obliga
+                # a esperar una actualización remota.
+                force_refresh=False,
 
 
 
@@ -19760,6 +19773,24 @@ class LearningRouteRecommendationsAPIView(APIView):
 
                 country_code=country_code,
 
+            )
+
+            logger.info(
+                (
+                    "Learning Route: catálogo Free preparado. "
+                    "country=%s requested_language=%s "
+                    "hydrated_courses=%s"
+                ),
+                country_code,
+                language,
+                (
+                    len(hydrated_map)
+                    if isinstance(
+                        hydrated_map,
+                        dict,
+                    )
+                    else 0
+                ),
             )
 
 
