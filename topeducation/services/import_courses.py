@@ -257,13 +257,17 @@ def _stable_course_key_from_id(
     value: str | None,
 ) -> str | None:
     """
-    Materializa la parte estable de un idInterno Open edX.
+    Devuelve la parte estable de un idInterno Open edX.
 
     Ejemplo:
         course-v1:CodeSignal+141+3T2026
         -> course-v1:CodeSignal+141
 
-    Se utiliza para matching rápido del catálogo Free.
+    Reglas:
+    - Solo aplica a IDs con estructura course-v1.
+    - Conserva mayúsculas/minúsculas del valor recibido.
+    - Elimina únicamente el último segmento (+run).
+    - IDs históricos como Course~xxxx no generan stable_course_key.
     """
 
     id_interno = _norm(value)
@@ -271,7 +275,9 @@ def _stable_course_key_from_id(
     if not id_interno:
         return None
 
-    if not id_interno.startswith("course-v1:"):
+    if not id_interno.lower().startswith(
+        "course-v1:"
+    ):
         return None
 
     stable_key, separator, run = (
@@ -2342,11 +2348,24 @@ def upsert_certificacion(
     # =====================================================
     # STABLE COURSE KEY INDEXADO
     # =====================================================
+    # El backfill SQL solo fue necesario para los registros
+    # históricos que ya existían.
+    #
+    # A partir de ahora este importador mantiene el campo:
+    #
+    # course-v1:IBM+ABC+3T2026
+    #     -> course-v1:IBM+ABC
+    #
+    # Course~xxxx
+    #     -> NULL
+    #
+    # Si llega un payload parcial sin id_interno para un registro
+    # existente, no borramos el stable_course_key que ya tenía.
     if _has_field(
         Certificaciones,
         "stable_course_key",
     ):
-        if stable_course_key:
+        if id_interno:
             defaults[
                 "stable_course_key"
             ] = stable_course_key
