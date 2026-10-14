@@ -842,15 +842,15 @@ def fetch_certifications_by_stable_course_keys(
     batch_size: int = DEFAULT_QUERY_BATCH_SIZE,
 ) -> Dict[str, List[Certificaciones]]:
     """
-    Busca coincidencias locales por la parte estable del idInterno,
-    evitando construir cientos de condiciones OR + LIKE.
+    Busca cursos por stable_course_key INDEXADO.
 
-    Estrategia:
-    1. Consulta únicamente (id, id_interno) de certificaciones activas.
-    2. Calcula la stable key en Python.
-    3. Conserva solo los IDs locales que pertenecen a las stable keys
-       solicitadas por el catálogo Free.
-    4. Carga objetos completos únicamente para esos candidatos.
+    IMPORTANTE:
+    Esta función NO recorre las ~30k certificaciones ni construye
+    cientos de OR/LIKE. El matching por course key se resuelve mediante
+    un campo materializado e indexado en Certificaciones.
+
+    Requiere:
+        Certificaciones.stable_course_key
     """
 
     normalized_keys = _unique_preserving_order([
@@ -864,120 +864,73 @@ def fetch_certifications_by_stable_course_keys(
     if not normalized_keys:
         return grouped
 
-    expected_keys = set(normalized_keys)
+    # Defensa durante despliegues escalonados:
+    # si el modelo aún no tiene el campo, no hacemos el escaneo costoso.
+    field_names = {
+        field.name
+        for field in Certificaciones._meta.get_fields()
+    }
 
-    candidate_ids_by_key: Dict[str, List[int]] = {}
-
-    rows = (
-        Certificaciones.objects
-        .filter(
-            vigente_certificacion=True,
-            id_interno__isnull=False,
+    if "stable_course_key" not in field_names:
+        logger.error(
+            (
+                "Certificaciones.stable_course_key no existe todavía. "
+                "Se omite fallback estable para evitar WORKER TIMEOUT."
+            )
         )
-        .exclude(id_interno="")
-        .values_list(
-            "id",
-            "id_interno",
-        )
-        .iterator(
-            chunk_size=2000
-        )
-    )
-
-    for certification_id, id_interno in rows:
-        stable_key = _stable_course_key(
-            id_interno
-        )
-
-        if (
-            not stable_key
-            or stable_key not in expected_keys
-        ):
-            continue
-
-        candidate_ids_by_key.setdefault(
-            stable_key,
-            [],
-        ).append(
-            int(certification_id)
-        )
-
-    if not candidate_ids_by_key:
         return grouped
-
-    candidate_ids_int: List[int] = []
-    seen_candidate_ids = set()
-
-    for ids in candidate_ids_by_key.values():
-        for certification_id in ids:
-            certification_id = int(
-                certification_id
-            )
-
-            if certification_id in seen_candidate_ids:
-                continue
-
-            seen_candidate_ids.add(
-                certification_id
-            )
-
-            candidate_ids_int.append(
-                certification_id
-            )
 
     base_queryset = (
         get_certifications_hydration_queryset()
     )
 
-    certifications_by_id: Dict[
-        int,
-        Certificaciones,
-    ] = {}
-
     for chunk in _chunked(
-        candidate_ids_int,
+        normalized_keys,
         batch_size,
     ):
-        for certification in (
-            base_queryset.filter(
-                id__in=chunk
+        certifications = (
+            base_queryset
+            .filter(
+                stable_course_key__in=chunk,
             )
-        ):
-            certifications_by_id[
-                int(certification.id)
-            ] = certification
+        )
 
-    for stable_key, ids in (
-        candidate_ids_by_key.items()
-    ):
-        matches = []
-
-        for certification_id in ids:
-            certification = (
-                certifications_by_id.get(
-                    int(certification_id)
+        for certification in certifications:
+            stable_key = _clean_text(
+                getattr(
+                    certification,
+                    "stable_course_key",
+                    None,
                 )
             )
 
-            if certification is not None:
-                matches.append(
-                    certification
+            if not stable_key:
+                # Compatibilidad defensiva para registros aún no
+                # backfilleados.
+                stable_key = (
+                    _stable_course_key(
+                        certification.id_interno
+                    )
+                    or ""
                 )
 
-        if matches:
-            grouped[
-                stable_key
-            ] = matches
+            if not stable_key:
+                continue
+
+            grouped.setdefault(
+                stable_key,
+                [],
+            ).append(
+                certification
+            )
 
     logger.info(
         (
-            "Fallback stable key preparado. "
-            "solicitadas=%s keys_con_match=%s "
-            "certificaciones_candidatas=%s"
+            "Fallback stable key indexado preparado. "
+            "solicitadas=%s keys_con_match=%s"
         ),
         len(normalized_keys),
         len(grouped),
-        len(certifications_by_id),
     )
 
     return grouped
@@ -2145,6 +2098,13 @@ def hydrate_free_preview_courses(
     grouped_exact = fetch_certifications_by_internal_ids(
         id_internos,
         batch_size=batch_size,
+    )
+
+    logger.info(
+        "Free hydration exact matching terminado. "
+        "remote=%s exact_keys=%s",
+        len(id_internos),
+        len(grouped_exact),
     )
 
     # -----------------------------------------------------

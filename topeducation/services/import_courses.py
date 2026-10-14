@@ -253,6 +253,42 @@ def _extract_id_interno(cert: dict | None = None) -> str | None:
     return value or None
 
 
+def _stable_course_key_from_id(
+    value: str | None,
+) -> str | None:
+    """
+    Materializa la parte estable de un idInterno Open edX.
+
+    Ejemplo:
+        course-v1:CodeSignal+141+3T2026
+        -> course-v1:CodeSignal+141
+
+    Se utiliza para matching rápido del catálogo Free.
+    """
+
+    id_interno = _norm(value)
+
+    if not id_interno:
+        return None
+
+    if not id_interno.startswith("course-v1:"):
+        return None
+
+    stable_key, separator, run = (
+        id_interno.rpartition("+")
+    )
+
+    if (
+        not separator
+        or not stable_key
+        or not run
+        or "+" not in stable_key
+    ):
+        return None
+
+    return stable_key
+
+
 def _to_bool(value, default=True):
 
     if value is None:
@@ -2127,6 +2163,13 @@ def upsert_certificacion(
     # idInterno del contrato actual MX, con aliases históricos.
     id_interno = _extract_id_interno(cert)
 
+    # Parte estable materializada para matching rápido del catálogo Free.
+    stable_course_key = (
+        _stable_course_key_from_id(
+            id_interno
+        )
+    )
+
     univ_fk = univ_map.get(univ_name) if univ_name else None
     plat_fk = plat_map.get(plat_name) if plat_name else None
 
@@ -2295,6 +2338,23 @@ def upsert_certificacion(
             defaults["id_interno"] = id_interno
         elif obj is None:
             defaults["id_interno"] = None
+
+    # =====================================================
+    # STABLE COURSE KEY INDEXADO
+    # =====================================================
+    if _has_field(
+        Certificaciones,
+        "stable_course_key",
+    ):
+        if stable_course_key:
+            defaults[
+                "stable_course_key"
+            ] = stable_course_key
+
+        elif obj is None:
+            defaults[
+                "stable_course_key"
+            ] = None
 
     # =====================================================
     # TEMA

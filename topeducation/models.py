@@ -335,6 +335,16 @@ class Certificaciones(models.Model):
             "por la plataforma Mexico"
         )
     )
+    stable_course_key = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "Parte estable de id_interno sin el run; "
+            "utilizada para matching del catálogo Free."
+        ),
+    )
 
     specialization = models.ForeignKey(
         Specialization,
