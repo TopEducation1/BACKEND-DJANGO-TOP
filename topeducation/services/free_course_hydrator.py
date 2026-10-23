@@ -3,6 +3,9 @@ from __future__ import annotations
 
 
 import logging
+import re
+
+from unidecode import unidecode
 
 from dataclasses import dataclass
 
@@ -123,6 +126,11 @@ class FreeCourseHydrationResult:
         Coincidencias realizadas por course key cuando el run remoto
         y el run local son diferentes.
 
+    title_matched:
+
+        Coincidencias realizadas por título normalizado cuando México
+        y Colombia usan identificadores distintos para el mismo curso.
+
     """
 
 
@@ -142,6 +150,8 @@ class FreeCourseHydrationResult:
     exact_matched: int = 0
 
     stable_key_matched: int = 0
+
+    title_matched: int = 0
 
 
 
@@ -327,6 +337,50 @@ def _stable_course_key(value: Any) -> Optional[str]:
         return None
 
     return stable_key
+
+
+
+def _normalize_title_key(value: Any) -> str:
+    """
+    Normaliza un título para matching defensivo.
+
+    Está alineado con el slug histórico utilizado por import_courses.py:
+
+        "LLM Server"
+        -> "llm-server"
+
+        "Introducción a IA"
+        -> "introduccion-a-ia"
+
+    Este valor NO sustituye ningún identificador contractual.
+    Solo se utiliza para encontrar metadata local cuando idInterno y
+    stable_course_key no coinciden entre México y Colombia.
+    """
+
+    title = _clean_text(value)
+
+    if not title:
+        return ""
+
+    normalized = unidecode(title)
+    normalized = normalized.lower().strip()
+    normalized = re.sub(
+        r"[^a-z0-9\s-]",
+        "",
+        normalized,
+    )
+    normalized = re.sub(
+        r"\s+",
+        "-",
+        normalized,
+    )
+    normalized = re.sub(
+        r"-{2,}",
+        "-",
+        normalized,
+    )
+
+    return normalized.strip("-")
 
 
 
@@ -934,6 +988,200 @@ def fetch_certifications_by_stable_course_keys(
     )
 
     return grouped
+
+
+def fetch_certifications_by_titles(
+    titles: Sequence[str],
+    *,
+    batch_size: int = DEFAULT_QUERY_BATCH_SIZE,
+) -> Dict[str, List[Certificaciones]]:
+    """
+    Busca certificaciones activas por título como tercer fallback.
+
+    Estrategia:
+
+    1. nombre__in con los títulos remotos originales;
+    2. slug__in con la versión normalizada de esos títulos;
+    3. agrupa los resultados por título normalizado.
+
+    Se evita construir una expresión OR por cada curso. Incluso si el
+    catálogo vuelve a tener cientos de elementos, se ejecutan consultas
+    IN por lotes.
+
+    IMPORTANTE:
+    El resultado de esta función se utiliza únicamente para localizar
+    metadata local. El idInterno que se devuelve al frontend / México
+    continúa siendo el del catálogo Free.
+    """
+
+    cleaned_titles = _unique_preserving_order([
+        _clean_text(title)
+        for title in titles
+        if _clean_text(title)
+    ])
+
+    if not cleaned_titles:
+        return {}
+
+    requested_keys = {
+        key
+        for key in (
+            _normalize_title_key(title)
+            for title in cleaned_titles
+        )
+        if key
+    }
+
+    if not requested_keys:
+        return {}
+
+    grouped: Dict[str, List[Certificaciones]] = {}
+    seen_ids_by_key: Dict[str, set] = {}
+
+    base_queryset = (
+        get_certifications_hydration_queryset()
+    )
+
+    def add_candidate(
+        certification: Certificaciones,
+    ) -> None:
+        key = _normalize_title_key(
+            certification.nombre
+        )
+
+        if (
+            not key
+            or key not in requested_keys
+        ):
+            return
+
+        seen_ids = seen_ids_by_key.setdefault(
+            key,
+            set(),
+        )
+
+        if certification.id in seen_ids:
+            return
+
+        seen_ids.add(certification.id)
+
+        grouped.setdefault(
+            key,
+            [],
+        ).append(certification)
+
+    # -----------------------------------------------------
+    # A. Nombre exacto / collation MySQL.
+    # -----------------------------------------------------
+    for chunk in _chunked(
+        cleaned_titles,
+        batch_size,
+    ):
+        certifications = (
+            base_queryset
+            .filter(
+                nombre__in=chunk,
+            )
+        )
+
+        for certification in certifications:
+            add_candidate(certification)
+
+    # -----------------------------------------------------
+    # B. Slug normalizado.
+    # -----------------------------------------------------
+    normalized_keys = list(
+        requested_keys
+    )
+
+    for chunk in _chunked(
+        normalized_keys,
+        batch_size,
+    ):
+        certifications = (
+            base_queryset
+            .filter(
+                slug__in=chunk,
+            )
+        )
+
+        for certification in certifications:
+            add_candidate(certification)
+
+    logger.info(
+        (
+            "Fallback por título preparado. "
+            "titulos_solicitados=%s keys_con_match=%s"
+        ),
+        len(cleaned_titles),
+        len(grouped),
+    )
+
+    return grouped
+
+
+def _choose_title_fallback_certification(
+    certifications: Sequence[Certificaciones],
+    preview_item: Mapping[str, Any],
+) -> Optional[Certificaciones]:
+    """
+    Selecciona un candidato del fallback por título con protección
+    contra asociaciones ambiguas.
+
+    - Si solo existe un candidato local, se acepta.
+    - Si existen varios, se usa provider/idioma/metadata.
+    - Si los dos mejores tienen la misma puntuación, se considera
+      ambiguo y NO se fuerza el match.
+    """
+
+    if not certifications:
+        return None
+
+    if len(certifications) == 1:
+        return certifications[0]
+
+    ranked = sorted(
+        certifications,
+        key=lambda certification: (
+            _certification_match_score(
+                certification,
+                preview_item,
+            )[0],
+            certification.id,
+        ),
+        reverse=True,
+    )
+
+    best = ranked[0]
+
+    best_score = _certification_match_score(
+        best,
+        preview_item,
+    )[0]
+
+    second_score = _certification_match_score(
+        ranked[1],
+        preview_item,
+    )[0]
+
+    if best_score == second_score:
+        logger.warning(
+            (
+                "Fallback por título ambiguo; se omite. "
+                "remote_title=%s candidatos=%s score=%s"
+            ),
+            _clean_text(
+                preview_item.get("title")
+            ),
+            [
+                certification.id
+                for certification in ranked
+            ],
+            best_score,
+        )
+        return None
+
+    return best
 
 
 # =========================================================
@@ -2069,18 +2317,38 @@ def hydrate_free_preview_courses(
     """
     Hidrata masivamente los cursos del catálogo Free.
 
-    Estrategia de matching:
+    Estrategia de matching, en orden estricto:
 
-    1. Se intenta idInterno exacto.
-    2. Solo si no existe, se intenta la misma stable course key
-       (organización + course code, ignorando únicamente el run).
-    3. Los cursos que no existen localmente se ignoran. No bloquean
-       los demás cursos Free que sí puedan hidratarse.
-    4. El idInterno que se conserva en el resultado SIEMPRE es el que
-       llegó desde México; el registro local solo aporta metadata.
+    1. idInterno exacto.
+    2. stable_course_key:
+       misma organización + course code, ignorando solamente el run.
+    3. título normalizado:
+       último fallback para casos donde MX y Colombia representan
+       el mismo curso con course codes diferentes.
 
-    De esta manera, si MX entrega 360 cursos y Colombia puede relacionar
-    50, esos 50 quedan disponibles para construir recomendaciones.
+       Ejemplo real:
+           MX:
+               course-v1:AI+localmodel01x+2T2024
+
+           Colombia:
+               course-v1:AI+llmserver01x+2T2024
+
+           Ambos:
+               LLM Server
+
+    Reglas de seguridad:
+
+    - El fallback por título solo se evalúa si fallaron exact y stable.
+    - Si un mismo título remoto aparece más de una vez en el catálogo,
+      no se utiliza como fallback automático.
+    - Si existen varios candidatos locales y la puntuación no permite
+      distinguir uno claramente, el curso se deja sin match.
+    - El idInterno final SIEMPRE es el recibido desde México.
+      El registro local únicamente aporta metadata y certificationId.
+
+    Así, si MX entrega N cursos y Colombia puede relacionar solo una
+    parte, esos matches siguen disponibles para recommendations sin que
+    los demás bloqueen el proceso.
     """
 
     normalized_items = normalize_free_catalog_items(
@@ -2101,14 +2369,16 @@ def hydrate_free_preview_courses(
     )
 
     logger.info(
-        "Free hydration exact matching terminado. "
-        "remote=%s exact_keys=%s",
+        (
+            "Free hydration exact matching terminado. "
+            "remote=%s exact_keys=%s"
+        ),
         len(id_internos),
         len(grouped_exact),
     )
 
     # -----------------------------------------------------
-    # 2. PREPARAR FALLBACK POR STABLE COURSE KEY
+    # 2. FALLBACK POR STABLE COURSE KEY
     # -----------------------------------------------------
     stable_keys_to_search: List[str] = []
 
@@ -2131,9 +2401,86 @@ def hydrate_free_preview_courses(
 
     grouped_stable = (
         fetch_certifications_by_stable_course_keys(
-            stable_keys_to_search
+            stable_keys_to_search,
+            batch_size=batch_size,
         )
         if stable_keys_to_search
+        else {}
+    )
+
+    # -----------------------------------------------------
+    # 3. FALLBACK POR TÍTULO
+    # -----------------------------------------------------
+    #
+    # Solo preparamos títulos para elementos que siguen sin match
+    # después de exact + stable.
+    #
+    title_key_counts: Dict[str, int] = {}
+
+    for preview_item in normalized_items:
+        remote_id = preview_item["idInterno"]
+
+        if grouped_exact.get(remote_id):
+            continue
+
+        stable_key = _stable_course_key(
+            remote_id
+        )
+
+        if (
+            stable_key
+            and grouped_stable.get(stable_key)
+        ):
+            continue
+
+        title_key = _normalize_title_key(
+            preview_item.get("title")
+        )
+
+        if not title_key:
+            continue
+
+        title_key_counts[title_key] = (
+            title_key_counts.get(
+                title_key,
+                0,
+            )
+            + 1
+        )
+
+    unique_title_items = [
+        preview_item
+        for preview_item in normalized_items
+        if (
+            _normalize_title_key(
+                preview_item.get("title")
+            )
+            and title_key_counts.get(
+                _normalize_title_key(
+                    preview_item.get("title")
+                ),
+                0,
+            )
+            == 1
+        )
+    ]
+
+    titles_to_search = _unique_preserving_order([
+        _clean_text(
+            item.get("title")
+        )
+        for item in unique_title_items
+        if _clean_text(
+            item.get("title")
+        )
+    ])
+
+    grouped_title = (
+        fetch_certifications_by_titles(
+            titles_to_search,
+            batch_size=batch_size,
+        )
+        if titles_to_search
         else {}
     )
 
@@ -2143,11 +2490,18 @@ def hydrate_free_preview_courses(
 
     exact_matched = 0
     stable_key_matched = 0
+    title_matched = 0
 
     for preview_item in normalized_items:
         remote_id_interno = preview_item[
             "idInterno"
         ]
+
+        matches: Sequence[
+            Certificaciones
+        ] = []
+
+        match_mode = ""
 
         # -------------------------------------------------
         # PRIORIDAD 1: ID EXACTO
@@ -2157,10 +2511,11 @@ def hydrate_free_preview_courses(
             [],
         )
 
-        match_mode = "exact"
+        if matches:
+            match_mode = "exact"
 
         # -------------------------------------------------
-        # PRIORIDAD 2: MISMO COURSE, OTRO RUN
+        # PRIORIDAD 2: MISMO COURSE CODE, OTRO RUN
         # -------------------------------------------------
         if not matches:
             stable_key = _stable_course_key(
@@ -2179,7 +2534,42 @@ def hydrate_free_preview_courses(
                     )
 
         # -------------------------------------------------
-        # NO EXISTE LOCALMENTE: SE IGNORA, NO BLOQUEA
+        # PRIORIDAD 3: TÍTULO NORMALIZADO
+        # -------------------------------------------------
+        if not matches:
+            title_key = _normalize_title_key(
+                preview_item.get("title")
+            )
+
+            # No usamos automáticamente títulos remotos duplicados.
+            if (
+                title_key
+                and title_key_counts.get(
+                    title_key,
+                    0,
+                )
+                == 1
+            ):
+                title_matches = grouped_title.get(
+                    title_key,
+                    [],
+                )
+
+                certification = (
+                    _choose_title_fallback_certification(
+                        title_matches,
+                        preview_item,
+                    )
+                )
+
+                if certification is not None:
+                    matches = [
+                        certification
+                    ]
+                    match_mode = "title"
+
+        # -------------------------------------------------
+        # SIN MATCH LOCAL
         # -------------------------------------------------
         if not matches:
             unmatched_ids.append(
@@ -2187,15 +2577,21 @@ def hydrate_free_preview_courses(
             )
             continue
 
-        if len(matches) > 1:
+        if (
+            match_mode != "title"
+            and len(matches) > 1
+        ):
             duplicated_ids.append(
                 remote_id_interno
             )
 
-        certification = choose_best_certification(
-            matches,
-            preview_item,
-        )
+        if match_mode == "title":
+            certification = matches[0]
+        else:
+            certification = choose_best_certification(
+                matches,
+                preview_item,
+            )
 
         if certification is None:
             unmatched_ids.append(
@@ -2203,15 +2599,20 @@ def hydrate_free_preview_courses(
             )
             continue
 
+        # -------------------------------------------------
+        # DIAGNÓSTICO DE MATCH
+        # -------------------------------------------------
         if match_mode == "exact":
             exact_matched += 1
-        else:
+
+        elif match_mode == "stable_course_key":
             stable_key_matched += 1
 
-            logger.debug(
+            logger.info(
                 (
-                    "Catálogo Free hidratado por stable key. "
-                    "remote_id=%s local_id=%s stable_key=%s"
+                    "Free match por stable key. "
+                    "remote_id=%s local_id=%s "
+                    "stable_key=%s"
                 ),
                 remote_id_interno,
                 certification.id_interno,
@@ -2220,7 +2621,31 @@ def hydrate_free_preview_courses(
                 ),
             )
 
-        # hydrate_free_course conserva el idInterno remoto de MX.
+        elif match_mode == "title":
+            title_matched += 1
+
+            logger.warning(
+                (
+                    "Free match por título normalizado. "
+                    "remote_id=%s local_id=%s "
+                    "remote_title=%s local_title=%s "
+                    "certification_id=%s"
+                ),
+                remote_id_interno,
+                certification.id_interno,
+                _clean_text(
+                    preview_item.get("title")
+                ),
+                _clean_text(
+                    certification.nombre
+                ),
+                certification.id,
+            )
+
+        # -------------------------------------------------
+        # HIDRATAR
+        # -------------------------------------------------
+        # hydrate_free_course conserva SIEMPRE el idInterno remoto.
         hydrated_courses.append(
             hydrate_free_course(
                 preview_item,
@@ -2241,13 +2666,14 @@ def hydrate_free_preview_courses(
         (
             "Catálogo Free hidratado. "
             "solicitados=%s coincidentes=%s "
-            "exactos=%s stable_key=%s "
+            "exactos=%s stable_key=%s titulo=%s "
             "sin_coincidencia=%s duplicados=%s"
         ),
         len(normalized_items),
         len(hydrated_courses),
         exact_matched,
         stable_key_matched,
+        title_matched,
         len(unmatched_ids),
         len(duplicated_ids),
     )
@@ -2260,8 +2686,8 @@ def hydrate_free_preview_courses(
         total_matched=len(hydrated_courses),
         exact_matched=exact_matched,
         stable_key_matched=stable_key_matched,
+        title_matched=title_matched,
     )
-
 
 
 
