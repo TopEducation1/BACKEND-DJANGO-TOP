@@ -2197,12 +2197,38 @@ def upsert_certificacion(
         empresa_fk=empresa_fk,
     )
 
-    slug_value = build_unique_slug(
-        Certificaciones,
-        nombre,
-        existing_obj=obj,
-        max_length=500,
+    # =====================================================
+    # SLUG DE MATCH LOCAL
+    # =====================================================
+    # El slug se genera a partir del nombre y también nos sirve como
+    # clave exacta/normalizada para relacionar el catálogo Free:
+    #
+    #     "LLM Server" -> "llm-server"
+    #
+    # IMPORTANTE:
+    # Si la certificación ya existe y tiene un slug válido, lo
+    # conservamos. Antes se ejecutaba build_unique_slug() en cada
+    # sincronización, generando una consulta adicional contra toda
+    # Certificaciones aunque el slug no hubiera cambiado.
+    existing_slug = (
+        _norm(getattr(obj, "slug", None))
+        if obj is not None
+        else ""
     )
+
+    if (
+        existing_slug
+        and existing_slug != "default-slug"
+        and not existing_slug.startswith("slice")
+    ):
+        slug_value = existing_slug
+    else:
+        slug_value = build_unique_slug(
+            Certificaciones,
+            nombre,
+            existing_obj=obj,
+            max_length=500,
+        )
 
     merged_skill_names = _extract_skill_names_from_cert(cert)
     habilidades_value = (

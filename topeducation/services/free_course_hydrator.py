@@ -991,92 +991,104 @@ def fetch_certifications_by_stable_course_keys(
 
 
 def fetch_certifications_by_titles(
-    titles: Sequence[str],
+    preview_items: Sequence[Mapping[str, Any]],
     *,
     batch_size: int = DEFAULT_QUERY_BATCH_SIZE,
 ) -> Dict[str, List[Certificaciones]]:
     """
-    Busca certificaciones activas por título como tercer fallback.
+    Tercer fallback de matching, sin LIKE ni búsquedas parciales.
 
-    IMPORTANTE:
-    La detección de candidatos se hace en DOS FASES para evitar cargar
-    relaciones, skills y metadata de miles de registros.
+    Utiliza únicamente valores que import_courses.py ya materializa:
 
-    Fase 1:
-        Consulta ligera únicamente de:
-            id, nombre / slug
+        Free.title       -> Certificaciones.slug
+        Free.provider    -> Certificaciones.source_provider
+        Free.language    -> Certificaciones.language_normalized
 
-    Fase 2:
-        Hidrata relaciones completas solamente para los IDs que realmente
-        hicieron match.
+    Ejemplo:
+        Free:
+            title = "LLM Server"
+            provider = "EDX"
+            language = "en"
 
-    El idInterno remoto de México nunca se sustituye.
+        Local:
+            slug = "llm-server"
+            source_provider = "EDX"
+            language_normalized = "en"
+
+    La consulta es por igualdad exacta y puede apoyarse en el índice
+    compuesto idx_cert_free_match.
+
+    El idInterno remoto de México nunca se modifica.
     """
 
-    cleaned_titles = _unique_preserving_order([
-        _clean_text(title)
-        for title in titles
-        if _clean_text(title)
-    ])
+    grouped_requests: Dict[
+        Tuple[str, str],
+        List[str],
+    ] = {}
 
-    if not cleaned_titles:
-        return {}
+    # title_key -> item remoto, solo para claves únicas.
+    title_key_counts: Dict[str, int] = {}
 
-    title_key_by_title = {
-        title: _normalize_title_key(title)
-        for title in cleaned_titles
-    }
+    for preview_item in preview_items or []:
+        if not isinstance(preview_item, Mapping):
+            continue
 
-    requested_keys = {
-        key
-        for key in title_key_by_title.values()
-        if key
-    }
+        title_key = _normalize_title_key(
+            preview_item.get("title")
+        )
 
-    if not requested_keys:
-        return {}
+        if not title_key:
+            continue
 
-    # -----------------------------------------------------
-    # FASE 1: LOCALIZAR SOLO IDs CANDIDATOS
-    # -----------------------------------------------------
-    candidate_ids_by_key: Dict[str, List[int]] = {}
-    seen_candidate_ids_by_key: Dict[str, set] = {}
+        title_key_counts[title_key] = (
+            title_key_counts.get(title_key, 0)
+            + 1
+        )
 
-    def add_candidate_id(
-        key: str,
-        certification_id: int,
-    ) -> None:
+    for preview_item in preview_items or []:
+        if not isinstance(preview_item, Mapping):
+            continue
+
+        title_key = _normalize_title_key(
+            preview_item.get("title")
+        )
+
         if (
-            not key
-            or key not in requested_keys
+            not title_key
+            or title_key_counts.get(title_key, 0) != 1
         ):
-            return
+            continue
 
-        seen_ids = (
-            seen_candidate_ids_by_key
-            .setdefault(
-                key,
-                set(),
-            )
+        provider = _normalize_provider(
+            preview_item.get("provider")
         )
 
-        certification_id = int(
-            certification_id
+        language = _normalize_language(
+            preview_item.get("language")
         )
 
-        if certification_id in seen_ids:
-            return
-
-        seen_ids.add(
-            certification_id
+        group_key = (
+            provider,
+            language,
         )
 
-        candidate_ids_by_key.setdefault(
-            key,
+        grouped_requests.setdefault(
+            group_key,
             [],
-        ).append(
-            certification_id
-        )
+        ).append(title_key)
+
+    if not grouped_requests:
+        return {}
+
+    candidate_ids_by_key: Dict[
+        str,
+        List[int],
+    ] = {}
+
+    seen_ids_by_key: Dict[
+        str,
+        set,
+    ] = {}
 
     lightweight_queryset = (
         Certificaciones.objects
@@ -1086,91 +1098,86 @@ def fetch_certifications_by_titles(
         .order_by()
     )
 
-    # -----------------------------------------------------
-    # A. Nombre exacto
-    # -----------------------------------------------------
-    for chunk in _chunked(
-        cleaned_titles,
-        batch_size,
-    ):
-        rows = (
-            lightweight_queryset
-            .filter(
-                nombre__in=chunk,
-            )
-            .values_list(
-                "id",
-                "nombre",
-            )
+    def add_candidate(
+        title_key: str,
+        certification_id: int,
+    ) -> None:
+        certification_id = int(certification_id)
+
+        seen = seen_ids_by_key.setdefault(
+            title_key,
+            set(),
         )
 
-        for certification_id, nombre in rows:
-            key = _normalize_title_key(
-                nombre
-            )
+        if certification_id in seen:
+            return
 
-            add_candidate_id(
-                key,
-                certification_id,
-            )
+        seen.add(certification_id)
+
+        candidate_ids_by_key.setdefault(
+            title_key,
+            [],
+        ).append(certification_id)
 
     # -----------------------------------------------------
-    # B. Slug normalizado
-    # Solo para títulos aún sin candidato por nombre.
+    # MATCH EXACTO:
+    # source_provider + language_normalized + slug
     # -----------------------------------------------------
-    missing_keys = [
-        key
-        for key in requested_keys
-        if not candidate_ids_by_key.get(
-            key
+    for (
+        provider,
+        language,
+    ), title_keys in grouped_requests.items():
+
+        unique_title_keys = _unique_preserving_order(
+            title_keys
         )
-    ]
 
-    for chunk in _chunked(
-        missing_keys,
-        batch_size,
-    ):
-        rows = (
-            lightweight_queryset
-            .filter(
+        for chunk in _chunked(
+            unique_title_keys,
+            batch_size,
+        ):
+            queryset = lightweight_queryset.filter(
                 slug__in=chunk,
             )
-            .values_list(
+
+            if provider:
+                queryset = queryset.filter(
+                    source_provider=provider,
+                )
+
+            if language:
+                queryset = queryset.filter(
+                    language_normalized=language,
+                )
+
+            rows = queryset.values_list(
                 "id",
-                "nombre",
                 "slug",
             )
-        )
 
-        for (
-            certification_id,
-            nombre,
-            slug,
-        ) in rows:
-            key = (
-                _normalize_title_key(
-                    nombre
+            for certification_id, slug in rows:
+                title_key = _clean_text(slug)
+
+                if not title_key:
+                    continue
+
+                add_candidate(
+                    title_key,
+                    certification_id,
                 )
-                or _clean_text(slug)
-            )
-
-            add_candidate_id(
-                key,
-                certification_id,
-            )
 
     if not candidate_ids_by_key:
         logger.info(
             (
-                "Fallback por título sin candidatos. "
-                "titulos_solicitados=%s"
+                "Fallback Free por metadata exacta sin candidatos. "
+                "items=%s"
             ),
-            len(cleaned_titles),
+            len(preview_items or []),
         )
         return {}
 
     # -----------------------------------------------------
-    # FASE 2: HIDRATAR SOLO CANDIDATOS REALES
+    # HIDRATAR SOLO LOS IDs QUE YA HICIERON MATCH EXACTO
     # -----------------------------------------------------
     candidate_ids: List[int] = []
     seen_candidate_ids = set()
@@ -1187,7 +1194,6 @@ def fetch_certifications_by_titles(
             seen_candidate_ids.add(
                 certification_id
             )
-
             candidate_ids.append(
                 certification_id
             )
@@ -1205,15 +1211,13 @@ def fetch_certifications_by_titles(
         candidate_ids,
         batch_size,
     ):
-        certifications = (
+        for certification in (
             hydration_queryset
             .filter(
                 id__in=chunk,
             )
             .order_by("id")
-        )
-
-        for certification in certifications:
+        ):
             certifications_by_id[
                 int(certification.id)
             ] = certification
@@ -1223,39 +1227,21 @@ def fetch_certifications_by_titles(
         List[Certificaciones],
     ] = {}
 
-    for (
-        key,
-        ids,
-    ) in candidate_ids_by_key.items():
-        matches: List[
-            Certificaciones
-        ] = []
-
-        for certification_id in ids:
-            certification = (
-                certifications_by_id.get(
-                    int(certification_id)
-                )
-            )
-
-            if certification is not None:
-                matches.append(
-                    certification
-                )
+    for title_key, ids in candidate_ids_by_key.items():
+        matches = [
+            certifications_by_id[int(certification_id)]
+            for certification_id in ids
+            if int(certification_id) in certifications_by_id
+        ]
 
         if matches:
-            grouped[
-                key
-            ] = matches
+            grouped[title_key] = matches
 
     logger.info(
         (
-            "Fallback por título preparado. "
-            "titulos_solicitados=%s "
-            "keys_con_match=%s "
-            "candidatos_hidratados=%s"
+            "Fallback Free por metadata exacta preparado. "
+            "keys_con_match=%s candidatos_hidratados=%s"
         ),
-        len(cleaned_titles),
         len(grouped),
         len(certifications_by_id),
     )
@@ -2620,10 +2606,10 @@ def hydrate_free_preview_courses(
 
     grouped_title = (
         fetch_certifications_by_titles(
-            titles_to_search,
+            unique_title_items,
             batch_size=batch_size,
         )
-        if titles_to_search
+        if unique_title_items
         else {}
     )
 
@@ -2677,7 +2663,7 @@ def hydrate_free_preview_courses(
                     )
 
         # -------------------------------------------------
-        # PRIORIDAD 3: TÍTULO NORMALIZADO
+        # PRIORIDAD 3: SLUG + PROVIDER + LANGUAGE EXACTOS
         # -------------------------------------------------
         if not matches:
             title_key = _normalize_title_key(
