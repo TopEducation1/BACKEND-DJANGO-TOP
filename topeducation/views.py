@@ -20716,87 +20716,58 @@ class LearningRouteRecommendationsAPIView(APIView):
 
 
         # =====================================================
-
         # VALIDACIÓN MÍNIMA
-
+        # =====================================================
+        #
+        # La ruta necesita mínimo 3 experiencias distintas.
         # =====================================================
 
-        #
+        MIN_RECOMMENDATIONS_REQUIRED = 3
 
-        # Ya NO exigimos tres.
-
-        #
-
-        # Para generar una ruta necesitamos como mínimo
-
-        # una experiencia elegible.
-
-        # =====================================================
-
-
-
-        if not selected_courses:
+        if (
+            len(selected_courses)
+            < MIN_RECOMMENDATIONS_REQUIRED
+        ):
 
             return Response(
-
                 {
-
                     "ok": False,
 
                     "error": (
-
                         "insufficient_recommendations"
-
                     ),
 
                     "message": (
-
-                        "No fue posible seleccionar "
-
-                        "experiencias Free elegibles."
-
+                        "No se encontraron suficientes "
+                        "recomendaciones elegibles para "
+                        "crear tu ruta."
                     ),
 
                     "meta": {
+                        "minimum_required": (
+                            MIN_RECOMMENDATIONS_REQUIRED
+                        ),
 
-                        "minimum_required": 1,
-
-                        "available": 0,
+                        "available": (
+                            len(selected_courses)
+                        ),
 
                         "complete_available": (
-
                             len(
-
                                 complete_ranked_courses
-
                             )
-
                         ),
 
                         "hydrated": (
-
                             len(hydrated_map)
-
                         ),
-
-                        "topic_matches": (
-
-                            len(relevant_ids)
-
-                        ),
-
                     },
-
                 },
 
                 status=(
-
                     status
-
                     .HTTP_503_SERVICE_UNAVAILABLE
-
                 ),
-
             )
 
 
@@ -21339,60 +21310,47 @@ class LearningRouteRecommendationsAPIView(APIView):
 
 
 
-        if not free_courses:
+        MIN_FREE_RECOMMENDATIONS_REQUIRED = 3
 
+        if (
+            len(free_courses)
+            < MIN_FREE_RECOMMENDATIONS_REQUIRED
+        ):
             return Response(
-
                 {
-
                     "ok": False,
 
                     "error": (
-
                         "insufficient_free_recommendations"
-
                     ),
 
                     "message": (
-
-                        "No fue posible seleccionar "
-
-                        "ninguna experiencia Free "
-
-                        "elegible."
-
+                        "No se encontraron suficientes "
+                        "experiencias Free elegibles."
                     ),
 
                     "meta": {
-
-                        "minimum_required": 1,
-
-                        "available": 0,
-
-                        "complete_available": (
-
-                            len(
-
-                                complete_serialized_courses
-
-                            )
-
+                        "minimum_required": (
+                            MIN_FREE_RECOMMENDATIONS_REQUIRED
                         ),
 
-                    },
+                        "available": (
+                            len(free_courses)
+                        ),
 
+                        "complete_available": (
+                            len(
+                                complete_serialized_courses
+                            )
+                        ),
+                    },
                 },
 
                 status=(
-
                     status
-
                     .HTTP_503_SERVICE_UNAVAILABLE
-
                 ),
-
             )
-
 
 
         # =====================================================
@@ -21641,7 +21599,7 @@ class LearningRouteRecommendationsAPIView(APIView):
 
 
 
-                    "minimum_free_courses": 1,
+                    "minimum_free_courses": 3,
 
 
 
@@ -21672,15 +21630,8 @@ class LearningRouteRecommendationsAPIView(APIView):
 
 
                     "free_route_available": (
-
-                        len(
-
-                            free_courses
-
-                        )
-
-                        >= 1
-
+                        len(free_courses)
+                        >= 3
                     ),
 
 
