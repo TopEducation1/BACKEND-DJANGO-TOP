@@ -998,20 +998,19 @@ def fetch_certifications_by_titles(
     """
     Busca certificaciones activas por título como tercer fallback.
 
-    Estrategia:
-
-    1. nombre__in con los títulos remotos originales;
-    2. slug__in con la versión normalizada de esos títulos;
-    3. agrupa los resultados por título normalizado.
-
-    Se evita construir una expresión OR por cada curso. Incluso si el
-    catálogo vuelve a tener cientos de elementos, se ejecutan consultas
-    IN por lotes.
-
     IMPORTANTE:
-    El resultado de esta función se utiliza únicamente para localizar
-    metadata local. El idInterno que se devuelve al frontend / México
-    continúa siendo el del catálogo Free.
+    La detección de candidatos se hace en DOS FASES para evitar cargar
+    relaciones, skills y metadata de miles de registros.
+
+    Fase 1:
+        Consulta ligera únicamente de:
+            id, nombre / slug
+
+    Fase 2:
+        Hidrata relaciones completas solamente para los IDs que realmente
+        hicieron match.
+
+    El idInterno remoto de México nunca se sustituye.
     """
 
     cleaned_titles = _unique_preserving_order([
@@ -1023,98 +1022,242 @@ def fetch_certifications_by_titles(
     if not cleaned_titles:
         return {}
 
+    title_key_by_title = {
+        title: _normalize_title_key(title)
+        for title in cleaned_titles
+    }
+
     requested_keys = {
         key
-        for key in (
-            _normalize_title_key(title)
-            for title in cleaned_titles
-        )
+        for key in title_key_by_title.values()
         if key
     }
 
     if not requested_keys:
         return {}
 
-    grouped: Dict[str, List[Certificaciones]] = {}
-    seen_ids_by_key: Dict[str, set] = {}
+    # -----------------------------------------------------
+    # FASE 1: LOCALIZAR SOLO IDs CANDIDATOS
+    # -----------------------------------------------------
+    candidate_ids_by_key: Dict[str, List[int]] = {}
+    seen_candidate_ids_by_key: Dict[str, set] = {}
 
-    base_queryset = (
-        get_certifications_hydration_queryset()
-    )
-
-    def add_candidate(
-        certification: Certificaciones,
+    def add_candidate_id(
+        key: str,
+        certification_id: int,
     ) -> None:
-        key = _normalize_title_key(
-            certification.nombre
-        )
-
         if (
             not key
             or key not in requested_keys
         ):
             return
 
-        seen_ids = seen_ids_by_key.setdefault(
-            key,
-            set(),
+        seen_ids = (
+            seen_candidate_ids_by_key
+            .setdefault(
+                key,
+                set(),
+            )
         )
 
-        if certification.id in seen_ids:
+        certification_id = int(
+            certification_id
+        )
+
+        if certification_id in seen_ids:
             return
 
-        seen_ids.add(certification.id)
+        seen_ids.add(
+            certification_id
+        )
 
-        grouped.setdefault(
+        candidate_ids_by_key.setdefault(
             key,
             [],
-        ).append(certification)
+        ).append(
+            certification_id
+        )
+
+    lightweight_queryset = (
+        Certificaciones.objects
+        .filter(
+            vigente_certificacion=True,
+        )
+        .order_by()
+    )
 
     # -----------------------------------------------------
-    # A. Nombre exacto / collation MySQL.
+    # A. Nombre exacto
     # -----------------------------------------------------
     for chunk in _chunked(
         cleaned_titles,
         batch_size,
     ):
-        certifications = (
-            base_queryset
+        rows = (
+            lightweight_queryset
             .filter(
                 nombre__in=chunk,
             )
-        )
-
-        for certification in certifications:
-            add_candidate(certification)
-
-    # -----------------------------------------------------
-    # B. Slug normalizado.
-    # -----------------------------------------------------
-    normalized_keys = list(
-        requested_keys
-    )
-
-    for chunk in _chunked(
-        normalized_keys,
-        batch_size,
-    ):
-        certifications = (
-            base_queryset
-            .filter(
-                slug__in=chunk,
+            .values_list(
+                "id",
+                "nombre",
             )
         )
 
+        for certification_id, nombre in rows:
+            key = _normalize_title_key(
+                nombre
+            )
+
+            add_candidate_id(
+                key,
+                certification_id,
+            )
+
+    # -----------------------------------------------------
+    # B. Slug normalizado
+    # Solo para títulos aún sin candidato por nombre.
+    # -----------------------------------------------------
+    missing_keys = [
+        key
+        for key in requested_keys
+        if not candidate_ids_by_key.get(
+            key
+        )
+    ]
+
+    for chunk in _chunked(
+        missing_keys,
+        batch_size,
+    ):
+        rows = (
+            lightweight_queryset
+            .filter(
+                slug__in=chunk,
+            )
+            .values_list(
+                "id",
+                "nombre",
+                "slug",
+            )
+        )
+
+        for (
+            certification_id,
+            nombre,
+            slug,
+        ) in rows:
+            key = (
+                _normalize_title_key(
+                    nombre
+                )
+                or _clean_text(slug)
+            )
+
+            add_candidate_id(
+                key,
+                certification_id,
+            )
+
+    if not candidate_ids_by_key:
+        logger.info(
+            (
+                "Fallback por título sin candidatos. "
+                "titulos_solicitados=%s"
+            ),
+            len(cleaned_titles),
+        )
+        return {}
+
+    # -----------------------------------------------------
+    # FASE 2: HIDRATAR SOLO CANDIDATOS REALES
+    # -----------------------------------------------------
+    candidate_ids: List[int] = []
+    seen_candidate_ids = set()
+
+    for ids in candidate_ids_by_key.values():
+        for certification_id in ids:
+            certification_id = int(
+                certification_id
+            )
+
+            if certification_id in seen_candidate_ids:
+                continue
+
+            seen_candidate_ids.add(
+                certification_id
+            )
+
+            candidate_ids.append(
+                certification_id
+            )
+
+    certifications_by_id: Dict[
+        int,
+        Certificaciones,
+    ] = {}
+
+    hydration_queryset = (
+        get_certifications_hydration_queryset()
+    )
+
+    for chunk in _chunked(
+        candidate_ids,
+        batch_size,
+    ):
+        certifications = (
+            hydration_queryset
+            .filter(
+                id__in=chunk,
+            )
+            .order_by("id")
+        )
+
         for certification in certifications:
-            add_candidate(certification)
+            certifications_by_id[
+                int(certification.id)
+            ] = certification
+
+    grouped: Dict[
+        str,
+        List[Certificaciones],
+    ] = {}
+
+    for (
+        key,
+        ids,
+    ) in candidate_ids_by_key.items():
+        matches: List[
+            Certificaciones
+        ] = []
+
+        for certification_id in ids:
+            certification = (
+                certifications_by_id.get(
+                    int(certification_id)
+                )
+            )
+
+            if certification is not None:
+                matches.append(
+                    certification
+                )
+
+        if matches:
+            grouped[
+                key
+            ] = matches
 
     logger.info(
         (
             "Fallback por título preparado. "
-            "titulos_solicitados=%s keys_con_match=%s"
+            "titulos_solicitados=%s "
+            "keys_con_match=%s "
+            "candidatos_hidratados=%s"
         ),
         len(cleaned_titles),
         len(grouped),
+        len(certifications_by_id),
     )
 
     return grouped
