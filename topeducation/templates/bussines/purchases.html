@@ -1,17 +1,18 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Historial de Compras | Top Education{% endblock %}
-{% block header %}Historial de Compras{% endblock %}
+{% block title %}Pagos y suscripciones | Top Education{% endblock %}
+{% block header %}Pagos y suscripciones{% endblock %}
 
 {% block botons %}
   <div class="flex w-full flex-wrap items-center gap-3 md:w-auto">
     <button
       type="button"
-      onclick="loadData(1)"
+      onclick="loadData(1, true)"
       class="rounded-full bg-slate-950 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-black"
     >
-      Actualizar
+      <i class="fa-solid fa-rotate mr-2"></i>
+      Actualizar desde Stripe
     </button>
   </div>
 {% endblock %}
@@ -19,100 +20,188 @@
 {% block content %}
 <div class="space-y-5">
 
+  <!-- ===================================================== -->
+  <!-- CABECERA -->
+  <!-- ===================================================== -->
   <div class="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
-    <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+    <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
       <div>
         <p class="text-xs font-black uppercase tracking-[0.22em] text-[#034694]">
-          Pagos y suscripciones
+          Stripe · B2C
         </p>
 
         <h3 class="mt-1 text-xl font-black text-slate-950">
-          Historial de compras
+          Historial financiero
         </h3>
 
-        <p class="mt-2 text-sm text-slate-500">
-          Consulta los pagos registrados, estados de factura y referencias asociadas.
+        <p class="mt-2 max-w-3xl text-sm text-slate-500">
+          Consulta facturas, pagos y suscripciones directamente desde Stripe.
+          Cuando existe relación local, también se muestra el usuario de Top Education.
         </p>
       </div>
 
-      <span id="countInfo" class="mt-3 inline-flex w-fit rounded-full bg-slate-100 px-4 py-2 text-sm font-bold text-slate-600 md:mt-0">
-        —
-      </span>
+      <div class="flex flex-wrap items-center gap-2">
+        <span
+          id="sourceInfo"
+          class="inline-flex rounded-full bg-slate-100 px-4 py-2 text-xs font-black text-slate-600"
+        >
+          Fuente: —
+        </span>
+
+        <span
+          id="countInfo"
+          class="inline-flex rounded-full bg-[#034694]/10 px-4 py-2 text-sm font-black text-[#034694]"
+        >
+          —
+        </span>
+      </div>
     </div>
   </div>
 
+  <!-- ===================================================== -->
+  <!-- RESUMEN -->
+  <!-- ===================================================== -->
+  <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-[0.15em] text-slate-400">Registros</p>
+      <p id="summaryTotal" class="mt-2 text-2xl font-black text-slate-950">—</p>
+    </div>
+
+    <div class="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-[0.15em] text-slate-400">Pagos / facturas</p>
+      <p id="summaryPayments" class="mt-2 text-2xl font-black text-slate-950">—</p>
+    </div>
+
+    <div class="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-[0.15em] text-slate-400">Suscripciones</p>
+      <p id="summarySubscriptions" class="mt-2 text-2xl font-black text-slate-950">—</p>
+    </div>
+
+    <div class="rounded-[1.5rem] border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-black uppercase tracking-[0.15em] text-slate-400">Activas / trial</p>
+      <p id="summaryActive" class="mt-2 text-2xl font-black text-[#199653]">—</p>
+    </div>
+  </div>
+
+  <!-- ===================================================== -->
+  <!-- FILTROS -->
+  <!-- ===================================================== -->
   <div class="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
     <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
 
-      <div class="flex flex-col gap-3 md:flex-row md:items-center">
-        <div class="relative">
+      <div class="grid w-full gap-3 sm:grid-cols-2 xl:flex xl:w-auto xl:flex-row xl:items-center">
+        <div class="relative sm:col-span-2 xl:col-span-1">
           <input
             id="searchInput"
             type="text"
-            placeholder="Buscar por email, nombre, invoice, session…"
-            class="w-full rounded-full border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm font-medium text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10 md:w-[380px]"
+            placeholder="Buscar email, nombre, invoice, payment, subscription…"
+            class="w-full rounded-full border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm font-medium text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10 xl:w-[390px]"
           />
 
           <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M12.9 14.32a8 8 0 111.414-1.414l3.387 3.387a1 1 0 01-1.414 1.414l-3.387-3.387zM14 8a6 6 0 11-12 0 6 6 0 0112 0z" clip-rule="evenodd" />
-            </svg>
+            <i class="fa-solid fa-magnifying-glass text-sm"></i>
           </span>
         </div>
 
         <select
+          id="typeSelect"
+          class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 outline-none transition focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10 xl:w-[190px]"
+        >
+          <option value="">Todos los tipos</option>
+          <option value="payment">Pagos / facturas</option>
+          <option value="subscription">Suscripciones</option>
+          <option value="invoice">Solo facturas</option>
+          <option value="payment_intent">Solo PaymentIntents</option>
+        </select>
+
+        <select
           id="statusSelect"
-          class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 outline-none transition focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10 md:w-[220px]"
+          class="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 outline-none transition focus:border-[#034694] focus:ring-4 focus:ring-[#034694]/10 xl:w-[210px]"
         >
           <option value="">Todos los estados</option>
-          <option value="paid">paid</option>
-          <option value="open">open</option>
-          <option value="void">void</option>
-          <option value="uncollectible">uncollectible</option>
-          <option value="failed">failed</option>
+
+          <optgroup label="Pagos / facturas">
+            <option value="paid">paid</option>
+            <option value="succeeded">succeeded</option>
+            <option value="processing">processing</option>
+            <option value="open">open</option>
+            <option value="draft">draft</option>
+            <option value="void">void</option>
+            <option value="uncollectible">uncollectible</option>
+            <option value="failed">failed</option>
+            <option value="canceled">canceled</option>
+          </optgroup>
+
+          <optgroup label="Suscripciones">
+            <option value="active">active</option>
+            <option value="trialing">trialing</option>
+            <option value="past_due">past_due</option>
+            <option value="incomplete">incomplete</option>
+            <option value="incomplete_expired">incomplete_expired</option>
+            <option value="unpaid">unpaid</option>
+            <option value="paused">paused</option>
+          </optgroup>
         </select>
       </div>
 
       <button
         type="button"
-        onclick="loadData(1)"
+        onclick="loadData(1, false)"
         class="rounded-full bg-[#034694] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-blue-900"
       >
         Buscar resultados
       </button>
     </div>
 
-    <div id="errorBox" class="mt-4 hidden rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 p-4 text-sm text-[#D33B3E]">
+    <div
+      id="errorBox"
+      class="mt-4 hidden rounded-2xl border border-[#D33B3E]/30 bg-[#D33B3E]/10 p-4 text-sm text-[#D33B3E]"
+    >
       <div class="mb-1 font-black">No se pudo cargar</div>
       <pre id="errorText" class="whitespace-pre-wrap break-words text-xs"></pre>
     </div>
+
+    <div
+      id="warningBox"
+      class="mt-4 hidden rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
+    >
+      <div class="font-black">Stripe no estuvo disponible</div>
+      <p class="mt-1">
+        Se están mostrando los datos locales disponibles.
+      </p>
+    </div>
   </div>
 
+  <!-- ===================================================== -->
+  <!-- TABLA -->
+  <!-- ===================================================== -->
   <div class="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
     <div class="overflow-x-auto">
-      <table class="w-full min-w-[1100px] text-left text-sm">
+      <table class="w-full min-w-[1450px] text-left text-sm">
         <thead>
-          <tr class="border-b border-slate-200 bg-slate-50 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-            <th class="px-4 py-4">Fecha</th>
-            <th class="px-4 py-4">Usuario</th>
-            <th class="px-4 py-4">Email</th>
-            <th class="px-4 py-4">Monto</th>
-            <th class="px-4 py-4">Estado</th>
-            <th class="px-4 py-4">Referencia</th>
-            <th class="px-4 py-4">Detalle</th>
+          <tr class="border-b border-slate-200 bg-slate-50 text-xs font-black uppercase tracking-[0.10em] text-slate-500">
+            <th class="px-3 py-3">Fecha</th>
+            <th class="px-3 py-3">Tipo</th>
+            <th class="px-3 py-3">Usuario</th>
+            <th class="px-3 py-3">Email</th>
+            <th class="px-3 py-3">Monto / plan</th>
+            <th class="px-3 py-3">Estado</th>
+            <th class="px-3 py-3">Referencia</th>
+            <th class="px-3 py-3">Período</th>
+            <th class="px-3 py-3">Detalle</th>
           </tr>
         </thead>
 
         <tbody id="tableBody" class="divide-y divide-slate-100">
           <tr>
-            <td colspan="7" class="px-4 py-10 text-center">
+            <td colspan="9" class="px-4 py-10 text-center">
               <div class="mx-auto max-w-md">
                 <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
                   <i class="fa-solid fa-spinner fa-spin text-xl"></i>
                 </div>
 
                 <p class="mt-4 text-sm font-bold text-slate-600">
-                  Cargando…
+                  Cargando Stripe…
                 </p>
               </div>
             </td>
@@ -131,7 +220,10 @@
         ← Anterior
       </button>
 
-      <div class="rounded-full bg-slate-50 px-4 py-2 text-center text-sm font-bold text-slate-500" id="pageInfo">
+      <div
+        id="pageInfo"
+        class="rounded-full bg-slate-50 px-4 py-2 text-center text-sm font-bold text-slate-500"
+      >
         —
       </div>
 
@@ -155,17 +247,31 @@
   let pageSize = 25;
   let totalItems = 0;
 
-  const ZERO_DECIMAL = new Set(["bif","clp","djf","gnf","jpy","kmf","krw","mga","pyg","rwf","ugx","vnd","vuv","xaf","xof","xpf","cop"]);
+  const ZERO_DECIMAL = new Set([
+    "bif","clp","djf","gnf","jpy","kmf","krw",
+    "mga","pyg","rwf","ugx","vnd","vuv","xaf","xof","xpf"
+  ]);
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
   function money(amount, currency) {
-    if (amount == null) return "—";
+    if (amount == null || amount === "") return "—";
 
     const cur = (currency || "usd").toLowerCase();
     const n = Number(amount);
 
-    if (Number.isNaN(n)) return String(amount);
+    if (Number.isNaN(n)) return escapeHtml(amount);
 
-    const value = ZERO_DECIMAL.has(cur) ? n : n / 100;
+    const value = ZERO_DECIMAL.has(cur)
+      ? n
+      : n / 100;
 
     try {
       return new Intl.NumberFormat("es-CO", {
@@ -183,9 +289,23 @@
 
     const x = new Date(d);
 
-    if (Number.isNaN(x.getTime())) return String(d);
+    if (Number.isNaN(x.getTime())) {
+      return escapeHtml(d);
+    }
 
     return x.toLocaleString("es-CO");
+  }
+
+  function fmtShortDate(d) {
+    if (!d) return "—";
+
+    const x = new Date(d);
+
+    if (Number.isNaN(x.getTime())) {
+      return escapeHtml(d);
+    }
+
+    return x.toLocaleDateString("es-CO");
   }
 
   function showError(msg, extra) {
@@ -193,25 +313,28 @@
     const pre = document.getElementById("errorText");
 
     box.classList.remove("hidden");
-    pre.textContent = (msg || "Error") + (extra ? ("\n\n" + extra) : "");
+    pre.textContent =
+      (msg || "Error") +
+      (extra ? ("\n\n" + extra) : "");
   }
 
   function hideError() {
     document.getElementById("errorBox").classList.add("hidden");
     document.getElementById("errorText").textContent = "";
+    document.getElementById("warningBox").classList.add("hidden");
   }
 
   function setLoadingRow() {
     document.getElementById("tableBody").innerHTML = `
       <tr>
-        <td colspan="7" class="px-4 py-10 text-center">
+        <td colspan="9" class="px-4 py-10 text-center">
           <div class="mx-auto max-w-md">
             <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
               <i class="fa-solid fa-spinner fa-spin text-xl"></i>
             </div>
 
             <p class="mt-4 text-sm font-bold text-slate-600">
-              Cargando…
+              Cargando Stripe…
             </p>
           </div>
         </td>
@@ -220,29 +343,64 @@
   }
 
   function normalizeResponse(payload) {
-    if (Array.isArray(payload)) return { total: payload.length, items: payload };
+    if (Array.isArray(payload)) {
+      return {
+        total: payload.length,
+        items: payload,
+        summary: {},
+        meta: {}
+      };
+    }
 
-    const items = payload?.items || payload?.data || payload?.results || [];
-    const total = payload?.total ?? payload?.count ?? (Array.isArray(items) ? items.length : 0);
+    const items =
+      payload?.items ||
+      payload?.data ||
+      payload?.results ||
+      [];
+
+    const total =
+      payload?.total ??
+      payload?.count ??
+      (Array.isArray(items) ? items.length : 0);
 
     return {
       total,
-      items: Array.isArray(items) ? items : []
+      items: Array.isArray(items) ? items : [],
+      summary: payload?.summary || {},
+      meta: payload?.meta || {}
     };
   }
 
-  async function loadData(page = 1) {
+  async function loadData(page = 1, forceRefresh = false) {
     currentPage = page;
+
     hideError();
     setLoadingRow();
 
-    const q = document.getElementById("searchInput").value.trim();
-    const status = document.getElementById("statusSelect").value.trim();
+    const q =
+      document.getElementById("searchInput")
+      .value
+      .trim();
 
-    const params = new URLSearchParams({ page, page_size: pageSize });
+    const status =
+      document.getElementById("statusSelect")
+      .value
+      .trim();
+
+    const type =
+      document.getElementById("typeSelect")
+      .value
+      .trim();
+
+    const params = new URLSearchParams({
+      page,
+      page_size: pageSize
+    });
 
     if (q) params.append("q", q);
     if (status) params.append("status", status);
+    if (type) params.append("type", type);
+    if (forceRefresh) params.append("refresh", "1");
 
     const url = `${API_URL}?${params.toString()}`;
 
@@ -254,51 +412,103 @@
         }
       });
 
-      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      const ct =
+        (res.headers.get("content-type") || "")
+        .toLowerCase();
+
       const text = await res.text();
 
       if (!ct.includes("application/json")) {
         showError(
           `Respuesta no-JSON. HTTP ${res.status}`,
-          text.slice(0, 900)
+          text.slice(0, 1200)
         );
 
-        document.getElementById("tableBody").innerHTML = emptyErrorRow();
+        document.getElementById("tableBody").innerHTML =
+          emptyErrorRow();
+
         updatePager();
         return;
       }
 
-      const raw = text ? JSON.parse(text) : {};
+      const raw = text
+        ? JSON.parse(text)
+        : {};
 
       if (!res.ok) {
-        showError(`HTTP ${res.status}`, JSON.stringify(raw, null, 2).slice(0, 1200));
+        showError(
+          `HTTP ${res.status}`,
+          JSON.stringify(raw, null, 2).slice(0, 1800)
+        );
 
-        document.getElementById("tableBody").innerHTML = emptyErrorRow();
+        document.getElementById("tableBody").innerHTML =
+          emptyErrorRow();
+
         updatePager();
         return;
       }
 
       const norm = normalizeResponse(raw);
+
       totalItems = norm.total || 0;
 
       renderTable(norm.items);
       renderPagination();
+      renderSummary(norm.summary, norm.meta);
 
-      document.getElementById("countInfo").textContent = `${totalItems} registro(s)`;
+      document.getElementById("countInfo").textContent =
+        `${totalItems} registro(s)`;
+
+      if (norm.meta?.stripe_error) {
+        document
+          .getElementById("warningBox")
+          .classList.remove("hidden");
+      }
 
       updatePager();
     } catch (e) {
-      showError("Error de red/JS", (e?.stack || e?.message || String(e)));
+      showError(
+        "Error de red/JS",
+        e?.stack || e?.message || String(e)
+      );
 
-      document.getElementById("tableBody").innerHTML = emptyErrorRow();
+      document.getElementById("tableBody").innerHTML =
+        emptyErrorRow();
+
       updatePager();
     }
+  }
+
+  function renderSummary(summary, meta) {
+    document.getElementById("summaryTotal").textContent =
+      summary?.total ?? 0;
+
+    document.getElementById("summaryPayments").textContent =
+      summary?.payments ?? 0;
+
+    document.getElementById("summarySubscriptions").textContent =
+      summary?.subscriptions ?? 0;
+
+    document.getElementById("summaryActive").textContent =
+      summary?.active_subscriptions ?? 0;
+
+    const source =
+      meta?.source === "stripe"
+        ? "Stripe en vivo"
+        : (
+            meta?.source === "local_fallback"
+              ? "Respaldo local"
+              : "—"
+          );
+
+    document.getElementById("sourceInfo").textContent =
+      `Fuente: ${source}`;
   }
 
   function emptyErrorRow() {
     return `
       <tr>
-        <td colspan="7" class="px-4 py-10 text-center">
+        <td colspan="9" class="px-4 py-10 text-center">
           <div class="mx-auto max-w-md">
             <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#D33B3E]/10 text-[#D33B3E]">
               <i class="fa-solid fa-triangle-exclamation text-xl"></i>
@@ -319,36 +529,260 @@
     let cls = "bg-slate-100 text-slate-500";
     let label = status || "—";
 
-    if (s === "paid" || s === "succeeded") {
+    if (
+      s === "paid" ||
+      s === "succeeded" ||
+      s === "active"
+    ) {
       cls = "bg-[#5CC781]/15 text-[#199653]";
     }
 
-    if (s === "failed" || s === "void" || s === "uncollectible") {
+    if (s === "trialing") {
+      cls = "bg-blue-100 text-blue-700";
+    }
+
+    if (
+      s === "failed" ||
+      s === "void" ||
+      s === "uncollectible" ||
+      s === "canceled" ||
+      s === "incomplete_expired"
+    ) {
       cls = "bg-[#D33B3E]/10 text-[#D33B3E]";
     }
 
-    if (s === "open") {
+    if (
+      s === "open" ||
+      s === "processing" ||
+      s === "past_due" ||
+      s === "incomplete" ||
+      s === "unpaid"
+    ) {
       cls = "bg-amber-100 text-amber-700";
     }
 
-    return `<span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ${cls}">${label}</span>`;
+    return `
+      <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ${cls}">
+        ${escapeHtml(label)}
+      </span>
+    `;
+  }
+
+  function typeBadge(item) {
+    if (item.record_type === "subscription") {
+      return `
+        <span class="inline-flex items-center gap-1 rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">
+          <i class="fa-solid fa-arrows-rotate"></i>
+          Suscripción
+        </span>
+      `;
+    }
+
+    if (item.record_subtype === "invoice") {
+      return `
+        <span class="inline-flex items-center gap-1 rounded-full bg-[#034694]/10 px-3 py-1 text-xs font-black text-[#034694]">
+          <i class="fa-solid fa-file-invoice-dollar"></i>
+          Factura
+        </span>
+      `;
+    }
+
+    return `
+      <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-700">
+        <i class="fa-solid fa-credit-card"></i>
+        Pago
+      </span>
+    `;
+  }
+
+  function referenceBlock(item) {
+    const refs = [];
+
+    if (item.subscription_id) {
+      refs.push(`
+        <div>
+          <span class="font-bold text-slate-400">SUB</span>
+          <span class="ml-1">${escapeHtml(item.subscription_id)}</span>
+        </div>
+      `);
+    }
+
+    if (item.invoice_id) {
+      refs.push(`
+        <div>
+          <span class="font-bold text-slate-400">INV</span>
+          <span class="ml-1">${escapeHtml(item.invoice_id)}</span>
+        </div>
+      `);
+    }
+
+    if (item.payment_intent) {
+      refs.push(`
+        <div>
+          <span class="font-bold text-slate-400">PI</span>
+          <span class="ml-1">${escapeHtml(item.payment_intent)}</span>
+        </div>
+      `);
+    }
+
+    if (item.customer_id) {
+      refs.push(`
+        <div>
+          <span class="font-bold text-slate-400">CUS</span>
+          <span class="ml-1">${escapeHtml(item.customer_id)}</span>
+        </div>
+      `);
+    }
+
+    return refs.length
+      ? `<div class="space-y-1 font-mono text-[11px] text-slate-500">${refs.join("")}</div>`
+      : "—";
+  }
+
+  function periodBlock(item) {
+    if (
+      item.record_type !== "subscription" &&
+      !item.period_start &&
+      !item.period_end
+    ) {
+      return "—";
+    }
+
+    const pieces = [];
+
+    if (item.interval || item.billing_period) {
+      pieces.push(`
+        <div class="font-bold text-slate-700">
+          ${escapeHtml(item.billing_period || item.interval)}
+        </div>
+      `);
+    }
+
+    if (item.period_start || item.period_end) {
+      pieces.push(`
+        <div class="text-xs text-slate-500">
+          ${fmtShortDate(item.period_start)}
+          →
+          ${fmtShortDate(item.period_end)}
+        </div>
+      `);
+    }
+
+    if (item.cancel_at_period_end) {
+      pieces.push(`
+        <div class="mt-1 text-xs font-bold text-amber-700">
+          Cancela al finalizar período
+        </div>
+      `);
+    }
+
+    if (item.trial_end) {
+      pieces.push(`
+        <div class="mt-1 text-xs text-blue-700">
+          Trial hasta ${fmtShortDate(item.trial_end)}
+        </div>
+      `);
+    }
+
+    return pieces.length
+      ? `<div>${pieces.join("")}</div>`
+      : "—";
+  }
+
+  function amountPlanBlock(item) {
+    const parts = [];
+
+    if (item.amount_total != null) {
+      parts.push(`
+        <div class="font-black text-slate-950">
+          ${money(item.amount_total, item.currency)}
+        </div>
+      `);
+    }
+
+    const plan =
+      item.package_code ||
+      item.tier ||
+      item.price_id ||
+      "";
+
+    if (plan) {
+      parts.push(`
+        <div class="mt-1 text-xs font-bold text-slate-500">
+          ${escapeHtml(plan)}
+        </div>
+      `);
+    }
+
+    return parts.length
+      ? parts.join("")
+      : "—";
+  }
+
+  function detailLinks(item) {
+    const links = [];
+
+    if (item.hosted_invoice_url) {
+      links.push(`
+        <a
+          class="rounded-full bg-[#034694]/10 px-3 py-1 text-xs font-bold text-[#034694] transition hover:bg-[#034694] hover:text-white"
+          href="${escapeHtml(item.hosted_invoice_url)}"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Factura
+        </a>
+      `);
+    }
+
+    if (item.invoice_pdf) {
+      links.push(`
+        <a
+          class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 transition hover:bg-slate-200"
+          href="${escapeHtml(item.invoice_pdf)}"
+          target="_blank"
+          rel="noreferrer"
+        >
+          PDF
+        </a>
+      `);
+    }
+
+    if (item.dashboard_url) {
+      links.push(`
+        <a
+          class="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700 transition hover:bg-violet-200"
+          href="${escapeHtml(item.dashboard_url)}"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Stripe
+        </a>
+      `);
+    }
+
+    return links.length
+      ? `<div class="flex flex-wrap gap-2">${links.join("")}</div>`
+      : "—";
   }
 
   function renderTable(items) {
-    const tbody = document.getElementById("tableBody");
+    const tbody =
+      document.getElementById("tableBody");
+
     tbody.innerHTML = "";
 
     if (!items.length) {
       tbody.innerHTML = `
         <tr>
-          <td colspan="7" class="px-4 py-10 text-center">
+          <td colspan="9" class="px-4 py-10 text-center">
             <div class="mx-auto max-w-md">
               <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
                 <i class="fa-solid fa-receipt text-xl"></i>
               </div>
 
               <p class="mt-4 text-sm font-bold text-slate-600">
-                No hay resultados.
+                No hay registros con estos filtros.
               </p>
             </div>
           </td>
@@ -357,66 +791,156 @@
       return;
     }
 
-    for (const p of items) {
-      const ref = p.invoice_id || p.session_id || p.payment_intent || "—";
-      const user = p.user || {};
-      const fullName = user.full_name || user.username || "—";
-      const email = user.email || "—";
+    for (const item of items) {
+      const user =
+        item.user || {};
 
-      const detailLinks = `
-        <div class="flex flex-wrap gap-2">
-          ${p.hosted_invoice_url ? `<a class="rounded-full bg-[#034694]/10 px-3 py-1 text-xs font-bold text-[#034694] transition hover:bg-[#034694] hover:text-white" href="${p.hosted_invoice_url}" target="_blank" rel="noreferrer">Factura</a>` : ""}
-          ${p.invoice_pdf ? `<a class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 transition hover:bg-slate-200" href="${p.invoice_pdf}" target="_blank" rel="noreferrer">PDF</a>` : ""}
-        </div>
-      `;
+      const fullName =
+        user.full_name ||
+        user.username ||
+        "Sin usuario local";
+
+      const email =
+        user.email ||
+        "—";
+
+      const description =
+        item.description ||
+        "";
 
       tbody.innerHTML += `
-        <tr class="transition hover:bg-slate-50">
-          <td class="px-4 py-4 text-sm font-medium text-slate-500">${fmtDate(p.created_at)}</td>
-          <td class="px-4 py-4 text-sm font-black text-slate-950">${fullName}</td>
-          <td class="px-4 py-4 text-sm font-medium text-slate-600">${email}</td>
-          <td class="px-4 py-4 text-sm font-black text-slate-950">${money((p.amount_total ?? p.amount), p.currency)}</td>
-          <td class="px-4 py-4">${badge(p.status)}</td>
-          <td class="px-4 py-4 font-mono text-xs text-slate-500 break-all">${ref}</td>
-          <td class="px-4 py-4">${detailLinks || "—"}</td>
+        <tr class="align-top transition hover:bg-slate-50">
+          <td class="whitespace-nowrap px-3 py-3 text-xs font-medium text-slate-500">
+            ${fmtDate(item.created_at)}
+          </td>
+
+          <td class="px-3 py-3">
+            ${typeBadge(item)}
+            ${item.source === "local" ? `
+              <div class="mt-1 text-[10px] font-bold uppercase text-amber-600">
+                fallback local
+              </div>
+            ` : ""}
+          </td>
+
+          <td class="px-3 py-3">
+            <div class="font-black text-slate-950">
+              ${escapeHtml(fullName)}
+            </div>
+            ${user.id ? `
+              <div class="mt-1 text-[11px] text-slate-400">
+                Usuario #${escapeHtml(user.id)}
+              </div>
+            ` : ""}
+          </td>
+
+          <td class="px-3 py-3 text-xs font-medium text-slate-600">
+            ${escapeHtml(email)}
+          </td>
+
+          <td class="px-3 py-3">
+            ${amountPlanBlock(item)}
+          </td>
+
+          <td class="px-3 py-3">
+            ${badge(item.status)}
+          </td>
+
+          <td class="max-w-[310px] px-3 py-3">
+            ${referenceBlock(item)}
+          </td>
+
+          <td class="px-3 py-3">
+            ${periodBlock(item)}
+          </td>
+
+          <td class="px-3 py-3">
+            ${detailLinks(item)}
+
+            ${description ? `
+              <div class="mt-2 max-w-[260px] text-xs leading-5 text-slate-500">
+                ${escapeHtml(description)}
+              </div>
+            ` : ""}
+          </td>
         </tr>
       `;
     }
   }
 
   function renderPagination() {
-    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-    document.getElementById("pageInfo").textContent = `Página ${currentPage} de ${totalPages}`;
+    const totalPages = Math.max(
+      1,
+      Math.ceil(totalItems / pageSize)
+    );
+
+    document.getElementById("pageInfo").textContent =
+      `Página ${currentPage} de ${totalPages}`;
   }
 
   function updatePager() {
-    const prev = document.getElementById("prevBtn");
-    const next = document.getElementById("nextBtn");
+    const prev =
+      document.getElementById("prevBtn");
 
-    prev.disabled = currentPage <= 1;
-    next.disabled = (currentPage * pageSize) >= totalItems;
+    const next =
+      document.getElementById("nextBtn");
+
+    prev.disabled =
+      currentPage <= 1;
+
+    next.disabled =
+      (currentPage * pageSize) >= totalItems;
   }
 
   function nextPage() {
-    if ((currentPage * pageSize) < totalItems) {
-      loadData(currentPage + 1);
+    if (
+      (currentPage * pageSize)
+      < totalItems
+    ) {
+      loadData(
+        currentPage + 1,
+        false
+      );
     }
   }
 
   function prevPage() {
     if (currentPage > 1) {
-      loadData(currentPage - 1);
+      loadData(
+        currentPage - 1,
+        false
+      );
     }
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    const s = document.getElementById("searchInput");
+    const search =
+      document.getElementById("searchInput");
 
-    s.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") loadData(1);
-    });
+    search.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key === "Enter") {
+          loadData(1, false);
+        }
+      }
+    );
 
-    loadData(1);
+    document
+      .getElementById("typeSelect")
+      .addEventListener(
+        "change",
+        () => loadData(1, false)
+      );
+
+    document
+      .getElementById("statusSelect")
+      .addEventListener(
+        "change",
+        () => loadData(1, false)
+      );
+
+    loadData(1, false);
   });
 </script>
 {% endblock %}

@@ -10512,64 +10512,1638 @@ def stripe_sync_session(request):
 
 
 def admin_purchases_api(request):
-    # opcional: solo staff
+    """
+    Historial administrativo de Stripe.
+
+    Fuente principal:
+        Stripe API (facturas, PaymentIntents y suscripciones).
+
+    Enriquecimiento local:
+        UserBillingProfile
+        StripeSubscription
+        StripePurchase
+
+    Si Stripe no responde, utiliza las tablas locales como fallback.
+
+    El resultado se cachea brevemente para evitar consultar todo Stripe
+    cada vez que el administrador cambia de página. Enviar refresh=1
+    fuerza una nueva lectura.
+    """
+
+    # =========================================================
+    # SEGURIDAD
+    # =========================================================
+
     if not request.user.is_staff:
-        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
-
-    q = (request.GET.get("q") or "").strip()
-    status = (request.GET.get("status") or "").strip()
-    page = int(request.GET.get("page") or 1)
-    page_size = int(request.GET.get("page_size") or 25)
-
-    qs = StripePurchase.objects.select_related("user").all().order_by("-created_at")
-
-    if status:
-        qs = qs.filter(status__iexact=status)
-
-    if q:
-        qs = qs.filter(
-            Q(user__email__icontains=q) |
-            Q(user__username__icontains=q) |
-            Q(user__first_name__icontains=q) |
-            Q(user__last_name__icontains=q) |
-            Q(stripe_invoice_id__icontains=q) |
-            Q(stripe_checkout_session_id__icontains=q) |
-            Q(stripe_payment_intent_id__icontains=q)
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": "forbidden",
+            },
+            status=403,
         )
 
-    paginator = Paginator(qs, page_size)
-    page_obj = paginator.get_page(page)
+    # =========================================================
+    # PARÁMETROS
+    # =========================================================
 
-    items = []
-    for p in page_obj.object_list:
-        u = p.user
-        items.append({
-            "id": p.id,
-            "created_at": p.created_at.isoformat() if p.created_at else None,
-            "amount_total": p.amount_total,
-            "currency": p.currency,
-            "status": p.status,
-            "invoice_id": p.stripe_invoice_id,
-            "session_id": p.stripe_checkout_session_id,
-            "payment_intent": p.stripe_payment_intent_id,
-            "hosted_invoice_url": p.hosted_invoice_url,
-            "invoice_pdf": p.invoice_pdf,
-            "description": p.description,
-            "user": {
-                "id": u.id,
-                "email": u.email,
-                "username": u.username,
-                "full_name": (u.get_full_name() or "").strip(),
+    q = str(
+        request.GET.get("q")
+        or ""
+    ).strip()
+
+    status_filter = str(
+        request.GET.get("status")
+        or ""
+    ).strip().lower()
+
+    type_filter = str(
+        request.GET.get("type")
+        or ""
+    ).strip().lower()
+
+    force_refresh = str(
+        request.GET.get("refresh")
+        or ""
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+    try:
+        page = int(
+            request.GET.get("page")
+            or 1
+        )
+    except (TypeError, ValueError):
+        page = 1
+
+    try:
+        page_size = int(
+            request.GET.get("page_size")
+            or 25
+        )
+    except (TypeError, ValueError):
+        page_size = 25
+
+    page = max(1, page)
+    page_size = max(
+        1,
+        min(page_size, 100),
+    )
+
+    # Cantidad máxima por cada colección remota.
+    # Para cuentas con más historial se puede aumentar por ENV/settings.
+    try:
+        history_limit = int(
+            getattr(
+                settings,
+                "STRIPE_ADMIN_HISTORY_LIMIT",
+                500,
+            )
+            or 500
+        )
+    except (TypeError, ValueError):
+        history_limit = 500
+
+    history_limit = max(
+        100,
+        min(history_limit, 5000),
+    )
+
+    # =========================================================
+    # HELPERS
+    # =========================================================
+
+    def stripe_value(
+        obj,
+        key,
+        default=None,
+    ):
+        if obj is None:
+            return default
+
+        try:
+            value = obj.get(
+                key,
+                default,
+            )
+        except Exception:
+            value = getattr(
+                obj,
+                key,
+                default,
+            )
+
+        return (
+            default
+            if value is None
+            else value
+        )
+
+    def stripe_id(value):
+        if isinstance(
+            value,
+            str,
+        ):
+            return value
+
+        if value is None:
+            return None
+
+        try:
+            return value.get("id")
+        except Exception:
+            return getattr(
+                value,
+                "id",
+                None,
+            )
+
+    def unix_to_iso(value):
+        if not value:
+            return None
+
+        try:
+            return datetime.fromtimestamp(
+                int(value),
+                tz=dt_timezone.utc,
+            ).isoformat()
+        except (
+            TypeError,
+            ValueError,
+            OSError,
+            OverflowError,
+        ):
+            return None
+
+    def dashboard_url(
+        object_id,
+        object_type,
+        livemode,
+    ):
+        object_id = str(
+            object_id
+            or ""
+        ).strip()
+
+        if not object_id:
+            return None
+
+        prefix = (
+            ""
+            if livemode
+            else "test/"
+        )
+
+        route_map = {
+            "invoice": "invoices",
+            "payment_intent": "payments",
+            "subscription": "subscriptions",
+            "customer": "customers",
+        }
+
+        route = route_map.get(
+            object_type
+        )
+
+        if not route:
+            return None
+
+        return (
+            "https://dashboard.stripe.com/"
+            f"{prefix}{route}/{object_id}"
+        )
+
+    def extract_customer(
+        raw_customer,
+        *,
+        fallback_email=None,
+        fallback_name=None,
+    ):
+        customer_id = stripe_id(
+            raw_customer
+        )
+
+        email = (
+            fallback_email
+            or ""
+        )
+        name = (
+            fallback_name
+            or ""
+        )
+
+        if raw_customer and not isinstance(
+            raw_customer,
+            str,
+        ):
+            email = (
+                stripe_value(
+                    raw_customer,
+                    "email",
+                    email,
+                )
+                or email
+            )
+
+            name = (
+                stripe_value(
+                    raw_customer,
+                    "name",
+                    name,
+                )
+                or name
+            )
+
+        return {
+            "id": customer_id,
+            "email": str(
+                email
+                or ""
+            ).strip(),
+            "name": str(
+                name
+                or ""
+            ).strip(),
+        }
+
+    # =========================================================
+    # RELACIÓN CUSTOMER STRIPE -> USER LOCAL
+    # =========================================================
+
+    billing_profiles = list(
+        UserBillingProfile.objects
+        .exclude(
+            stripe_customer_id__isnull=True
+        )
+        .exclude(
+            stripe_customer_id=""
+        )
+        .select_related("user")
+    )
+
+    local_users_by_customer = {}
+
+    for profile in billing_profiles:
+        customer_id = str(
+            profile.stripe_customer_id
+            or ""
+        ).strip()
+
+        if customer_id:
+            local_users_by_customer[
+                customer_id
+            ] = profile.user
+
+    # Metadata local de suscripciones.
+    local_subscriptions = {
+        str(
+            row.stripe_subscription_id
+        ): row
+        for row in (
+            StripeSubscription.objects
+            .select_related("user")
+            .all()
+        )
+        if row.stripe_subscription_id
+    }
+
+    # Metadata local de compras.
+    local_purchases_by_invoice = {}
+    local_purchases_by_payment = {}
+
+    for row in (
+        StripePurchase.objects
+        .select_related("user")
+        .all()
+    ):
+        if row.stripe_invoice_id:
+            local_purchases_by_invoice[
+                str(row.stripe_invoice_id)
+            ] = row
+
+        if row.stripe_payment_intent_id:
+            local_purchases_by_payment[
+                str(
+                    row.stripe_payment_intent_id
+                )
+            ] = row
+
+    def serialize_user(
+        customer_id=None,
+        *,
+        stripe_email=None,
+        stripe_name=None,
+        local_user=None,
+    ):
+        if (
+            local_user is None
+            and customer_id
+        ):
+            local_user = (
+                local_users_by_customer
+                .get(
+                    str(customer_id)
+                )
+            )
+
+        if local_user is not None:
+            full_name = (
+                local_user.get_full_name()
+                or local_user.username
+                or stripe_name
+                or ""
+            ).strip()
+
+            return {
+                "id": local_user.id,
+                "email": (
+                    local_user.email
+                    or stripe_email
+                    or ""
+                ),
+                "username": (
+                    local_user.username
+                    or ""
+                ),
+                "full_name": full_name,
             }
-        })
 
-    return JsonResponse({
-        "ok": True,
-        "total": paginator.count,
-        "page": page_obj.number,
-        "page_size": page_size,
-        "items": items,
-    })
+        return {
+            "id": None,
+            "email": (
+                stripe_email
+                or ""
+            ),
+            "username": "",
+            "full_name": (
+                stripe_name
+                or ""
+            ),
+        }
+
+    # =========================================================
+    # LECTURA DE STRIPE
+    # =========================================================
+
+    cache_key = (
+        "topeducation:"
+        "admin_stripe_history:v3"
+    )
+
+    snapshot = None
+
+    if not force_refresh:
+        snapshot = cache.get(
+            cache_key
+        )
+
+    stripe_error = None
+
+    if not isinstance(
+        snapshot,
+        dict,
+    ):
+        rows = []
+        invoice_payment_intents = set()
+
+        try:
+            # -------------------------------------------------
+            # FACTURAS / COBROS
+            # -------------------------------------------------
+            invoice_list = stripe.Invoice.list(
+                limit=100,
+                expand=[
+                    "data.customer",
+                ],
+            )
+
+            invoice_count = 0
+
+            for invoice in (
+                invoice_list
+                .auto_paging_iter()
+            ):
+                if (
+                    invoice_count
+                    >= history_limit
+                ):
+                    break
+
+                invoice_count += 1
+
+                invoice_id = stripe_value(
+                    invoice,
+                    "id",
+                )
+
+                payment_intent_id = (
+                    stripe_id(
+                        stripe_value(
+                            invoice,
+                            "payment_intent",
+                        )
+                    )
+                )
+
+                if payment_intent_id:
+                    invoice_payment_intents.add(
+                        payment_intent_id
+                    )
+
+                customer = extract_customer(
+                    stripe_value(
+                        invoice,
+                        "customer",
+                    ),
+                    fallback_email=(
+                        stripe_value(
+                            invoice,
+                            "customer_email",
+                        )
+                    ),
+                    fallback_name=(
+                        stripe_value(
+                            invoice,
+                            "customer_name",
+                        )
+                    ),
+                )
+
+                local_purchase = (
+                    local_purchases_by_invoice
+                    .get(
+                        str(
+                            invoice_id
+                            or ""
+                        )
+                    )
+                )
+
+                local_user = (
+                    local_purchase.user
+                    if local_purchase
+                    else None
+                )
+
+                subscription_id = stripe_id(
+                    stripe_value(
+                        invoice,
+                        "subscription",
+                    )
+                )
+
+                # Stripe API más reciente puede exponerlo bajo parent.
+                if not subscription_id:
+                    parent = stripe_value(
+                        invoice,
+                        "parent",
+                        {},
+                    ) or {}
+
+                    subscription_details = (
+                        stripe_value(
+                            parent,
+                            "subscription_details",
+                            {},
+                        )
+                        or {}
+                    )
+
+                    subscription_id = stripe_id(
+                        stripe_value(
+                            subscription_details,
+                            "subscription",
+                        )
+                    )
+
+                rows.append(
+                    {
+                        "row_id": (
+                            f"invoice:{invoice_id}"
+                        ),
+                        "record_type": "payment",
+                        "record_subtype": "invoice",
+                        "source": "stripe",
+                        "id": invoice_id,
+                        "created": (
+                            stripe_value(
+                                invoice,
+                                "created",
+                            )
+                            or 0
+                        ),
+                        "created_at": unix_to_iso(
+                            stripe_value(
+                                invoice,
+                                "created",
+                            )
+                        ),
+                        "amount_total": (
+                            stripe_value(
+                                invoice,
+                                "amount_paid",
+                                0,
+                            )
+                            or stripe_value(
+                                invoice,
+                                "total",
+                                0,
+                            )
+                            or 0
+                        ),
+                        "amount_due": (
+                            stripe_value(
+                                invoice,
+                                "amount_due",
+                                0,
+                            )
+                            or 0
+                        ),
+                        "amount_remaining": (
+                            stripe_value(
+                                invoice,
+                                "amount_remaining",
+                                0,
+                            )
+                            or 0
+                        ),
+                        "currency": (
+                            stripe_value(
+                                invoice,
+                                "currency",
+                                "usd",
+                            )
+                            or "usd"
+                        ),
+                        "status": (
+                            stripe_value(
+                                invoice,
+                                "status",
+                                "unknown",
+                            )
+                            or "unknown"
+                        ),
+                        "paid": bool(
+                            stripe_value(
+                                invoice,
+                                "paid",
+                                False,
+                            )
+                        ),
+                        "invoice_id": invoice_id,
+                        "invoice_number": (
+                            stripe_value(
+                                invoice,
+                                "number",
+                            )
+                        ),
+                        "session_id": (
+                            local_purchase
+                            .stripe_checkout_session_id
+                            if local_purchase
+                            else None
+                        ),
+                        "payment_intent": (
+                            payment_intent_id
+                        ),
+                        "subscription_id": (
+                            subscription_id
+                        ),
+                        "customer_id": (
+                            customer["id"]
+                        ),
+                        "description": (
+                            stripe_value(
+                                invoice,
+                                "description",
+                            )
+                            or (
+                                local_purchase.description
+                                if local_purchase
+                                else ""
+                            )
+                            or "Factura Stripe"
+                        ),
+                        "billing_reason": (
+                            stripe_value(
+                                invoice,
+                                "billing_reason",
+                            )
+                        ),
+                        "hosted_invoice_url": (
+                            stripe_value(
+                                invoice,
+                                "hosted_invoice_url",
+                            )
+                        ),
+                        "invoice_pdf": (
+                            stripe_value(
+                                invoice,
+                                "invoice_pdf",
+                            )
+                        ),
+                        "period_start": unix_to_iso(
+                            stripe_value(
+                                invoice,
+                                "period_start",
+                            )
+                        ),
+                        "period_end": unix_to_iso(
+                            stripe_value(
+                                invoice,
+                                "period_end",
+                            )
+                        ),
+                        "livemode": bool(
+                            stripe_value(
+                                invoice,
+                                "livemode",
+                                False,
+                            )
+                        ),
+                        "dashboard_url": (
+                            dashboard_url(
+                                invoice_id,
+                                "invoice",
+                                bool(
+                                    stripe_value(
+                                        invoice,
+                                        "livemode",
+                                        False,
+                                    )
+                                ),
+                            )
+                        ),
+                        "user": serialize_user(
+                            customer["id"],
+                            stripe_email=(
+                                customer["email"]
+                            ),
+                            stripe_name=(
+                                customer["name"]
+                            ),
+                            local_user=local_user,
+                        ),
+                    }
+                )
+
+            # -------------------------------------------------
+            # PAYMENT INTENTS
+            # -------------------------------------------------
+            payment_list = (
+                stripe.PaymentIntent.list(
+                    limit=100,
+                    expand=[
+                        "data.customer",
+                    ],
+                )
+            )
+
+            payment_count = 0
+
+            for payment in (
+                payment_list
+                .auto_paging_iter()
+            ):
+                if (
+                    payment_count
+                    >= history_limit
+                ):
+                    break
+
+                payment_count += 1
+
+                payment_id = stripe_value(
+                    payment,
+                    "id",
+                )
+
+                # Si ya está representado por una factura no
+                # duplicamos el mismo cobro.
+                if (
+                    payment_id
+                    and payment_id
+                    in invoice_payment_intents
+                ):
+                    continue
+
+                customer = extract_customer(
+                    stripe_value(
+                        payment,
+                        "customer",
+                    ),
+                    fallback_email=(
+                        stripe_value(
+                            payment,
+                            "receipt_email",
+                        )
+                    ),
+                )
+
+                local_purchase = (
+                    local_purchases_by_payment
+                    .get(
+                        str(
+                            payment_id
+                            or ""
+                        )
+                    )
+                )
+
+                local_user = (
+                    local_purchase.user
+                    if local_purchase
+                    else None
+                )
+
+                rows.append(
+                    {
+                        "row_id": (
+                            f"payment:{payment_id}"
+                        ),
+                        "record_type": "payment",
+                        "record_subtype": (
+                            "payment_intent"
+                        ),
+                        "source": "stripe",
+                        "id": payment_id,
+                        "created": (
+                            stripe_value(
+                                payment,
+                                "created",
+                            )
+                            or 0
+                        ),
+                        "created_at": unix_to_iso(
+                            stripe_value(
+                                payment,
+                                "created",
+                            )
+                        ),
+                        "amount_total": (
+                            stripe_value(
+                                payment,
+                                "amount_received",
+                                0,
+                            )
+                            or stripe_value(
+                                payment,
+                                "amount",
+                                0,
+                            )
+                            or 0
+                        ),
+                        "currency": (
+                            stripe_value(
+                                payment,
+                                "currency",
+                                "usd",
+                            )
+                            or "usd"
+                        ),
+                        "status": (
+                            stripe_value(
+                                payment,
+                                "status",
+                                "unknown",
+                            )
+                            or "unknown"
+                        ),
+                        "invoice_id": (
+                            local_purchase
+                            .stripe_invoice_id
+                            if local_purchase
+                            else None
+                        ),
+                        "session_id": (
+                            local_purchase
+                            .stripe_checkout_session_id
+                            if local_purchase
+                            else None
+                        ),
+                        "payment_intent": payment_id,
+                        "subscription_id": None,
+                        "customer_id": (
+                            customer["id"]
+                        ),
+                        "description": (
+                            stripe_value(
+                                payment,
+                                "description",
+                            )
+                            or (
+                                local_purchase.description
+                                if local_purchase
+                                else ""
+                            )
+                            or "Pago Stripe"
+                        ),
+                        "hosted_invoice_url": (
+                            local_purchase
+                            .hosted_invoice_url
+                            if local_purchase
+                            else None
+                        ),
+                        "invoice_pdf": (
+                            local_purchase
+                            .invoice_pdf
+                            if local_purchase
+                            else None
+                        ),
+                        "livemode": bool(
+                            stripe_value(
+                                payment,
+                                "livemode",
+                                False,
+                            )
+                        ),
+                        "dashboard_url": (
+                            dashboard_url(
+                                payment_id,
+                                "payment_intent",
+                                bool(
+                                    stripe_value(
+                                        payment,
+                                        "livemode",
+                                        False,
+                                    )
+                                ),
+                            )
+                        ),
+                        "user": serialize_user(
+                            customer["id"],
+                            stripe_email=(
+                                customer["email"]
+                            ),
+                            stripe_name=(
+                                customer["name"]
+                            ),
+                            local_user=local_user,
+                        ),
+                    }
+                )
+
+            # -------------------------------------------------
+            # SUSCRIPCIONES
+            # -------------------------------------------------
+            subscription_list = (
+                stripe.Subscription.list(
+                    status="all",
+                    limit=100,
+                    expand=[
+                        "data.customer",
+                    ],
+                )
+            )
+
+            subscription_count = 0
+
+            for subscription in (
+                subscription_list
+                .auto_paging_iter()
+            ):
+                if (
+                    subscription_count
+                    >= history_limit
+                ):
+                    break
+
+                subscription_count += 1
+
+                subscription_id = (
+                    stripe_value(
+                        subscription,
+                        "id",
+                    )
+                )
+
+                customer = extract_customer(
+                    stripe_value(
+                        subscription,
+                        "customer",
+                    )
+                )
+
+                local_subscription = (
+                    local_subscriptions.get(
+                        str(
+                            subscription_id
+                            or ""
+                        )
+                    )
+                )
+
+                local_user = (
+                    local_subscription.user
+                    if local_subscription
+                    else None
+                )
+
+                items_obj = (
+                    stripe_value(
+                        subscription,
+                        "items",
+                        {},
+                    )
+                    or {}
+                )
+
+                items_data = (
+                    stripe_value(
+                        items_obj,
+                        "data",
+                        [],
+                    )
+                    or []
+                )
+
+                first_item = (
+                    items_data[0]
+                    if items_data
+                    else {}
+                )
+
+                price = (
+                    stripe_value(
+                        first_item,
+                        "price",
+                        {},
+                    )
+                    or {}
+                )
+
+                recurring = (
+                    stripe_value(
+                        price,
+                        "recurring",
+                        {},
+                    )
+                    or {}
+                )
+
+                price_id = stripe_id(
+                    price
+                )
+
+                product_id = stripe_id(
+                    stripe_value(
+                        price,
+                        "product",
+                    )
+                )
+
+                unit_amount = (
+                    stripe_value(
+                        price,
+                        "unit_amount",
+                        0,
+                    )
+                    or 0
+                )
+
+                currency = (
+                    stripe_value(
+                        price,
+                        "currency",
+                    )
+                    or stripe_value(
+                        subscription,
+                        "currency",
+                    )
+                    or "usd"
+                )
+
+                interval = (
+                    stripe_value(
+                        recurring,
+                        "interval",
+                    )
+                    or (
+                        local_subscription.interval
+                        if local_subscription
+                        else None
+                    )
+                )
+
+                period_start = (
+                    stripe_value(
+                        subscription,
+                        "current_period_start",
+                    )
+                    or stripe_value(
+                        first_item,
+                        "current_period_start",
+                    )
+                )
+
+                period_end = (
+                    stripe_value(
+                        subscription,
+                        "current_period_end",
+                    )
+                    or stripe_value(
+                        first_item,
+                        "current_period_end",
+                    )
+                )
+
+                package_code = (
+                    local_subscription.package_code
+                    if local_subscription
+                    else None
+                )
+
+                tier = (
+                    local_subscription.tier
+                    if local_subscription
+                    else None
+                )
+
+                billing_period = (
+                    local_subscription.billing_period
+                    if local_subscription
+                    else interval
+                )
+
+                rows.append(
+                    {
+                        "row_id": (
+                            "subscription:"
+                            f"{subscription_id}"
+                        ),
+                        "record_type": (
+                            "subscription"
+                        ),
+                        "record_subtype": (
+                            "subscription"
+                        ),
+                        "source": "stripe",
+                        "id": subscription_id,
+                        "created": (
+                            stripe_value(
+                                subscription,
+                                "created",
+                            )
+                            or 0
+                        ),
+                        "created_at": unix_to_iso(
+                            stripe_value(
+                                subscription,
+                                "created",
+                            )
+                        ),
+                        "amount_total": (
+                            unit_amount
+                        ),
+                        "currency": currency,
+                        "status": (
+                            stripe_value(
+                                subscription,
+                                "status",
+                                "unknown",
+                            )
+                            or "unknown"
+                        ),
+                        "customer_id": (
+                            customer["id"]
+                        ),
+                        "subscription_id": (
+                            subscription_id
+                        ),
+                        "invoice_id": stripe_id(
+                            stripe_value(
+                                subscription,
+                                "latest_invoice",
+                            )
+                        ),
+                        "payment_intent": None,
+                        "session_id": None,
+                        "price_id": price_id,
+                        "product_id": product_id,
+                        "interval": interval,
+                        "package_code": package_code,
+                        "tier": tier,
+                        "billing_period": (
+                            billing_period
+                        ),
+                        "cancel_at_period_end": (
+                            bool(
+                                stripe_value(
+                                    subscription,
+                                    "cancel_at_period_end",
+                                    False,
+                                )
+                            )
+                        ),
+                        "canceled_at": unix_to_iso(
+                            stripe_value(
+                                subscription,
+                                "canceled_at",
+                            )
+                        ),
+                        "ended_at": unix_to_iso(
+                            stripe_value(
+                                subscription,
+                                "ended_at",
+                            )
+                        ),
+                        "trial_start": unix_to_iso(
+                            stripe_value(
+                                subscription,
+                                "trial_start",
+                            )
+                        ),
+                        "trial_end": unix_to_iso(
+                            stripe_value(
+                                subscription,
+                                "trial_end",
+                            )
+                        ),
+                        "period_start": unix_to_iso(
+                            period_start
+                        ),
+                        "period_end": unix_to_iso(
+                            period_end
+                        ),
+                        "description": (
+                            package_code
+                            or tier
+                            or stripe_value(
+                                subscription,
+                                "description",
+                            )
+                            or "Suscripción Stripe"
+                        ),
+                        "livemode": bool(
+                            stripe_value(
+                                subscription,
+                                "livemode",
+                                False,
+                            )
+                        ),
+                        "dashboard_url": (
+                            dashboard_url(
+                                subscription_id,
+                                "subscription",
+                                bool(
+                                    stripe_value(
+                                        subscription,
+                                        "livemode",
+                                        False,
+                                    )
+                                ),
+                            )
+                        ),
+                        "user": serialize_user(
+                            customer["id"],
+                            stripe_email=(
+                                customer["email"]
+                            ),
+                            stripe_name=(
+                                customer["name"]
+                            ),
+                            local_user=local_user,
+                        ),
+                    }
+                )
+
+            # Orden global por fecha.
+            rows.sort(
+                key=lambda row: (
+                    int(
+                        row.get("created")
+                        or 0
+                    )
+                ),
+                reverse=True,
+            )
+
+            snapshot = {
+                "rows": rows,
+                "fetched_at": (
+                    timezone.now()
+                    .isoformat()
+                ),
+                "stripe_error": None,
+            }
+
+            cache.set(
+                cache_key,
+                snapshot,
+                timeout=60,
+            )
+
+        except Exception as exc:
+            logger.exception(
+                (
+                    "No fue posible cargar el "
+                    "historial directamente desde Stripe."
+                )
+            )
+
+            stripe_error = str(exc)
+
+            # =================================================
+            # FALLBACK LOCAL
+            # =================================================
+
+            rows = []
+
+            for purchase in (
+                StripePurchase.objects
+                .select_related("user")
+                .all()
+                .order_by("-created_at")[
+                    :history_limit
+                ]
+            ):
+                user = purchase.user
+
+                rows.append(
+                    {
+                        "row_id": (
+                            f"local-payment:{purchase.id}"
+                        ),
+                        "record_type": "payment",
+                        "record_subtype": "local",
+                        "source": "local",
+                        "id": purchase.id,
+                        "created": int(
+                            purchase.created_at.timestamp()
+                        )
+                        if purchase.created_at
+                        else 0,
+                        "created_at": (
+                            purchase.created_at.isoformat()
+                            if purchase.created_at
+                            else None
+                        ),
+                        "amount_total": (
+                            purchase.amount_total
+                        ),
+                        "currency": (
+                            purchase.currency
+                        ),
+                        "status": purchase.status,
+                        "invoice_id": (
+                            purchase.stripe_invoice_id
+                        ),
+                        "session_id": (
+                            purchase
+                            .stripe_checkout_session_id
+                        ),
+                        "payment_intent": (
+                            purchase
+                            .stripe_payment_intent_id
+                        ),
+                        "subscription_id": None,
+                        "description": (
+                            purchase.description
+                        ),
+                        "hosted_invoice_url": (
+                            purchase.hosted_invoice_url
+                        ),
+                        "invoice_pdf": (
+                            purchase.invoice_pdf
+                        ),
+                        "dashboard_url": None,
+                        "user": {
+                            "id": user.id,
+                            "email": user.email,
+                            "username": user.username,
+                            "full_name": (
+                                user.get_full_name()
+                                or user.username
+                                or ""
+                            ).strip(),
+                        },
+                    }
+                )
+
+            for subscription in (
+                StripeSubscription.objects
+                .select_related("user")
+                .all()
+                .order_by("-created_at")[
+                    :history_limit
+                ]
+            ):
+                user = subscription.user
+
+                rows.append(
+                    {
+                        "row_id": (
+                            "local-subscription:"
+                            f"{subscription.id}"
+                        ),
+                        "record_type": (
+                            "subscription"
+                        ),
+                        "record_subtype": (
+                            "local"
+                        ),
+                        "source": "local",
+                        "id": subscription.id,
+                        "created": int(
+                            subscription.created_at.timestamp()
+                        )
+                        if subscription.created_at
+                        else 0,
+                        "created_at": (
+                            subscription.created_at.isoformat()
+                            if subscription.created_at
+                            else None
+                        ),
+                        "amount_total": None,
+                        "currency": None,
+                        "status": (
+                            subscription.status
+                        ),
+                        "subscription_id": (
+                            subscription
+                            .stripe_subscription_id
+                        ),
+                        "price_id": (
+                            subscription.price_id
+                        ),
+                        "interval": (
+                            subscription.interval
+                        ),
+                        "package_code": (
+                            subscription.package_code
+                        ),
+                        "tier": subscription.tier,
+                        "billing_period": (
+                            subscription.billing_period
+                        ),
+                        "cancel_at_period_end": (
+                            subscription
+                            .cancel_at_period_end
+                        ),
+                        "period_end": (
+                            subscription
+                            .current_period_end
+                            .isoformat()
+                            if subscription
+                            .current_period_end
+                            else None
+                        ),
+                        "trial_start": (
+                            subscription
+                            .trial_start
+                            .isoformat()
+                            if subscription.trial_start
+                            else None
+                        ),
+                        "trial_end": (
+                            subscription
+                            .trial_end
+                            .isoformat()
+                            if subscription.trial_end
+                            else None
+                        ),
+                        "description": (
+                            subscription.package_code
+                            or subscription.tier
+                            or "Suscripción local"
+                        ),
+                        "dashboard_url": None,
+                        "user": {
+                            "id": user.id,
+                            "email": user.email,
+                            "username": user.username,
+                            "full_name": (
+                                user.get_full_name()
+                                or user.username
+                                or ""
+                            ).strip(),
+                        },
+                    }
+                )
+
+            rows.sort(
+                key=lambda row: int(
+                    row.get("created")
+                    or 0
+                ),
+                reverse=True,
+            )
+
+            snapshot = {
+                "rows": rows,
+                "fetched_at": (
+                    timezone.now()
+                    .isoformat()
+                ),
+                "stripe_error": (
+                    stripe_error
+                ),
+            }
+
+    rows = list(
+        snapshot.get("rows")
+        or []
+    )
+
+    stripe_error = (
+        snapshot.get("stripe_error")
+        or stripe_error
+    )
+
+    # =========================================================
+    # FILTROS SOBRE SNAPSHOT
+    # =========================================================
+
+    if type_filter:
+        if type_filter in {
+            "payment",
+            "payments",
+            "pago",
+            "pagos",
+        }:
+            rows = [
+                row
+                for row in rows
+                if row.get(
+                    "record_type"
+                ) == "payment"
+            ]
+
+        elif type_filter in {
+            "subscription",
+            "subscriptions",
+            "suscripcion",
+            "suscripciones",
+        }:
+            rows = [
+                row
+                for row in rows
+                if row.get(
+                    "record_type"
+                ) == "subscription"
+            ]
+
+        else:
+            rows = [
+                row
+                for row in rows
+                if str(
+                    row.get(
+                        "record_subtype"
+                    )
+                    or ""
+                ).lower()
+                == type_filter
+            ]
+
+    if status_filter:
+        rows = [
+            row
+            for row in rows
+            if str(
+                row.get("status")
+                or ""
+            ).strip().lower()
+            == status_filter
+        ]
+
+    if q:
+        q_lower = q.casefold()
+
+        filtered_rows = []
+
+        for row in rows:
+            user = row.get("user") or {}
+
+            haystack = " ".join(
+                str(value or "")
+                for value in [
+                    row.get("id"),
+                    row.get("record_type"),
+                    row.get("record_subtype"),
+                    row.get("status"),
+                    row.get("invoice_id"),
+                    row.get("invoice_number"),
+                    row.get("session_id"),
+                    row.get("payment_intent"),
+                    row.get("subscription_id"),
+                    row.get("customer_id"),
+                    row.get("price_id"),
+                    row.get("product_id"),
+                    row.get("package_code"),
+                    row.get("tier"),
+                    row.get("billing_period"),
+                    row.get("description"),
+                    user.get("email"),
+                    user.get("username"),
+                    user.get("full_name"),
+                ]
+            ).casefold()
+
+            if q_lower in haystack:
+                filtered_rows.append(
+                    row
+                )
+
+        rows = filtered_rows
+
+    # =========================================================
+    # RESUMEN Y PAGINACIÓN
+    # =========================================================
+
+    total = len(rows)
+
+    payment_total = sum(
+        1
+        for row in rows
+        if row.get("record_type")
+        == "payment"
+    )
+
+    subscription_total = sum(
+        1
+        for row in rows
+        if row.get("record_type")
+        == "subscription"
+    )
+
+    active_subscription_total = sum(
+        1
+        for row in rows
+        if (
+            row.get("record_type")
+            == "subscription"
+            and str(
+                row.get("status")
+                or ""
+            ).lower()
+            in {
+                "active",
+                "trialing",
+            }
+        )
+    )
+
+    start = (
+        (page - 1)
+        * page_size
+    )
+
+    end = (
+        start
+        + page_size
+    )
+
+    page_items = rows[
+        start:end
+    ]
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "items": page_items,
+            "summary": {
+                "total": total,
+                "payments": (
+                    payment_total
+                ),
+                "subscriptions": (
+                    subscription_total
+                ),
+                "active_subscriptions": (
+                    active_subscription_total
+                ),
+            },
+            "meta": {
+                "source": (
+                    "stripe"
+                    if not stripe_error
+                    else "local_fallback"
+                ),
+                "stripe_error": (
+                    stripe_error
+                ),
+                "fetched_at": (
+                    snapshot.get(
+                        "fetched_at"
+                    )
+                ),
+                "history_limit_per_type": (
+                    history_limit
+                ),
+                "cached": (
+                    not force_refresh
+                ),
+            },
+        }
+    )
 
 
 User = get_user_model()
@@ -20716,58 +22290,87 @@ class LearningRouteRecommendationsAPIView(APIView):
 
 
         # =====================================================
+
         # VALIDACIÓN MÍNIMA
+
         # =====================================================
+
         #
-        # La ruta necesita mínimo 3 experiencias distintas.
+
+        # Ya NO exigimos tres.
+
+        #
+
+        # Para generar una ruta necesitamos como mínimo
+
+        # una experiencia elegible.
+
         # =====================================================
 
-        MIN_RECOMMENDATIONS_REQUIRED = 3
 
-        if (
-            len(selected_courses)
-            < MIN_RECOMMENDATIONS_REQUIRED
-        ):
+
+        if not selected_courses:
 
             return Response(
+
                 {
+
                     "ok": False,
 
                     "error": (
+
                         "insufficient_recommendations"
+
                     ),
 
                     "message": (
-                        "No se encontraron suficientes "
-                        "recomendaciones elegibles para "
-                        "crear tu ruta."
+
+                        "No fue posible seleccionar "
+
+                        "experiencias Free elegibles."
+
                     ),
 
                     "meta": {
-                        "minimum_required": (
-                            MIN_RECOMMENDATIONS_REQUIRED
-                        ),
 
-                        "available": (
-                            len(selected_courses)
-                        ),
+                        "minimum_required": 1,
+
+                        "available": 0,
 
                         "complete_available": (
+
                             len(
+
                                 complete_ranked_courses
+
                             )
+
                         ),
 
                         "hydrated": (
+
                             len(hydrated_map)
+
                         ),
+
+                        "topic_matches": (
+
+                            len(relevant_ids)
+
+                        ),
+
                     },
+
                 },
 
                 status=(
+
                     status
+
                     .HTTP_503_SERVICE_UNAVAILABLE
+
                 ),
+
             )
 
 
@@ -21310,47 +22913,60 @@ class LearningRouteRecommendationsAPIView(APIView):
 
 
 
-        MIN_FREE_RECOMMENDATIONS_REQUIRED = 3
+        if not free_courses:
 
-        if (
-            len(free_courses)
-            < MIN_FREE_RECOMMENDATIONS_REQUIRED
-        ):
             return Response(
+
                 {
+
                     "ok": False,
 
                     "error": (
+
                         "insufficient_free_recommendations"
+
                     ),
 
                     "message": (
-                        "No se encontraron suficientes "
-                        "experiencias Free elegibles."
+
+                        "No fue posible seleccionar "
+
+                        "ninguna experiencia Free "
+
+                        "elegible."
+
                     ),
 
                     "meta": {
-                        "minimum_required": (
-                            MIN_FREE_RECOMMENDATIONS_REQUIRED
-                        ),
 
-                        "available": (
-                            len(free_courses)
-                        ),
+                        "minimum_required": 1,
+
+                        "available": 0,
 
                         "complete_available": (
+
                             len(
+
                                 complete_serialized_courses
+
                             )
+
                         ),
+
                     },
+
                 },
 
                 status=(
+
                     status
+
                     .HTTP_503_SERVICE_UNAVAILABLE
+
                 ),
+
             )
+
 
 
         # =====================================================
@@ -21599,7 +23215,7 @@ class LearningRouteRecommendationsAPIView(APIView):
 
 
 
-                    "minimum_free_courses": 3,
+                    "minimum_free_courses": 1,
 
 
 
@@ -21630,8 +23246,15 @@ class LearningRouteRecommendationsAPIView(APIView):
 
 
                     "free_route_available": (
-                        len(free_courses)
-                        >= 3
+
+                        len(
+
+                            free_courses
+
+                        )
+
+                        >= 1
+
                     ),
 
 
